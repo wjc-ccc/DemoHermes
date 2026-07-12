@@ -21,7 +21,6 @@ DemoCursor/
 │   ├── evolution/      # 自我进化 → README_evolution.md
 │   └── gateway/        # CLI / API 入口 → README_gateway.md
 ├── data/               # 运行时数据 → README_data.md
-├── skills/             # 内置 Skill 种子 → README_skills.md
 ├── logging/            # 日志工具 → README_Logging.md
 ├── docs/               # 开发进度 → README_docs.md
 ```
