@@ -2,10 +2,9 @@
 全局配置中心
 
 从项目根目录的 .env 文件加载所有环境变量，供其他模块统一引用。
-避免各文件重复 load_dotenv，参考 ErrorDocs/7.10 debug日志.md。
 
 使用方式：
-    from Agent.Config import DEEPSEEK_API_KEY, MODEL
+    from Agent.Provider import DEEPSEEK_API_KEY, MODEL
 """
 import os
 from pathlib import Path
@@ -25,3 +24,6 @@ ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com"
 
 # 默认使用的模型名称
 MODEL = os.getenv("MODEL", "deepseek-v4-flash")
+
+# System Prompt 文件路径（由 ContextBuilder 加载）
+SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent / "prompt" / "systemPrompt.md"

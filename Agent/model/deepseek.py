@@ -1,27 +1,36 @@
 """
-DeepSeek Provider — DeepSeek 模型接入与连通性测试
-
-通过 OpenAI SDK（兼容接口）调用 DeepSeek API。
-当前为独立测试脚本，后续将重构为继承 BaseModel 的 Provider 类。
-
-运行测试：python -m Agent.model.deepseek
-
-注意：API Key 应统一从 Agent.Config 读取，避免重复 load_dotenv。
+DeepSeek Provider - DeepSeek 模型接入与连通性测试
 """
 import os
 from pathlib import Path
-from dotenv import load_dotenv
 from openai import OpenAI
 
-ROOT = Path(__file__).resolve().parents[2]
-load_dotenv(ROOT / ".env")
+from .baseStructure import BaseModel
+from ..Provider import DEEPSEEK_API_KEY,DEEPSEEK_BASE_URL
 
 
+
+class DeepSeekModel(BaseModel):
+    def __init__(self):
+        super().__init__()
+        self.client = OpenAI(api_key=DEEPSEEK_API_KEY,base_url=DEEPSEEK_BASE_URL)
+
+    def chat(self, messages:list[dict]):
+        response = self.client.chat.completions.create(
+            model="deepseek-v4-flash",
+            messages=messages)
+
+        ## TODO:解析和处理每一个message -- ToolCall or Response
+
+        return response.choices[0].message.content
+
+
+
+
+##  ✅️测试通过
 def test():
     """连通性测试：发送一条简单消息，验证 API 可用。"""
-    client = OpenAI(
-        api_key=os.environ.get('DEEPSEEK_API_KEY'),
-        base_url="https://api.deepseek.com")
+    client = OpenAI(api_key=DEEPSEEK_API_KEY,base_url=DEEPSEEK_BASE_URL)
 
     response = client.chat.completions.create(
         model="deepseek-v4-flash",

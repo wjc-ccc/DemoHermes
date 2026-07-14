@@ -11,7 +11,15 @@ from abc import ABC, abstractmethod
 
 class BaseModel(ABC):
 
+    def __init__(self) -> None:
+        """加载对应的client，并进行初始化"""
+        super().__init__()
+
+
     @abstractmethod
     def chat(self, messages: list[dict]) -> str:
         """发送消息列表，返回模型回复文本。"""
         pass
+
+
+    
