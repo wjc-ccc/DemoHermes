@@ -6,6 +6,10 @@ Types - 核心数据结构
     - Tool     : 工具调用请求（name, arguments, id）
     - MemoryItem   : 记忆条目（layer, content, metadata, timestamp）
     - Session : 会话（id, messages, hot_snapshot, created_at）
+    - InboundEvent : 入站事件（text, source, content, channel_prompt, metadata）
+    - OutboundReply : 出站回复（text, reply_to, metadata）
+    - TurnResult : 一轮对话结果（final_text, session_id, completed, interrupted, error）
+
 
 使用 pydantic 实现，保证类型安全。Field default_factory,choices,description
 
@@ -105,10 +109,8 @@ class MemoryItem(BaseModel):
     created_at:str = Field(default_factory=str,description="memory created time")
     metadata:dict = Field(default_factory=dict,description="memory metadata")
 
-
-
-
-class Session(BaseModel): ## 包含字段较为全面  7.13 ✅️
+#**** Session ****
+class Session(BaseModel): ## 包含字段较为全面  7.13 ✅️  提供add message接口 7.14✅️
     """
     Session
     ├── SessionInfo
@@ -140,3 +142,63 @@ class Session(BaseModel): ## 包含字段较为全面  7.13 ✅️
     ## memory info
     memory:list[MemoryItem] = Field(default_factory=list) ## 记忆数据 用于针对session进行总结更新
     summary:str = Field(default_factory=str,description="session summary")## 会话摘要 用于后续的更新
+
+    ## 运行期路由键（不进 LLM；由 Gateway 写入）
+    session_key: str = Field(default_factory=str, description="逻辑会话槽 agent:...")
+
+    def add_message(self, msg: "Message") -> "Message":
+        """把消息追加进本会话，维护 seq / 计数 / 时间戳。"""
+        msg.session_id = self.session_id
+        msg.seq_id = len(self.messages)
+        self.messages.append(msg)
+        self.message_count = len(self.messages)
+        now = time.time()
+        self.updated_at = now
+        self.last_active_at = now
+        return msg
+
+#**** Channel ****
+class SessionSource(BaseModel):
+    """消息从哪来、回哪去。"""
+    channel: str = Field(default="cli", description="cli / wechat / feishu / api ...")
+    chat_id: str = Field(default="local")
+    chat_type: Literal["dm", "group", "thread"] = "dm"
+    user_id: str | None = None
+    user_name: str | None = None
+    thread_id: str | None = None
+    reply_to_message_id: str | None = None
+    metadata: dict = Field(default_factory=dict)
+
+
+class InboundEvent(BaseModel):
+    """Channel → Gateway 唯一入站。平台字段已在 Channel 内映射完成。"""
+    text: str = Field(default_factory=str)
+    source: SessionSource = Field(default_factory=SessionSource)
+    content: list[ContentPart] = Field(default_factory=list)
+    channel_prompt: str | None = Field(
+        default=None,
+        description="仅当次注入 API 的平台说明，不写进 Session.messages",
+    )
+    metadata: dict = Field(default_factory=dict)
+
+
+class OutboundReply(BaseModel):
+    """Gateway → Channel 出站。"""
+    text: str = Field(default_factory=str)
+    reply_to: str | None = None
+    # 出站路由：dispatcher 靠 source.channel 选 Channel.deliver
+    source: SessionSource = Field(default_factory=SessionSource)
+    session_key: str = Field(default_factory=str)
+    session_id: str = Field(default_factory=str)
+    completed: bool = True
+    error: str | None = None
+    metadata: dict = Field(default_factory=dict)
+
+
+class TurnResult(BaseModel):
+    """Loop → Gateway：一轮对话结果。"""
+    final_text: str | None = None
+    session_id: str = Field(default_factory=str)
+    completed: bool = True
+    interrupted: bool = False
+    error: str | None = None
