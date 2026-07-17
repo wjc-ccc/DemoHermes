@@ -18,7 +18,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 from ..core.types import Session, Message
-from ..Provider import ROOT
+from ..provider import ROOT
 
 logger = logging.getLogger(__name__)
 

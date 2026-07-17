@@ -36,7 +36,6 @@ class AgentLoop:
         # ---- observe ----
         session.add_message(user_message)
 
-        # ---- think / act（阶段 1：无 tool；预留迭代骨架）----
         builder = ContextBuilder(session)
         messages = builder.building_context()
         if ephemeral_prompt:
@@ -63,7 +62,6 @@ class AgentLoop:
             )
 
         # ---- act ----
-        # TODO(阶段2): if tool_calls → execute → append → continue（受 max_iterations 约束）
         session.add_message(
             Message(
                 role="assistant",

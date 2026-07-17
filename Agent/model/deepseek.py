@@ -1,12 +1,12 @@
 """
-DeepSeek Provider - DeepSeek 模型接入与连通性测试
+DeepSeek provider - DeepSeek 模型接入与连通性测试
 """
 import os
 from pathlib import Path
 from openai import OpenAI
 
 from .baseStructure import BaseModel
-from ..Provider import DEEPSEEK_API_KEY,DEEPSEEK_BASE_URL
+from ..provider import DEEPSEEK_API_KEY,DEEPSEEK_BASE_URL
 
 
 

@@ -11,7 +11,7 @@ ContextBuilder - LLM 上下文组装器
 控制 token 用量，避免上下文溢出。
 """
 from .types import Session
-from ..Provider import SYSTEM_PROMPT_PATH
+from ..provider import SYSTEM_PROMPT_PATH
 
 """
 1.统计上下文长度
@@ -29,7 +29,7 @@ class ContextBuilder:
         self.messages: list = []  # 组装后发给 ai 的 messages
 
     def _loading_system_prompt(self):
-        # 从 Provider 配置的路径加载 systemPrompt.md
+        # 从 provider 配置的路径加载 systemPrompt.md
         self.messages.append({
             "role": "system",
             "content": SYSTEM_PROMPT_PATH.read_text(encoding="utf-8"),

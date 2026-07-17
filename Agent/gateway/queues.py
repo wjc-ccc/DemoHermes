@@ -2,7 +2,7 @@
 Gateway 进程内双队列：InDTO / OutDTO
 
 这不是独立进程的 message bus，而是同进程 queue.Queue：
-    Channel --put--> in_queue  --worker--> out_queue --get--> Channel.deliver
+    Channel --put--> in_queue  --worker--> out_queue --get--> Channel.deliver_to_OutboundEvent
 """
 from __future__ import annotations
 

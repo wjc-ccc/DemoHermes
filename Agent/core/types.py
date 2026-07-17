@@ -55,7 +55,7 @@ class Message(BaseModel):  ## 包含字段较为全面  7.13 ✅️
     trajectory_id:str|None = Field(default=None) # which trajectory
 
     ## message info
-    role:Literal["user","assistant","system"] = Field(default="user",description="message from whom")
+    role:Literal["user","assistant","system","tool"] = Field(default="user",description="message from whom")
     author_id:str = Field(default_factory=str,description="message author id")
     seq_id:int = Field(default_factory=int,description="message index in session")
     status:Literal["completed","failed"] = Field(default="completed",description="whether message completed or not")
@@ -69,7 +69,6 @@ class Message(BaseModel):  ## 包含字段较为全面  7.13 ✅️
 
     ## tool call info
     tool_call_ids:list = Field(default_factory=list,description="message tool call id")
-    tool_call_id:list = Field(default_factory=list,description="message tool call id") ## ???
 
     metadata:dict = Field(default_factory=dict,description="message metadata")
 
@@ -135,9 +134,7 @@ class Session(BaseModel): ## 包含字段较为全面  7.13 ✅️  提供add me
 
 
     ## tool_call info
-    tool_call:list[ToolCall] = Field(default_factory=list)
-    tool_call_times:int = Field(default_factory=int)
-    tool_call_ids:list[str|None] = Field(default_factory=list)
+    tool_calls:list[ToolCall] = Field(default_factory=list)
 
     ## memory info
     memory:list[MemoryItem] = Field(default_factory=list) ## 记忆数据 用于针对session进行总结更新
@@ -174,7 +171,6 @@ class InboundEvent(BaseModel):
     """Channel → Gateway 唯一入站。平台字段已在 Channel 内映射完成。"""
     text: str = Field(default_factory=str)
     source: SessionSource = Field(default_factory=SessionSource)
-    content: list[ContentPart] = Field(default_factory=list)
     channel_prompt: str | None = Field(
         default=None,
         description="仅当次注入 API 的平台说明，不写进 Session.messages",
@@ -183,15 +179,11 @@ class InboundEvent(BaseModel):
 
 
 class OutboundReply(BaseModel):
-    """Gateway → Channel 出站。"""
+    """Gateway → Channel 出站。只含发送所需；内部状态留在 Gateway。"""
     text: str = Field(default_factory=str)
     reply_to: str | None = None
-    # 出站路由：dispatcher 靠 source.channel 选 Channel.deliver
+    # 出站路由：dispatcher 靠 source.channel 选 Channel.deliver_to_OutboundEvent
     source: SessionSource = Field(default_factory=SessionSource)
-    session_key: str = Field(default_factory=str)
-    session_id: str = Field(default_factory=str)
-    completed: bool = True
-    error: str | None = None
     metadata: dict = Field(default_factory=dict)
 
 

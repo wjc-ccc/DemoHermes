@@ -2,10 +2,10 @@
 Gateway — 进程内消息枢纽（双队列 + 按 session_key 串行）
 
 思想：
-    1. Channel 只负责 parse_inbound / deliver，把消息 put 进 in_dto
+    1. Channel 只负责 parse_to_InboundEvent / deliver_to_OutboundEvent，把消息 put 进 in_dto
     2. inbound worker 取出 InboundEvent → build_session_key → 串行跑 Loop
     3. 结果写成 OutboundReply put 进 out_dto
-    4. outbound worker 按 source.channel 找到 Channel.deliver
+    4. outbound worker 按 source.channel 找到 Channel.deliver_to_OutboundEvent
 
 同 session_key 串行：每个 key 一把锁，避免多渠道/连击把同一会话打断。
 不同 session_key 可并行（worker 池）。
@@ -28,7 +28,7 @@ from ..core.types import (
 )
 from ..core.loop import AgentLoop
 from ..model.deepseek import DeepSeekModel
-from ..channel.base import BaseChannel
+from ..channel.baseChannel import BaseChannel
 from .queues import GatewayQueues
 from .session_key import build_session_key
 from .session_store import SessionStore, JsonlSessionStore
@@ -94,11 +94,11 @@ class Gateway:
         self.queues.inbound.put(event)
 
     def submit_raw(self, channel_name: str, raw) -> None:
-        """原始平台载荷：先走 Channel.parse_inbound，再入队。"""
+        """原始平台载荷：先走 Channel.parse_to_InboundEvent，再入队。"""
         ch = self._channels.get(channel_name)
         if ch is None:
             raise KeyError(f"channel not registered: {channel_name}")
-        event = ch.parse_inbound(raw)
+        event = ch.parse_to_InboundEvent(raw)
         self.submit(event)
 
     def ask(self, event: InboundEvent, *, timeout: float = 120.0) -> OutboundReply:
@@ -125,13 +125,12 @@ class Gateway:
             return OutboundReply(
                 text="",
                 source=event.source,
-                completed=False,
-                error="timeout waiting for agent reply",
+                metadata={"error": "timeout waiting for agent reply"},
             )
         with self._waiter_lock:
             self._reply_waiters.pop(corr, None)
         return event_box[0] or OutboundReply(
-            text="", source=event.source, completed=False, error="empty reply"
+            text="", source=event.source, metadata={"error": "empty reply"}
         )
 
     # ---- 内部：入站调度 ----
@@ -163,10 +162,10 @@ class Gateway:
                     text="",
                     source=event.source,
                     reply_to=event.source.reply_to_message_id,
-                    session_key=key,
-                    completed=False,
-                    error=str(e),
-                    metadata={"correlation_id": event.metadata.get("correlation_id")},
+                    metadata={
+                        "correlation_id": event.metadata.get("correlation_id"),
+                        "error": str(e),
+                    },
                 )
         self.queues.outbound.put(reply)
 
@@ -183,9 +182,6 @@ class Gateway:
                 text=f"已新开会话 session_id={session.session_id}",
                 source=event.source,
                 reply_to=event.source.reply_to_message_id,
-                session_key=session_key,
-                session_id=session.session_id,
-                completed=True,
                 metadata={"correlation_id": event.metadata.get("correlation_id")},
             )
 
@@ -197,7 +193,7 @@ class Gateway:
         user_msg = Message(
             role="user",
             content_text=event.text,
-            content=event.content or [ContentPart(type="text", text=event.text)],
+            content=[ContentPart(type="text", text=event.text)] if event.text else [],
             author_id=event.source.user_id or "",
         )
         result = self.loop.run_turn(
@@ -213,10 +209,6 @@ class Gateway:
             text=text_out or "",
             source=event.source,
             reply_to=event.source.reply_to_message_id,
-            session_key=session_key,
-            session_id=result.session_id,
-            completed=result.completed,
-            error=result.error,
             metadata={"correlation_id": event.metadata.get("correlation_id")},
         )
 
@@ -243,9 +235,9 @@ class Gateway:
                 logger.warning("no channel for outbound channel=%s", reply.source.channel)
                 continue
             try:
-                ch.deliver(reply)
+                ch.deliver_to_OutboundEvent(reply)
             except Exception:
-                logger.exception("deliver failed channel=%s", reply.source.channel)
+                logger.exception("deliver_to_OutboundEvent failed channel=%s", reply.source.channel)
 
 
 # 兼容旧名
