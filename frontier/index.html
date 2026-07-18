@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DemoCursor Agent</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">◈</span>
+      <span class="title">DemoCursor Agent</span>
+      <span id="conn-dot" class="dot dot-off" title="后端连接状态"></span>
+    </div>
+    <div class="topbar-right">
+      <span id="model-badge" class="badge">model: -</span>
+      <span id="tools-badge" class="badge">tools: -</span>
+      <span id="skills-badge" class="badge">skills: -</span>
+      <button id="btn-new" class="btn btn-ghost" title="重开当前会话">新会话</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- 左：对话区 -->
+    <section class="chat-panel">
+      <div id="chat-list" class="chat-list">
+        <div class="chat-empty">
+          <p>👋 你好，我是 DemoCursor Agent。</p>
+          <p class="hint">试试：<code>帮我算一下 (123+456)*7</code> 或 <code>帮我写份周报</code>，右侧面板会实时展示我的思考与工具调用过程。</p>
+        </div>
+      </div>
+      <form id="chat-form" class="chat-input-bar">
+        <input id="chat-input" type="text" placeholder="输入消息，Enter 发送…" autocomplete="off" />
+        <button type="submit" class="btn btn-primary" id="btn-send">发送</button>
+      </form>
+    </section>
+
+    <!-- 右：Agent Loop 可视化 -->
+    <aside class="loop-panel">
+      <div class="loop-header">
+        <span>Agent Loop 可视化</span>
+        <button id="btn-clear-events" class="btn btn-ghost btn-sm">清空</button>
+      </div>
+      <div id="loop-list" class="loop-list">
+        <div class="loop-empty">等待第一轮对话…</div>
+      </div>
+    </aside>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

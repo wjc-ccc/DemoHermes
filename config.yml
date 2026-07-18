@@ -1,3 +1,3 @@
 # logging config
-LOG_PATH: temp/runtime.log
+LOG_PATH: data/logs/runtime.log
 LOG_LEVEL: INFO
