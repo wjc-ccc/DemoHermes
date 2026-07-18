@@ -32,7 +32,7 @@ class BaseChannel(ABC):
                     self.config = json.load(f)
             except Exception:
                 self.config = {}
-        # 运行状态（实例级 —— 类属性 dict 会被所有子类共享，那是 bug）
+
         self.status: dict[str, Any] = {
             "enable": False,           # 配置里是否启用
             "start": False,            # 是否已启动
