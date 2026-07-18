@@ -97,6 +97,11 @@ class ToolCall(BaseModel): ## 包含字段较为全面  7.13 ✅️
     error:str|None = Field(default=None)
     metadata:dict = Field(default_factory=dict,description="tool call metadata")
 
+    @property
+    def ok(self) -> bool:
+        """是否执行成功（由 status 推导，不单独存储）。"""
+        return self.status == "success"
+
 
 #**** Memory ****
 class MemoryItem(BaseModel):

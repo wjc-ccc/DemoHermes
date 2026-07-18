@@ -21,7 +21,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = ROOT / "config.yml"
-DEFAULT_LOG_PATH = ROOT / "temp" / "runtime.log"
+DEFAULT_LOG_PATH = ROOT / "data" / "logs" / "runtime.log"
 DEFAULT_LOG_LEVEL = "INFO"
 LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
 LOG_DATE_FORMAT = "%H:%M:%S"
@@ -39,7 +39,7 @@ def load_log_config(config_path: Path | None = None) -> dict[str, Any]:
     """从 config.yml 读取日志配置。"""
     path = config_path or DEFAULT_CONFIG_PATH
     config: dict[str, Any] = {
-        "LOG_PATH": "temp/runtime.log",
+        "LOG_PATH": "data/logs/runtime.log",
         "LOG_LEVEL": DEFAULT_LOG_LEVEL,
     }
 

@@ -1,6 +1,11 @@
-## 每个channel 能力 
-# 能够接通对应的通道 能够把对应渠道所有的输入 合理转化为agent设定的types中的 io dto 然后给到对应的gateway即可
-# 包含不限于session key构建（是否新对话），message构建（角色，内容，类型），tool构建（工具名称，工具参数），memory构建（记忆内容），response构建（回复内容）
-# registry 负责 文件中的类别名（动态导入） 对应的渠道是否可用 
-# 启动的话读取对应渠道的密钥 调用对应渠道的启动方式 利用渠道提供的入口 以及实现的结构转换函数
+"""
+Agent/channel 包 — 平台适配层
 
+每个 Channel 负责：平台原始载荷 ⇄ 统一 DTO（InboundEvent / OutboundReply）。
+新增平台只需继承 BaseChannel 实现 parse/deliver，Gateway 与 Loop 零改动。
+"""
+from .baseChannel import BaseChannel
+from .channel_cli import CliChannel
+from .channel_frontier import FrontierChannel
+
+__all__ = ["BaseChannel", "CliChannel", "FrontierChannel"]
