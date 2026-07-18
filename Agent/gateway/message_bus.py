@@ -22,6 +22,12 @@ from ..core.types import InboundEvent, OutboundReply
 T = TypeVar("T")
 
 
+"""
+本质两个queue，一个负责进入一个负责出，消费者和生产者只有gateway
+提供的功能就是put、get、大小约束、结束信号、长度观测
+"""
+
+
 class _DtoQueue(Generic[T]):
     """单条 DTO 队列：put / get / 结束信号 / 长度观测。"""
 

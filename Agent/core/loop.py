@@ -30,7 +30,7 @@ from .types import Message, Session, ToolCall, TurnResult
 logger = logging.getLogger(__name__)
 
 # 文本预览长度：事件载荷只带预览，完整内容在 Session 里
-_PREVIEW = 300
+_PREVIEW = 100
 
 
 class AgentLoop:

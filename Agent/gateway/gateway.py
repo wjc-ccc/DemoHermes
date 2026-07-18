@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 # 同步 ask 的默认等待上限（秒）
 ASK_TIMEOUT = 120.0
 
-
+# messagebus + agentloop + channels + locks + threadpool + sessiondict + runningstate
 class Gateway:
     def __init__(
         self,
@@ -51,22 +51,22 @@ class Gateway:
         workers: int = 2,
     ):
         self.agent_id = agent_id
-        self.loop = loop or AgentLoop()          # 对话核心（不认识平台）
+        self.loop = loop or AgentLoop()          # 对话核心
         self.store = store or DictSessionStore()  # session_key → Session（dict）
         self.bus = bus or MessageBus()            # 入站/出站双队列
-        self.events = event_bus or default_event_bus
-        self._channels: dict[str, BaseChannel] = {}
+        self.events = event_bus or default_event_bus 
+        self._channels: dict[str, BaseChannel] = {} # channel 注册与管理
         # 同 session_key 串行：每 key 一把锁
-        self._session_locks: dict[str, threading.Lock] = {}
-        self._locks_guard = threading.Lock()
-        self._executor = ThreadPoolExecutor(max_workers=max(1, workers), thread_name_prefix="gw-in")
-        self._threads: list[threading.Thread] = []
-        self._running = False
+        self._session_locks: dict[str, threading.Lock] = {} # 同 session_key 串行：每 key 一把锁
+        self._locks_guard = threading.Lock() # 同 session_key 串行：每 key 一把锁
+        self._executor = ThreadPoolExecutor(max_workers=max(1, workers), thread_name_prefix="gw-in") # 线程池
+        self._threads: list[threading.Thread] = [] # 线程池
+        self._running = False # 运行状态
         # 同步 ask 的等待者：correlation_id → 回调
-        self._reply_waiters: dict[str, list] = {}
-        self._waiter_lock = threading.Lock()
+        self._reply_waiters: dict[str, list] = {} # 同步 ask 的等待者：correlation_id → 回调
+        self._waiter_lock = threading.Lock() # 同步 ask 的等待者：correlation_id → 回调
 
-    # ================= Channel 注册 =================
+    # ================= Channel 注册 ================= ✅️
     def register_channel(self, channel: BaseChannel) -> None:
         """注册 Channel 并回绑 Gateway（Channel.send_gateway 才有去处）。"""
         self._channels[channel.name] = channel
@@ -76,7 +76,8 @@ class Gateway:
     def get_channel(self, name: str) -> BaseChannel | None:
         return self._channels.get(name)
 
-    # ================= 生命周期 =================
+    # ================= 生命周期 =================  ✅️
+    # 启动gateway的两个线程  分别启动监听messagebus的inbound和outbound
     def start(self) -> None:
         if self._running:
             return
@@ -92,19 +93,21 @@ class Gateway:
             self._executor._max_workers, list(self._channels),
         )
 
+    # ================= 生命周期结束 =================  ✅️
+    # 首先设置监督flag _running为false 然后关闭message bus 最后通过shutdown函数关闭线程池
     def stop(self) -> None:
         self._running = False
         self.bus.close()
         self._executor.shutdown(wait=False, cancel_futures=True)
         logger.info("gateway 已停止")
 
-    # ================= 消息构建 =================
+    # ================= 消息构建 =================  ✅️
     @staticmethod
     def build_message(event: InboundEvent) -> Message:
         """InboundEvent → role=user 的 Message（统一走 core/messages 工厂）。"""
         return build_user_message(event)
 
-    # ================= 入站入口 =================
+    # ================= 入站入口 =================    ✅️
     def submit(self, event: InboundEvent) -> None:
         """异步：解析好的 InboundEvent 入队，不等待回复。"""
         self.bus.publish_inbound(event)
@@ -116,6 +119,7 @@ class Gateway:
             raise KeyError(f"channel 未注册: {channel_name}")
         self.submit(ch.parse_to_InboundEvent(raw))
 
+    # TODO 等待理解ask函数的实现
     def ask(self, event: InboundEvent, *, timeout: float = ASK_TIMEOUT) -> OutboundReply:
         """
         同步问一句：仍走完整 MessageBus 链路，
@@ -148,7 +152,8 @@ class Gateway:
             with self._waiter_lock:
                 self._reply_waiters.pop(corr, None)
 
-    # ================= 内部：入站调度 =================
+    # ================= 线程task1：入站调度 ================= ✅️
+    # 通过submit函数将事件提交到线程池中 去调用process_inbound函数  每timeout检查一次inbound queue
     def _inbound_dispatch_loop(self) -> None:
         """持续从 in_dto 取事件丢进线程池（池内再按 session_key 加锁串行）。"""
         while self._running:
@@ -160,14 +165,17 @@ class Gateway:
                 break
             self._executor.submit(self._process_inbound, event)
 
+    # ================= 核心：获取锁 ================= ✅️
     def _lock_for(self, session_key: str) -> threading.Lock:
         with self._locks_guard:
             if session_key not in self._session_locks:
                 self._session_locks[session_key] = threading.Lock()
             return self._session_locks[session_key]
 
+    # ================= 核心：处理入站事件 ================= ✅️
+    # 本质首先获取 key 然后lock主 然后根据key去run_turn_locked函数去处理事件
     def _process_inbound(self, event: InboundEvent) -> None:
-        # 1) session_key 构建（全项目唯一公式）
+        # 1) session_key 构建
         key = build_session_key(event.source, agent_id=self.agent_id)
         # 2) 同 key 加锁串行，保证同一会话不被并发打断
         with self._lock_for(key):
@@ -186,6 +194,8 @@ class Gateway:
                 )
         self.bus.publish_outbound(reply)
 
+    # ================= 核心：处理入站事件 =================  ✅️
+    # 本质首先解析text 然后判断是否为斜杠命令 不是的话根据key获取session上下文 然后把session 和message加入进去 然后交给loop去跑一轮
     def _run_turn_locked(self, session_key: str, event: InboundEvent) -> OutboundReply:
         corr = event.metadata.get("correlation_id")
 
@@ -235,7 +245,7 @@ class Gateway:
             metadata={"correlation_id": corr},
         )
 
-    # ================= 内部：出站分发 =================
+    # ================= 线程task2：出站分发 ================= ✅️
     def _outbound_dispatch_loop(self) -> None:
         """从 out_dto 取回复：先唤醒同步等待者，再按 source.channel 路由投递。"""
         while self._running:
