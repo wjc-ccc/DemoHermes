@@ -15,7 +15,7 @@ from typing import Any
 from openai import OpenAI
 
 from .baseStructure import BaseModel, ModelResponse, ToolCallRequest
-from ..provider import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, MODEL
+from ..Provider import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, MODEL
 
 logger = logging.getLogger(__name__)
 

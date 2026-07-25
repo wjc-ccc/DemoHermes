@@ -15,7 +15,7 @@ import logging
 from pathlib import Path
 
 from .base import Skill
-from ..provider import ROOT
+from ..Provider import ROOT
 
 logger = logging.getLogger(__name__)
 

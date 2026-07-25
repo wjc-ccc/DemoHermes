@@ -77,7 +77,8 @@ class Gateway:
         return self._channels.get(name)
 
     # ================= 生命周期 =================  ✅️
-    # 启动gateway的两个线程  分别启动监听messagebus的inbound和outbound
+    # threading.Thread(target=xx)创建, t.start()启动gateway的两个线程  
+    # 分别启动监听messagebus的inbound和outbound
     def start(self) -> None:
         if self._running:
             return

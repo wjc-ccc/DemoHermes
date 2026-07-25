@@ -20,7 +20,7 @@ import json
 import logging
 
 from .types import Message, Session
-from ..provider import SYSTEM_PROMPT_PATH
+from ..Provider import SYSTEM_PROMPT_PATH
 
 logger = logging.getLogger(__name__)
 

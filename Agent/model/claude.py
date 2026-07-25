@@ -20,7 +20,7 @@ from typing import Any
 import httpx
 
 from .baseStructure import BaseModel, ModelResponse, ToolCallRequest
-from ..provider import ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL, DEEPSEEK_API_KEY, MODEL
+from ..Provider import ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL, DEEPSEEK_API_KEY, MODEL
 
 logger = logging.getLogger(__name__)
 

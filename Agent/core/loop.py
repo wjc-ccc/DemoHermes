@@ -62,11 +62,12 @@ class AgentLoop:
         self.model_retries = model_retries
         self._interrupt = False
 
+    # ---- 请求打断 ----   ✅️ 7.20
     def request_interrupt(self) -> None:
         """外部（Channel/Gateway）请求打断；Loop 每轮 think 前检查。"""
         self._interrupt = True
 
-    # ---- 事件辅助 ----
+    # ---- 事件辅助 ----   ✅️ 7.20
     def _emit(self, type_: str, turn_id: str, session: Session, session_key: str, **data) -> None:
         self.events.publish(
             LoopEvent(
@@ -78,7 +79,7 @@ class AgentLoop:
             )
         )
 
-    # ---- 模型调用（带重试）----
+    # ---- 模型调用----   ✅️ 7.20
     def _chat_with_retry(self, messages: list[dict]):
         tools = self.tools.get_schemas() if self.tools else None
         last_error: Exception | None = None
@@ -94,7 +95,9 @@ class AgentLoop:
                     time.sleep(0.5 * (attempt + 1))  # 简单退避
         raise last_error  # type: ignore[misc]
 
-    # ---- 主入口 ----
+    # ---- 主入口 ----   ✅️ 7.20
+    # 核心：组装上下文 -> 前端展示记录 -> 
+    # 开始循环迭代 （判断有无打断 -> 组装上下文 -> 模型调用 -> 工具执行） -> 纯文本 -> 写入Session -> 返回结果）  
     def run_turn(
         self,
         session: Session,
@@ -108,6 +111,7 @@ class AgentLoop:
 
         # ---- observe：用户消息入 Session ----
         session.add_message(user_message)
+        # 发射事件 用于前端展示当前任务已开始
         self._emit(
             "turn_start", turn_id, session, session_key,
             user_text=user_message.content_text[:_PREVIEW],
@@ -131,6 +135,8 @@ class AgentLoop:
             )
             messages = builder.building_context()
             stats = builder.context_stats()
+
+            # 发射事件 用于前端展示记录
             self._emit(
                 "llm_request", turn_id, session, session_key,
                 iteration=iteration, **stats,
@@ -144,6 +150,8 @@ class AgentLoop:
                     final_text=None, session_id=session.session_id,
                     completed=False, error=f"模型调用失败: {e}",
                 )
+
+            # 发射事件 用于前端展示当前模型调用结果
             self._emit(
                 "llm_response", turn_id, session, session_key,
                 iteration=iteration,
@@ -187,7 +195,8 @@ class AgentLoop:
             error="max_iterations",
         )
 
-    # ---- 工具执行（含事件与记录）----
+    # ---- 工具执行（含事件与记录）----    ✅️7.20
+    # 本质：调用工具 -> 记录工具调用结果 -> 发射事件 用于前端展示当前工具调用结果
     def _execute_tool(self, req, session: Session, turn_id: str, session_key: str) -> ToolCall:
         record = ToolCall(
             tool_call_id=req.id or uuid.uuid4().hex,

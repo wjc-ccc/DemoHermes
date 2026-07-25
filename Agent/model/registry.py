@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 
 from .baseStructure import BaseModel
-from ..provider import MODEL
+from ..Provider import MODEL
 
 logger = logging.getLogger(__name__)
 

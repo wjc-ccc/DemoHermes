@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from ..core.types import InboundEvent, OutboundReply
-from ..provider import CHANNEL_CONFIG
+from ..Provider import CHANNEL_CONFIG
 
 
 class BaseChannel(ABC):
