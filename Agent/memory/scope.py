@@ -11,7 +11,23 @@ import hashlib
 import json
 from pathlib import Path
 
+from ..core.types import SessionSource
 from .types import MemoryScope
+
+
+def build_memory_scope(source: SessionSource) -> MemoryScope:
+    """唯一 scope 构造函数（§3.1）。
+
+    - DM：personal，key 为 "{channel}:user:{user_id}"；无 user_id 回退 "{channel}:chat:{chat_id}"；
+    - Group/Thread：group，key 为 "{channel}:chat:{chat_id}"；
+    - thread_id 默认不拆分长期记忆；
+    - 首版无跨平台身份绑定，相同自然人在不同 channel 默认隔离（ADR-10）。
+    """
+    if source.chat_type == "dm":
+        if source.user_id:
+            return MemoryScope(kind="personal", key=f"{source.channel}:user:{source.user_id}")
+        return MemoryScope(kind="personal", key=f"{source.channel}:chat:{source.chat_id}")
+    return MemoryScope(kind="group", key=f"{source.channel}:chat:{source.chat_id}")
 
 
 def scope_dir_name(scope: MemoryScope) -> str:
