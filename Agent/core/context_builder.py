@@ -18,9 +18,13 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import TYPE_CHECKING
 
 from .types import Message, Session
 from ..Provider import SYSTEM_PROMPT_PATH
+
+if TYPE_CHECKING:
+    from ..memory.snapshot import MemoryContextSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +34,14 @@ class ContextBuilder:
         self,
         session: Session,
         *,
+        memory_context: MemoryContextSnapshot | None = None,
         skill_registry=None,
         ephemeral_prompt: str | None = None,
     ):
         self.session: Session = session
+        # 本 turn 的不可变记忆快照（7.23 方案 §2 Seam C）：
+        # 只读取预构建的 prompt 整体注入，不分辨 Hot/Daily/Provider，也不知道文件/SQLite
+        self._memory_context = memory_context
         # Level 1 技能摘要（无技能注册表时为空串，不占 prompt）
         self._skill_summary: str = (
             skill_registry.summaries_prompt() if skill_registry else ""
@@ -50,6 +58,11 @@ class ContextBuilder:
             logger.warning("system prompt 文件缺失: %s，使用兜底文案", SYSTEM_PROMPT_PATH)
             content = "你是一个友好的AI助手。"
         self.messages.append({"role": "system", "content": content})
+
+    # ---- 1.5 记忆快照（整段带围栏注入）----
+    def _loading_memory(self) -> None:
+        if self._memory_context is not None:
+            self.messages.append({"role": "system", "content": self._memory_context.prompt})
 
     # ---- 2. 技能摘要（Level 1）----
     def _loading_skills(self) -> None:
@@ -100,6 +113,7 @@ class ContextBuilder:
     def building_context(self) -> list[dict]:
         self.messages = []  # 每轮重置
         self._loading_system_prompt()
+        self._loading_memory()
         self._loading_skills()
         self._loading_ephemeral()
         self._loading_messages()
