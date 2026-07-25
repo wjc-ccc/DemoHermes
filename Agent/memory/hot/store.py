@@ -20,7 +20,9 @@ replace/remove/解析在 Slice 2 随 CRUD 测试补齐。
 from __future__ import annotations
 
 import hashlib
+import os
 import re
+import time
 import unicodedata
 import uuid
 from pathlib import Path
@@ -112,6 +114,36 @@ class HotStore:
         self._write(pattern.sub("", text))
         return self.revision()
 
+    @property
+    def path(self) -> Path:
+        return self._path
+
     def _write(self, text: str) -> None:
+        """原子替换：同目录唯一临时文件 → flush+fsync → os.replace（§5.1）。
+
+        调用方必须已持有 PathLockRegistry 中本文件的锁。
+        """
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(text, encoding="utf-8", newline="\n")
+        tmp = self._path.with_name(f".{self._path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(text)
+                fh.flush()
+                os.fsync(fh.fileno())
+            self._replace_with_retry(tmp)
+        finally:
+            tmp.unlink(missing_ok=True)
+
+    def _replace_with_retry(self, tmp: Path, attempts: int = 200) -> None:
+        """os.replace 在 Windows 上会因 reader 瞬时持有句柄而 PermissionError，
+
+        reader 每次只持有微秒级，做有界退避重试（§5.1 单进程保证内）。
+        """
+        for attempt in range(attempts):
+            try:
+                os.replace(tmp, self._path)
+                return
+            except PermissionError:
+                if attempt == attempts - 1:
+                    raise
+                time.sleep(0.005)

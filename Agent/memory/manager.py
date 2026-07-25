@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 from .hot.store import HotStore
+from .locking import REGISTRY
 from .scope import ensure_scope_dir
 from .snapshot import DocumentRevision, MemoryContextSnapshot
 from .types import (
@@ -56,33 +57,35 @@ class MemoryManager:
                 message="content 含保留 entry 围栏标记",
             )
         store = self._store_for(mutation.scope, mutation.target)
-        if mutation.expected_revision is not None and mutation.expected_revision != store.revision():
+        # §5.1：锁覆盖完整 read → validate → patch → replace
+        with REGISTRY.hold(store.path):
+            if mutation.expected_revision is not None and mutation.expected_revision != store.revision():
+                return MemoryMutationResult(
+                    ok=False, conflict=True, error_code="revision_conflict",
+                    message="expected_revision 与当前文档不一致，未写入",
+                )
+            if mutation.action == "add":
+                entry_id, revision = store.add(mutation.content or "")
+                return MemoryMutationResult(ok=True, entry_id=entry_id, revision=revision)
+            if mutation.action == "replace":
+                revision = store.replace(mutation.entry_id or "", mutation.content or "")
+                if revision is None:
+                    return MemoryMutationResult(
+                        ok=False, error_code="entry_not_found",
+                        message=f"entry 未精确命中: {mutation.entry_id}",
+                    )
+                return MemoryMutationResult(ok=True, entry_id=mutation.entry_id, revision=revision)
+            if mutation.action == "remove":
+                revision = store.remove(mutation.entry_id or "")
+                if revision is None:
+                    return MemoryMutationResult(
+                        ok=False, error_code="entry_not_found",
+                        message=f"entry 未精确命中: {mutation.entry_id}",
+                    )
+                return MemoryMutationResult(ok=True, entry_id=mutation.entry_id, revision=revision)
             return MemoryMutationResult(
-                ok=False, conflict=True, error_code="revision_conflict",
-                message="expected_revision 与当前文档不一致，未写入",
+                ok=False, error_code="unsupported_action", message=f"暂未实现: {mutation.action}"
             )
-        if mutation.action == "add":
-            entry_id, revision = store.add(mutation.content or "")
-            return MemoryMutationResult(ok=True, entry_id=entry_id, revision=revision)
-        if mutation.action == "replace":
-            revision = store.replace(mutation.entry_id or "", mutation.content or "")
-            if revision is None:
-                return MemoryMutationResult(
-                    ok=False, error_code="entry_not_found",
-                    message=f"entry 未精确命中: {mutation.entry_id}",
-                )
-            return MemoryMutationResult(ok=True, entry_id=mutation.entry_id, revision=revision)
-        if mutation.action == "remove":
-            revision = store.remove(mutation.entry_id or "")
-            if revision is None:
-                return MemoryMutationResult(
-                    ok=False, error_code="entry_not_found",
-                    message=f"entry 未精确命中: {mutation.entry_id}",
-                )
-            return MemoryMutationResult(ok=True, entry_id=mutation.entry_id, revision=revision)
-        return MemoryMutationResult(
-            ok=False, error_code="unsupported_action", message=f"暂未实现: {mutation.action}"
-        )
 
     # ---- Seam A：读取 ----
     def read(self, request: BuiltinMemoryReadRequest) -> MemoryDocumentView:
