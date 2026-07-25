@@ -8,7 +8,9 @@ from .manager import MemoryManager
 from .snapshot import DocumentRevision, MemoryContextSnapshot
 from .types import (
     BuiltinMemoryMutation,
+    BuiltinMemoryReadRequest,
     MemoryDiagnostic,
+    MemoryDocumentView,
     MemoryEntry,
     MemoryMutationResult,
     MemoryProvenance,
@@ -17,9 +19,11 @@ from .types import (
 
 __all__ = [
     "BuiltinMemoryMutation",
+    "BuiltinMemoryReadRequest",
     "DocumentRevision",
     "MemoryContextSnapshot",
     "MemoryDiagnostic",
+    "MemoryDocumentView",
     "MemoryEntry",
     "MemoryManager",
     "MemoryMutationResult",
