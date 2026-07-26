@@ -187,3 +187,24 @@ class MemoryHit(BaseModel):
     snippet: str
     occurred_at: float | None = None
     ref: DailyEntryRef
+
+
+# ---- §3.3 Turn 事实信封（turn 持久化 / Provider sync / review job 的幂等键）----
+
+
+class TurnEnvelope(BaseModel):
+    """一个已完成（或中断）turn 的不可变事实摘要；turn_id 由 Loop 生成。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    turn_id: str
+    session_id: str
+    scope: MemoryScope
+    user_message_id: str
+    assistant_message_ids: tuple[str, ...]
+    tool_call_ids: tuple[str, ...]
+    started_at: float
+    finished_at: float
+    completed: bool
+    interrupted: bool
+    error: str | None
