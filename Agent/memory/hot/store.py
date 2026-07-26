@@ -51,12 +51,33 @@ def _normalize(content: str) -> str:
     return unicodedata.normalize("NFKC", content).casefold().strip()
 
 
-class HotStore:
-    """单个 Markdown 文档（一个 scope 的一个 target）。"""
+def is_valid_document(text: str) -> bool:
+    """校验文档是可解析、entry 格式完好的候选（§4.4 缩减输出校验）。
 
-    def __init__(self, path: Path, title: str):
+    - 首行是 Markdown 标题；
+    - 每个 open 围栏都有配对 close，且都能解析出非空 entry。
+    """
+    if not text.startswith("# "):
+        return False
+    opens = text.count("<!-- memory-entry:")
+    closes = text.count("<!-- /memory-entry:")
+    if opens != closes:
+        return False
+    parsed = [m for m in _ENTRY_RE.finditer(text) if m.group("content").strip()]
+    return len(parsed) == opens
+
+
+class HotStore:
+    """单个 Markdown 文档（一个 scope 的一个 target）。
+
+    mutation 分两步（§4.4 事务）：candidate_* 只算新文本不写盘，
+    由 Manager 校验预算后决定 write_text / 备份+缩减。
+    """
+
+    def __init__(self, path: Path, title: str, id_factory=new_entry_id):
         self._path = path
         self._title = title
+        self._id_factory = id_factory
 
     def read_text(self) -> str:
         """整文件内容；文件不存在时等价于只有标题的空文档。"""
@@ -74,22 +95,44 @@ class HotStore:
             for m in _ENTRY_RE.finditer(self.read_text())
         )
 
-    def add(self, content: str) -> tuple[str, str]:
-        """追加一条 entry，返回 (entry_id, 新 revision)。
+    @staticmethod
+    def revision_of(text: str) -> str:
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
-        exact normalized content 重复时返回既有 ID，不重复写（§3.5 规则 4）。
+    def bounded_text(self, max_chars: int) -> tuple[str, bool]:
+        """返回 (注入用文本, 是否发生了降级)。
+
+        文档被外部改到超限时，build_context 不改磁盘（§4.4 末段）：
+        只在 entry 边界取前缀——保留标题与尽可能多的完整 entry，
+        绝不截出半截 entry。
         """
+        text = self.read_text()
+        if len(text) <= max_chars:
+            return text, False
+        degraded = f"# {self._title}\n"
+        for entry in self.entries():
+            candidate = (
+                degraded.rstrip("\n") + "\n\n"
+                + render_entry(entry.entry_id, entry.content) + "\n"
+            )
+            if len(candidate) > max_chars:
+                break
+            degraded = candidate
+        return degraded, True
+
+    # ---- candidate：只计算，不写盘 ----
+    def candidate_add(self, content: str) -> tuple[str, str | None]:
+        """返回 (entry_id, candidate_text)；重复内容返回 (既有 ID, None) 表示无需写。"""
         wanted = _normalize(content)
         for entry in self.entries():
             if _normalize(entry.content) == wanted:
-                return entry.entry_id, self.revision()
-        entry_id = new_entry_id()
+                return entry.entry_id, None
+        entry_id = self._id_factory()
         text = self.read_text().rstrip("\n") + "\n\n" + render_entry(entry_id, content) + "\n"
-        self._write(text)
-        return entry_id, self.revision()
+        return entry_id, text
 
-    def replace(self, entry_id: str, content: str) -> str | None:
-        """精确替换一个 entry 的内容，返回新 revision；ID 未精确命中一个时返回 None。"""
+    def candidate_replace(self, entry_id: str, content: str) -> str | None:
+        """精确替换一个 entry 的内容；ID 未精确命中一个时返回 None。"""
         text = self.read_text()
         pattern = re.compile(
             r"<!-- memory-entry:" + re.escape(entry_id) + r" -->\n.*?\n<!-- /memory-entry:"
@@ -98,11 +141,10 @@ class HotStore:
         )
         if len(pattern.findall(text)) != 1:
             return None
-        self._write(pattern.sub(render_entry(entry_id, content), text))
-        return self.revision()
+        return pattern.sub(render_entry(entry_id, content), text)
 
-    def remove(self, entry_id: str) -> str | None:
-        """精确删除一个 entry（含其围栏与多余空行），返回新 revision；未命中返回 None。"""
+    def candidate_remove(self, entry_id: str) -> str | None:
+        """精确删除一个 entry（含其围栏与多余空行）；未命中返回 None。"""
         text = self.read_text()
         pattern = re.compile(
             r"\n*<!-- memory-entry:" + re.escape(entry_id) + r" -->\n.*?\n<!-- /memory-entry:"
@@ -111,14 +153,13 @@ class HotStore:
         )
         if len(pattern.findall(text)) != 1:
             return None
-        self._write(pattern.sub("", text))
-        return self.revision()
+        return pattern.sub("", text)
 
     @property
     def path(self) -> Path:
         return self._path
 
-    def _write(self, text: str) -> None:
+    def write_text(self, text: str) -> None:
         """原子替换：同目录唯一临时文件 → flush+fsync → os.replace（§5.1）。
 
         调用方必须已持有 PathLockRegistry 中本文件的锁。

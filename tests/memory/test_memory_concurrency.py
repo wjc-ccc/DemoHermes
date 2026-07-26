@@ -20,7 +20,10 @@ def test_two_concurrent_adds_from_two_managers_are_both_preserved(tmp_path):
     manager_a = MemoryManager(root=root)
     manager_b = MemoryManager(root=root)  # 两个 Manager 实例共享同一 root
 
+    # 每轮一个独立 scope：单文档 2 条 entry 远低于 1375 字符硬上限（Slice 5 预算），
+    # 同时保留“同一文件被两线程并发 add”的完整竞争窗口。
     for round_no in range(_ROUNDS):
+        scope = MemoryScope(kind="personal", key=f"cli:user:u{round_no}")
         barrier = threading.Barrier(2)
         errors: list[Exception] = []
 
@@ -29,7 +32,7 @@ def test_two_concurrent_adds_from_two_managers_are_both_preserved(tmp_path):
                 barrier.wait(timeout=10)
                 result = manager.apply(
                     BuiltinMemoryMutation(
-                        scope=_SCOPE, target="profile", action="add",
+                        scope=scope, target="profile", action="add",
                         content=content, provenance=_PROVENANCE,
                     )
                 )
@@ -42,12 +45,10 @@ def test_two_concurrent_adds_from_two_managers_are_both_preserved(tmp_path):
         t1.start(); t2.start(); t1.join(); t2.join()
         assert not errors
 
-    view = manager_a.read(BuiltinMemoryReadRequest(scope=_SCOPE, target="profile"))
-    contents = {e.content for e in view.entries}
-    expected = {
-        f"{who}线程第{n}条" for n in range(_ROUNDS) for who in ("甲", "乙")
-    }
-    assert contents == expected
+        view = manager_a.read(BuiltinMemoryReadRequest(scope=scope, target="profile"))
+        assert {e.content for e in view.entries} == {
+            f"甲线程第{round_no}条", f"乙线程第{round_no}条"
+        }
 
 
 def test_concurrent_replace_with_stale_revision_reports_one_conflict(tmp_path):
