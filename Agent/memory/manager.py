@@ -15,8 +15,11 @@ Daily 默认不注入，Provider 在 Slice 12 接入。
 from __future__ import annotations
 
 import time
+import unicodedata
 import uuid
+from datetime import datetime, timezone as dt_timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from .budget import HOT_MAX_CHARS
 from .hot.store import HotStore, is_valid_document, new_entry_id
@@ -26,10 +29,13 @@ from .snapshot import DocumentRevision, MemoryContextSnapshot
 from .types import (
     BuiltinMemoryMutation,
     BuiltinMemoryReadRequest,
+    DailyEntryRef,
     MemoryDiagnostic,
     MemoryDocumentView,
+    MemoryHit,
     MemoryMutationResult,
     MemoryScope,
+    MemorySearchRequest,
 )
 
 _FENCE_NOTE = (
@@ -48,11 +54,41 @@ def _has_reserved_marker(content: str) -> bool:
     return any(marker in content for marker in _RESERVED_MARKERS)
 
 
+def _stable_ref(ref: DailyEntryRef) -> str:
+    """typed ref 的稳定字符串（§4.2 同分 tie-break）。"""
+    return f"{ref.source}:{ref.date}:{ref.entry_id}"
+
+
+def _snippet(content: str, hit_pos: int, max_chars: int) -> str:
+    """§4.2：短内容整段返回；长内容在命中点两侧截取（code point 边界裁剪）。"""
+    if len(content) <= max_chars:
+        return content
+    start = max(0, hit_pos - max_chars // 2)
+    return content[start : start + max_chars]
+
+
 class MemoryManager:
-    def __init__(self, root: str | Path, *, id_factory=new_entry_id, compactor=None):
+    def __init__(
+        self,
+        root: str | Path,
+        *,
+        id_factory=new_entry_id,
+        compactor=None,
+        clock=time.time,
+        timezone: ZoneInfo | None = None,
+    ):
         self._root = Path(root)
         self._id_factory = id_factory
         self._compactor = compactor  # 可替换 MemoryCompactor seam；缺失时超限写入失败
+        self._clock = clock  # 可注入 Clock seam；daily 默认日期只能由它产生（§3.2）
+        self._timezone = timezone  # None → UTC（§4.2 不依赖操作系统隐式时区）
+
+    def _resolve_date(self, date: str | None) -> str:
+        """daily 日期：显式给定优先；否则由注入 Clock + 配置时区的自然日决定。"""
+        if date is not None:
+            return date
+        tz = self._timezone or dt_timezone.utc
+        return datetime.fromtimestamp(self._clock(), tz).date().isoformat()
 
     # ---- Seam A：写入 ----
     def apply(self, mutation: BuiltinMemoryMutation) -> MemoryMutationResult:
@@ -61,7 +97,7 @@ class MemoryManager:
                 ok=False, error_code="reserved_marker",
                 message="content 含保留 entry 围栏标记",
             )
-        store = self._store_for(mutation.scope, mutation.target)
+        store = self._store_for(mutation.scope, mutation.target, date=mutation.date)
         # §5.1：锁覆盖完整 read → validate → patch → backup/compact → replace
         with REGISTRY.hold(store.path):
             if mutation.expected_revision is not None and mutation.expected_revision != store.revision():
@@ -146,13 +182,47 @@ class MemoryManager:
 
     # ---- Seam A：读取 ----
     def read(self, request: BuiltinMemoryReadRequest) -> MemoryDocumentView:
-        store = self._store_for(request.scope, request.target)
+        store = self._store_for(request.scope, request.target, date=request.date)
         return MemoryDocumentView(
             target=request.target,
             revision=store.revision(),
             entries=store.entries(),
             rendered=store.read_text(),
         )
+
+    # ---- Seam A：渐进检索（§3.6；Slice 6 先实现 daily，session/provider 留 Slice 11/12）----
+    def search(self, request: MemorySearchRequest) -> list[MemoryHit]:
+        hits: list[MemoryHit] = []
+        if "daily" in request.sources:
+            hits.extend(self._search_daily(request))
+        # §4.2 稳定排序：同分按 occurred_at DESC，再按 typed ref 稳定字符串升序
+        hits.sort(key=lambda h: (-h.score, -(h.occurred_at or 0.0), _stable_ref(h.ref)))
+        return hits[: request.limit]
+
+    def _search_daily(self, request: MemorySearchRequest) -> list[MemoryHit]:
+        directory = ensure_scope_dir(self._root, request.scope) / "daily"
+        if not directory.is_dir():
+            return []
+        wanted = unicodedata.normalize("NFKC", request.query).casefold()
+        hits: list[MemoryHit] = []
+        for path in sorted(directory.glob("????-??-??.md")):
+            date = path.stem
+            store = HotStore(path, date, id_factory=self._id_factory)
+            for entry in store.entries():
+                normalized = unicodedata.normalize("NFKC", entry.content).casefold()
+                pos = normalized.find(wanted)
+                if pos < 0:
+                    continue
+                hits.append(
+                    MemoryHit(
+                        source="daily",
+                        score=1.0,
+                        snippet=_snippet(entry.content, pos, request.snippet_max_chars),
+                        occurred_at=None,
+                        ref=DailyEntryRef(date=date, entry_id=entry.entry_id),
+                    )
+                )
+        return hits
 
     # ---- Seam A：构建 turn 快照 ----
     def build_context(
@@ -170,11 +240,28 @@ class MemoryManager:
         profile_text = self._bounded_hot_text(profile_store, "profile", diagnostics)
         memory_text = self._bounded_hot_text(memory_store, "memory", diagnostics)
 
+        # §4.1 / ADR-4：Daily 默认不注入，仅显式要求时加入今日（由注入 Clock + 时区决定）
+        daily_block = ""
+        if include_today_daily:
+            if self._timezone is None:
+                diagnostics.append(
+                    MemoryDiagnostic(
+                        code="default_timezone_utc",
+                        message="未配置时区，今日 Daily 按 UTC 自然日取值（§4.2）",
+                    )
+                )
+            today = self._resolve_date(None)
+            daily_text = self._store_for(scope, "daily", date=today).read_text()
+            daily_block = (
+                f'\n\n<today-daily date="{today}">\n{daily_text}\n</today-daily>'
+            )
+
         prompt = (
             "<memory-context>\n"
             f"{_FENCE_NOTE}\n\n"
             f"<profile-memory>\n{profile_text}\n</profile-memory>\n\n"
-            f"<agent-memory>\n{memory_text}\n</agent-memory>\n"
+            f"<agent-memory>\n{memory_text}\n</agent-memory>"
+            f"{daily_block}\n"
             "</memory-context>"
         )
         return MemoryContextSnapshot(
@@ -208,12 +295,18 @@ class MemoryManager:
         return text
 
     # ---- 内部：target → 文档 ----
-    def _store_for(self, scope: MemoryScope, target: str) -> HotStore:
+    def _store_for(self, scope: MemoryScope, target: str, *, date: str | None = None) -> HotStore:
         directory = ensure_scope_dir(self._root, scope)
         if target == "profile":
             filename, title = _PROFILE_DOC[scope.kind]
         elif target == "memory":
             filename, title = _MEMORY_DOC
+        elif target == "daily":
+            resolved = self._resolve_date(date)
+            return HotStore(
+                directory / "daily" / f"{resolved}.md", resolved,
+                id_factory=self._id_factory,
+            )
         else:
             raise ValueError(f"未知 target: {target}")
         return HotStore(directory / filename, title, id_factory=self._id_factory)

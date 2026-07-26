@@ -10,25 +10,31 @@ from .snapshot import DocumentRevision, MemoryContextSnapshot
 from .types import (
     BuiltinMemoryMutation,
     BuiltinMemoryReadRequest,
+    DailyEntryRef,
     MemoryDiagnostic,
     MemoryDocumentView,
     MemoryEntry,
+    MemoryHit,
     MemoryMutationResult,
     MemoryProvenance,
     MemoryScope,
+    MemorySearchRequest,
 )
 
 __all__ = [
     "BuiltinMemoryMutation",
     "BuiltinMemoryReadRequest",
+    "DailyEntryRef",
     "DocumentRevision",
     "MemoryContextSnapshot",
     "MemoryDiagnostic",
     "MemoryDocumentView",
     "MemoryEntry",
+    "MemoryHit",
     "MemoryManager",
     "MemoryMutationResult",
     "MemoryProvenance",
     "MemoryScope",
+    "MemorySearchRequest",
     "build_memory_scope",
 ]

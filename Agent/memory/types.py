@@ -13,9 +13,20 @@ Memory 核心类型契约（7.23 方案 §3）
 """
 from __future__ import annotations
 
+import datetime
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+_DAILY_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _check_daily_date(value: str) -> None:
+    """§3.2：daily date 必须是严格 YYYY-MM-DD 且为真实日历日期（也保证路径安全）。"""
+    if not _DAILY_DATE_RE.match(value):
+        raise ValueError(f"daily date 必须是严格 YYYY-MM-DD: {value!r}")
+    datetime.date.fromisoformat(value)  # 非法日历日期（如 2026-02-30）在此抛 ValueError
 
 
 class MemoryScope(BaseModel):
@@ -71,6 +82,8 @@ class BuiltinMemoryMutation(BaseModel):
                 raise ValueError("remove 不允许携带 content")
         if self.target in ("profile", "memory") and self.date is not None:
             raise ValueError("profile/memory 不得携带 date")
+        if self.target == "daily" and self.date is not None:
+            _check_daily_date(self.date)
         return self
 
 
@@ -114,6 +127,14 @@ class BuiltinMemoryReadRequest(BaseModel):
     target: MemoryTarget
     date: str | None = None
 
+    @model_validator(mode="after")
+    def _check_date(self) -> "BuiltinMemoryReadRequest":
+        if self.target in ("profile", "memory") and self.date is not None:
+            raise ValueError("profile/memory 读取不得携带 date")
+        if self.target == "daily" and self.date is not None:
+            _check_daily_date(self.date)
+        return self
+
 
 class MemoryDiagnostic(BaseModel):
     """非致命降级：记录发生了什么，不阻断主流程。"""
@@ -122,3 +143,47 @@ class MemoryDiagnostic(BaseModel):
 
     code: str
     message: str = ""
+
+
+# ---- §3.6 检索类型（Slice 6 先落地 daily，session/provider ref 在 Slice 11/12 扩展为联合）----
+
+MemorySearchSource = Literal["daily", "session", "provider"]
+
+
+class DailyEntryRef(BaseModel):
+    """一条 daily 命中的稳定引用：日期 + entry_id；不含路径。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    source: Literal["daily"] = "daily"
+    date: str
+    entry_id: str
+
+
+class MemorySearchRequest(BaseModel):
+    """渐进检索请求；scope 永远由运行上下文注入，模型不能伪造。"""
+
+    scope: MemoryScope
+    query: str
+    sources: tuple[MemorySearchSource, ...] = ("daily", "session", "provider")
+    limit: int = Field(default=8, ge=1, le=50)
+    snippet_max_chars: int = Field(default=500, ge=50, le=2000)
+
+    @model_validator(mode="after")
+    def _check_query_and_sources(self) -> "MemorySearchRequest":
+        """§3.6：空白 query、重复 source 在进入 adapter 前拒绝（未知 source 由 Literal 拒绝）。"""
+        if not self.query.strip():
+            raise ValueError("query 不能为空")
+        if len(set(self.sources)) != len(self.sources):
+            raise ValueError("sources 不允许重复")
+        return self
+
+
+class MemoryHit(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    source: MemorySearchSource
+    score: float
+    snippet: str
+    occurred_at: float | None = None
+    ref: DailyEntryRef
