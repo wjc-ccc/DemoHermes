@@ -17,6 +17,7 @@ from __future__ import annotations
 import time
 import unicodedata
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone as dt_timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -30,13 +31,22 @@ from .types import (
     BuiltinMemoryMutation,
     BuiltinMemoryReadRequest,
     DailyEntryRef,
+    ExternalMemoryMutation,
+    ExternalMemoryReadRequest,
     MemoryDiagnostic,
     MemoryDocumentView,
     MemoryHit,
+    MemoryMutation,
     MemoryMutationResult,
+    MemoryReadRequest,
     MemoryScope,
     MemorySearchRequest,
+    ProviderDocument,
+    ProviderMutation,
+    ProviderReadRequest,
+    ProviderRecallRequest,
     SessionMessageRef,
+    TurnEnvelope,
 )
 
 _FENCE_NOTE = (
@@ -78,6 +88,25 @@ def _snippet(content: str, hit_pos: int, max_chars: int) -> str:
     return content[start : start + max_chars]
 
 
+_MEMORY_FENCES = (
+    "memory-context",
+    "profile-memory",
+    "agent-memory",
+    "provider-memory",
+    "today-daily",
+)
+
+
+def _sanitize_fences(text: str) -> str:
+    """§4.1：转义内容中的保留围栏标签，避免 provider 输出嵌套闭合/结构注入。
+
+    只缓解结构注入（闭合围栏）；自然语言 prompt injection 由 _FENCE_NOTE 标记降权，无法机械消除。
+    """
+    for tag in _MEMORY_FENCES:
+        text = text.replace(f"</{tag}>", f"&lt;/{tag}&gt;").replace(f"<{tag}", f"&lt;{tag}")
+    return text
+
+
 class MemoryManager:
     def __init__(
         self,
@@ -89,6 +118,8 @@ class MemoryManager:
         timezone: ZoneInfo | None = None,
         archive_reader=None,
         search_candidate_limit: int = 200,
+        provider=None,
+        recall_timeout: float = 5.0,
     ):
         self._root = Path(root)
         self._id_factory = id_factory
@@ -97,6 +128,28 @@ class MemoryManager:
         self._timezone = timezone  # None → UTC（§4.2 不依赖操作系统隐式时区）
         self._archive_reader = archive_reader  # 只读 SessionArchiveReader seam（§2）；session source 检索
         self._search_candidate_limit = search_candidate_limit  # 每 source 候选上限（§4.2）
+        self._provider = None  # 唯一外部 Provider seam（§2 Seam D / §7.1）；由 register_provider 设置
+        self._recall_timeout = recall_timeout  # recall 强制 deadline（§7.2）；超时丢弃迟到结果
+        self._synced_turn_ids: set[str] = set()  # sync_turn 的 turn_id 幂等键（§7.2）
+        if provider is not None:
+            self.register_provider(provider)
+
+    def register_provider(self, provider) -> None:
+        """§7.1：注册唯一外部 Provider；已有则立即失败，不做“最后一个覆盖”。"""
+        if self._provider is not None:
+            raise ValueError("已有 external provider，不得注册第二个（§7.1）")
+        self._provider = provider
+
+    def sync_turn(self, turn: TurnEnvelope) -> None:
+        """§8.1/§7.2：完成 turn 后同步到 Provider；同 turn_id 幂等，重复调用只同步一次。"""
+        if self._provider is None:
+            return
+        if not turn.completed or turn.interrupted:
+            return  # §7.3：interrupted/失败 turn 不作为完成记忆同步
+        if turn.turn_id in self._synced_turn_ids:
+            return
+        self._synced_turn_ids.add(turn.turn_id)
+        self._provider.sync_turn(turn)
 
     def _resolve_date(self, date: str | None) -> str:
         """daily 日期：显式给定优先；否则由注入 Clock + 配置时区的自然日决定。"""
@@ -106,7 +159,9 @@ class MemoryManager:
         return datetime.fromtimestamp(self._clock(), tz).date().isoformat()
 
     # ---- Seam A：写入 ----
-    def apply(self, mutation: BuiltinMemoryMutation) -> MemoryMutationResult:
+    def apply(self, mutation: MemoryMutation) -> MemoryMutationResult:
+        if isinstance(mutation, ExternalMemoryMutation):
+            return self._apply_external(mutation)
         if mutation.content is not None and _has_reserved_marker(mutation.content):
             return MemoryMutationResult(
                 ok=False, error_code="reserved_marker",
@@ -151,6 +206,34 @@ class MemoryManager:
             )
 
     # ---- 超限事务（§4.4）：备份完整候选 → 缩减 → 校验 → 替换 ----
+    def _apply_external(self, mutation: ExternalMemoryMutation) -> MemoryMutationResult:
+        """路由外部记忆写入到唯一激活 Provider；路由前检查 capabilities（§7.1）。"""
+        if self._provider is None:
+            return MemoryMutationResult(
+                ok=False, error_code="provider_unavailable",
+                message="未激活外部 Provider",
+            )
+        if mutation.action not in self._provider.capabilities:
+            return MemoryMutationResult(
+                ok=False, error_code="provider_capability_unsupported",
+                message=f"Provider 不支持能力: {mutation.action}",
+            )
+        result = self._provider.apply(
+            ProviderMutation(
+                action=mutation.action,
+                memory_id=mutation.memory_id,
+                content=mutation.content,
+                expected_revision=mutation.expected_revision,
+            )
+        )
+        return MemoryMutationResult(
+            ok=result.ok,
+            memory_id=result.memory_id,
+            revision=result.revision,
+            error_code=result.error_code,
+            message=result.message,
+        )
+
     def _apply_oversized(
         self,
         store: HotStore,
@@ -196,13 +279,25 @@ class MemoryManager:
         )
 
     # ---- Seam A：读取 ----
-    def read(self, request: BuiltinMemoryReadRequest) -> MemoryDocumentView:
+    def read(self, request: MemoryReadRequest):
+        if isinstance(request, ExternalMemoryReadRequest):
+            return self._read_external(request)
         store = self._store_for(request.scope, request.target, date=request.date)
         return MemoryDocumentView(
             target=request.target,
             revision=store.revision(),
             entries=store.entries(),
             rendered=store.read_text(),
+        )
+
+    def _read_external(self, request: ExternalMemoryReadRequest) -> ProviderDocument:
+        """路由外部记忆读取到唯一激活 Provider（§9）。"""
+        if self._provider is None:
+            raise ValueError("external read 不可用：未激活外部 Provider")
+        if "read" not in self._provider.capabilities:
+            raise ValueError("external read 不可用：Provider 不支持 read")
+        return self._provider.read(
+            ProviderReadRequest(scope=request.scope, memory_id=request.memory_id)
         )
 
     # ---- Seam A：渐进检索（§3.6；daily 在 Slice 6、session 在 Slice 11，provider 留 Slice 12）----
@@ -285,6 +380,32 @@ class MemoryManager:
         profile_text = self._bounded_hot_text(profile_store, "profile", diagnostics)
         memory_text = self._bounded_hot_text(memory_store, "memory", diagnostics)
 
+        # §4.1 / §7.2：外部 Provider recall 注入 <provider-memory> 围栏块；异常/超时降级为 diagnostic，不阻断主对话
+        provider_prompt: str | None = None
+        provider_block = ""
+        if self._provider is not None:
+            request = ProviderRecallRequest(
+                scope=scope,
+                query=query,
+                session_id=session_id,
+                deadline=self._clock() + self._recall_timeout,
+            )
+            try:
+                contribution = self._run_recall(request)
+                provider_prompt = (
+                    f'<provider-memory name="{contribution.name}">\n'
+                    f"{_sanitize_fences(contribution.text)}\n"
+                    "</provider-memory>"
+                )
+                provider_block = f"\n\n{provider_prompt}"
+            except Exception as exc:
+                diagnostics.append(
+                    MemoryDiagnostic(
+                        code="provider_recall_failed",
+                        message=f"Provider recall 失败/超时，已跳过（{exc!r}）",
+                    )
+                )
+
         # §4.1 / ADR-4：Daily 默认不注入，仅显式要求时加入今日（由注入 Clock + 时区决定）
         daily_prompt: str | None = None
         daily_block = ""
@@ -312,7 +433,7 @@ class MemoryManager:
             "<memory-context>\n"
             f"{_FENCE_NOTE}\n\n"
             f"<profile-memory>\n{profile_text}\n</profile-memory>\n\n"
-            f"<agent-memory>\n{memory_text}\n</agent-memory>{daily_block}\n"
+            f"<agent-memory>\n{memory_text}\n</agent-memory>{provider_block}{daily_block}\n"
             "</memory-context>"
         )
         return MemoryContextSnapshot(
@@ -327,6 +448,7 @@ class MemoryManager:
             diagnostics=tuple(diagnostics),
             hot_prompt=hot_prompt,
             daily_prompt=daily_prompt,
+            provider_prompt=provider_prompt,
         )
 
     @staticmethod
@@ -346,6 +468,19 @@ class MemoryManager:
                 )
             )
         return text
+
+    def _run_recall(self, request: ProviderRecallRequest) -> ProviderContribution:
+        """在 worker 线程跑 recall，recall_timeout 内未返回则放弃（迟到结果丢弃，§7.2）。
+
+        Future.result(timeout) 不能终止底层阻塞调用，故 adapter 仍须自设 HTTP/SDK timeout；
+        本方法只保证 Manager 不阻塞超 deadline。worker 残留线程由调用方/Provider.close 收尾。
+        """
+        executor = ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(self._provider.recall, request)
+        try:
+            return future.result(timeout=self._recall_timeout)
+        finally:
+            executor.shutdown(wait=False)
 
     # ---- 内部：target → 文档 ----
     def _store_for(self, scope: MemoryScope, target: str, *, date: str | None = None) -> HotStore:

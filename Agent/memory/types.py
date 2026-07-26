@@ -89,6 +89,43 @@ class BuiltinMemoryMutation(BaseModel):
         return self
 
 
+class ExternalMemoryMutation(BaseModel):
+    """外部 Provider 的一次记忆写入请求（§3.2）。"""
+
+    backend: Literal["external"] = "external"
+    scope: MemoryScope
+    action: MemoryAction
+    memory_id: str | None = None
+    content: str | None = None
+    expected_revision: str | None = None
+    provenance: MemoryProvenance
+
+    @model_validator(mode="after")
+    def _check_field_combination(self) -> "ExternalMemoryMutation":
+        """§3.2 字段约束：External add/replace/remove 的 memory_id/content 组合。"""
+        if self.action == "add":
+            if not self.content:
+                raise ValueError("add 必须提供 content")
+            if self.memory_id is not None:
+                raise ValueError("add 不允许指定 memory_id（由 Provider 生成）")
+        elif self.action == "replace":
+            if not self.memory_id or not self.content:
+                raise ValueError("replace 必须提供 memory_id 和 content")
+        elif self.action == "remove":
+            if not self.memory_id:
+                raise ValueError("remove 必须提供 memory_id")
+            if self.content is not None:
+                raise ValueError("remove 不允许携带 content")
+        return self
+
+
+# §3.2：精选记忆写入判别联合--backend 决定走 builtin 文档还是 external Provider
+MemoryMutation = Annotated[
+    BuiltinMemoryMutation | ExternalMemoryMutation,
+    Field(discriminator="backend"),
+]
+
+
 class MemoryMutationResult(BaseModel):
     ok: bool
     entry_id: str | None = None
@@ -136,6 +173,60 @@ class BuiltinMemoryReadRequest(BaseModel):
         if self.target == "daily" and self.date is not None:
             _check_daily_date(self.date)
         return self
+
+
+class ExternalMemoryReadRequest(BaseModel):
+    """读取外部 Provider 的一条记忆（§3.2）。"""
+
+    backend: Literal["external"] = "external"
+    scope: MemoryScope
+    memory_id: str
+
+
+# §3.2：读取请求判别联合--backend 决定走 builtin 文档还是 external Provider
+MemoryReadRequest = Annotated[
+    BuiltinMemoryReadRequest | ExternalMemoryReadRequest,
+    Field(discriminator="backend"),
+]
+
+
+class ProviderDocument(BaseModel):
+    """外部 Provider 一条记忆的可读视图（external read 的返回）。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    memory_id: str
+    content: str
+    revision: str | None = None
+
+
+MemoryReadResult = MemoryDocumentView | ProviderDocument
+
+
+class ProviderMutation(BaseModel):
+    """转发给外部 Provider 的写入请求（由 ExternalMemoryMutation 派生，§2 Seam D）。"""
+
+    action: MemoryAction
+    memory_id: str | None = None
+    content: str | None = None
+    expected_revision: str | None = None
+
+
+class ProviderMutationResult(BaseModel):
+    """Provider 写入结果；Manager 据此装配 MemoryMutationResult。"""
+
+    ok: bool
+    memory_id: str | None = None
+    revision: str | None = None
+    error_code: str | None = None
+    message: str = ""
+
+
+class ProviderReadRequest(BaseModel):
+    """转发给外部 Provider 的读取请求（§2 Seam D）。"""
+
+    scope: MemoryScope
+    memory_id: str
 
 
 class MemoryDiagnostic(BaseModel):
@@ -234,3 +325,22 @@ class ResetResult(BaseModel):
 
     closed_session: Session | None
     new_session: Session
+
+
+# ---- §2 Seam D / §7：外部 Provider 请求与贡献类型 ----
+
+
+class ProviderRecallRequest(BaseModel):
+    """请求外部 Provider 针对当前 query 返回相关上下文（§2 Seam D）。"""
+
+    scope: MemoryScope
+    query: str
+    session_id: str
+    deadline: float | None = None  # Manager 计算的截止时刻；adapter 应据此设 HTTP/SDK timeout（§7.2）
+
+
+class ProviderContribution(BaseModel):
+    """Provider recall 的贡献：name + 文本（Manager 负责清洗围栏并附 provenance 标记）。"""
+
+    name: str
+    text: str = ""
