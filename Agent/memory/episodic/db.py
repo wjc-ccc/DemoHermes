@@ -11,10 +11,16 @@ import sqlite3
 from pathlib import Path
 
 
+def _py_casefold(value) -> str:
+    """SQL 函数：Unicode casefold——大小写匹配不依赖 SQLite build 的默认 collation（§6.4）。"""
+    return "" if value is None else str(value).casefold()
+
+
 def connect(db_path: str | Path) -> sqlite3.Connection:
     """打开一个已按 §6.1 配置好的新连接；调用方负责关闭。"""
     conn = sqlite3.connect(str(db_path))
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA busy_timeout = 5000")
+    conn.create_function("py_casefold", 1, _py_casefold)
     return conn

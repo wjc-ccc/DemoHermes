@@ -16,6 +16,7 @@ import logging
 import time
 import uuid
 from pathlib import Path
+from typing import NamedTuple
 
 from ...core.types import Message, Session, ToolCall
 from ..types import MemoryScope, ResetResult, TurnEnvelope
@@ -23,6 +24,53 @@ from .db import connect
 from .migrations import migrate
 
 logger = logging.getLogger(__name__)
+
+
+class ArchivedMessage(NamedTuple):
+    """archive reader 返回的检索候选：索引列投影，不含 SQL 细节。"""
+
+    session_id: str
+    message_id: str
+    content_text: str
+    created_at: float
+
+
+def _escape_like(text: str) -> str:
+    r"""§6.4：`\`、`%`、`_` 必须先转义按字面量搜索（配合 LIKE ... ESCAPE '\'）。"""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+class SqliteSessionArchiveReader:
+    r"""只读 SessionArchiveReader（§2）：与 SqliteSessionStore 共用数据库与连接工厂。
+
+    检索契约（§6.4）：scope 约束的参数化 `LIKE ... ESCAPE '\\'` 预过滤；
+    `%`/`_` 按字面量；大小写由 py_casefold 锁定为 Unicode casefold，
+    不依赖 SQLite build 的默认 collation；普通 B-tree 索引不冒充 FTS（ADR-8）。
+    """
+
+    def __init__(self, db_path: str | Path) -> None:
+        self._db_path = Path(db_path)
+
+    def search_message_candidates(
+        self, scope: MemoryScope, wanted: str, limit: int
+    ) -> list[ArchivedMessage]:
+        """返回 scope 内 casefold 子串命中的候选（wanted 须已 normalize+casefold）。"""
+        if not self._db_path.exists():
+            return []  # 无库即无候选；不创建文件（只读 seam 不产生副作用）
+        pattern = f"%{_escape_like(wanted)}%"
+        conn = connect(self._db_path)
+        try:
+            rows = conn.execute(
+                "SELECT m.session_id, m.message_id, m.content_text, m.created_at "
+                "FROM messages m JOIN sessions s ON m.session_id = s.session_id "
+                "WHERE s.scope_kind = ? AND s.scope_key = ? "
+                "AND py_casefold(m.content_text) LIKE ? ESCAPE '\\' "
+                "ORDER BY m.created_at DESC LIMIT ?",
+                (scope.kind, scope.key, pattern, limit),
+            ).fetchall()
+        finally:
+            conn.close()
+        return [ArchivedMessage(*row) for row in rows]
 
 
 class AuditConflictError(Exception):

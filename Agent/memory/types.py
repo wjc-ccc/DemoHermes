@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import datetime
 import re
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -162,6 +162,23 @@ class DailyEntryRef(BaseModel):
     entry_id: str
 
 
+class SessionMessageRef(BaseModel):
+    """一条 session 消息命中的稳定引用：session_id + message_id；不含 SQL。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    source: Literal["session"] = "session"
+    session_id: str
+    message_id: str
+
+
+# §3.6：MemoryHitRef 是按 source 判别的联合（provider ref 在 Slice 12 加入）
+MemoryHitRef = Annotated[
+    DailyEntryRef | SessionMessageRef,
+    Field(discriminator="source"),
+]
+
+
 class MemorySearchRequest(BaseModel):
     """渐进检索请求；scope 永远由运行上下文注入，模型不能伪造。"""
 
@@ -188,7 +205,7 @@ class MemoryHit(BaseModel):
     score: float
     snippet: str
     occurred_at: float | None = None
-    ref: DailyEntryRef
+    ref: MemoryHitRef
 
 
 # ---- §3.3 Turn 事实信封（turn 持久化 / Provider sync / review job 的幂等键）----

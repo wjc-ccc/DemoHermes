@@ -36,6 +36,7 @@ from .types import (
     MemoryMutationResult,
     MemoryScope,
     MemorySearchRequest,
+    SessionMessageRef,
 )
 
 _FENCE_NOTE = (
@@ -54,9 +55,19 @@ def _has_reserved_marker(content: str) -> bool:
     return any(marker in content for marker in _RESERVED_MARKERS)
 
 
-def _stable_ref(ref: DailyEntryRef) -> str:
+def _stable_ref(ref) -> str:
     """typed ref 的稳定字符串（§4.2 同分 tie-break）。"""
-    return f"{ref.source}:{ref.date}:{ref.entry_id}"
+    if ref.source == "daily":
+        return f"daily:{ref.date}:{ref.entry_id}"
+    return f"session:{ref.session_id}:{ref.message_id}"
+
+
+def _match(normalized: str, wanted: str) -> tuple[float, int] | None:
+    """§4.2 相关性：整串相等(exact)优先于子串命中(partial)；未命中返回 None。"""
+    pos = normalized.find(wanted)
+    if pos < 0:
+        return None
+    return (2.0 if normalized == wanted else 1.0), pos
 
 
 def _snippet(content: str, hit_pos: int, max_chars: int) -> str:
@@ -76,12 +87,16 @@ class MemoryManager:
         compactor=None,
         clock=time.time,
         timezone: ZoneInfo | None = None,
+        archive_reader=None,
+        search_candidate_limit: int = 200,
     ):
         self._root = Path(root)
         self._id_factory = id_factory
         self._compactor = compactor  # 可替换 MemoryCompactor seam；缺失时超限写入失败
         self._clock = clock  # 可注入 Clock seam；daily 默认日期只能由它产生（§3.2）
         self._timezone = timezone  # None → UTC（§4.2 不依赖操作系统隐式时区）
+        self._archive_reader = archive_reader  # 只读 SessionArchiveReader seam（§2）；session source 检索
+        self._search_candidate_limit = search_candidate_limit  # 每 source 候选上限（§4.2）
 
     def _resolve_date(self, date: str | None) -> str:
         """daily 日期：显式给定优先；否则由注入 Clock + 配置时区的自然日决定。"""
@@ -190,11 +205,13 @@ class MemoryManager:
             rendered=store.read_text(),
         )
 
-    # ---- Seam A：渐进检索（§3.6；Slice 6 先实现 daily，session/provider 留 Slice 11/12）----
+    # ---- Seam A：渐进检索（§3.6；daily 在 Slice 6、session 在 Slice 11，provider 留 Slice 12）----
     def search(self, request: MemorySearchRequest) -> list[MemoryHit]:
         hits: list[MemoryHit] = []
         if "daily" in request.sources:
             hits.extend(self._search_daily(request))
+        if "session" in request.sources:
+            hits.extend(self._search_session(request))
         # §4.2 稳定排序：同分按 occurred_at DESC，再按 typed ref 稳定字符串升序
         hits.sort(key=lambda h: (-h.score, -(h.occurred_at or 0.0), _stable_ref(h.ref)))
         return hits[: request.limit]
@@ -222,6 +239,34 @@ class MemoryManager:
                         ref=DailyEntryRef(date=date, entry_id=entry.entry_id),
                     )
                 )
+        return hits
+
+    def _search_session(self, request: MemorySearchRequest) -> list[MemoryHit]:
+        """session source：经只读 archive reader 的 LIKE 预过滤候选，再 Python 算分（§6.4/§4.2）。"""
+        if self._archive_reader is None:
+            return []
+        wanted = unicodedata.normalize("NFKC", request.query).casefold()
+        candidates = self._archive_reader.search_message_candidates(
+            request.scope, wanted, self._search_candidate_limit
+        )
+        hits: list[MemoryHit] = []
+        for cand in candidates:
+            normalized = unicodedata.normalize("NFKC", cand.content_text).casefold()
+            matched = _match(normalized, wanted)
+            if matched is None:
+                continue
+            score, pos = matched
+            hits.append(
+                MemoryHit(
+                    source="session",
+                    score=score,
+                    snippet=_snippet(cand.content_text, pos, request.snippet_max_chars),
+                    occurred_at=cand.created_at,
+                    ref=SessionMessageRef(
+                        session_id=cand.session_id, message_id=cand.message_id
+                    ),
+                )
+            )
         return hits
 
     # ---- Seam A：构建 turn 快照 ----
