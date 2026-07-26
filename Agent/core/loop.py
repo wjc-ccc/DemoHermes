@@ -105,6 +105,7 @@ class AgentLoop:
         *,
         ephemeral_prompt: str | None = None,
         session_key: str = "",
+        memory_context=None,
     ) -> TurnResult:
         self._interrupt = False
         turn_id = uuid.uuid4().hex[:12]
@@ -128,8 +129,11 @@ class AgentLoop:
                 )
 
             # ---- think：组装上下文 → 调模型 ----
+            # 本 turn 所有迭代复用同一不可变 memory 快照（7.23 方案 §1.1-6 / ADR-3）：
+            # 快照由调用方每 turn 构建一次，Loop 不重建、不缓存
             builder = ContextBuilder(
                 session,
+                memory_context=memory_context,
                 skill_registry=self.skills,
                 ephemeral_prompt=ephemeral_prompt,
             )
