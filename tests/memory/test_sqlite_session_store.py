@@ -1,10 +1,17 @@
-"""Slice 9: SQLite 最小恢复 tracer bullet——跨 Store 实例恢复 Session（§6）。
+"""Slice 9/10: SQLite SessionStore——恢复、无损持久化与原子 reset（§6）。
 
-公共 seam：SessionStore（SqliteSessionStore）。真实文件 SQLite，不 mock sqlite3。
+公共 seam：SessionStore（SqliteSessionStore）。真实文件 SQLite，不 mock sqlite3；
+断言用原 Pydantic model dump，不直接 SELECT 表（§2 Seam E）。
 """
-from Agent.core.types import Message, Session
+import pytest
+
+from Agent.core.types import ContentPart, Message, Session, ToolCall
 from Agent.memory import MemoryScope
-from Agent.memory.episodic.store import SqliteSessionStore
+from Agent.memory.episodic.store import (
+    AuditConflictError,
+    SessionIntegrityError,
+    SqliteSessionStore,
+)
 from Agent.memory.types import TurnEnvelope
 
 _SCOPE = MemoryScope(kind="personal", key="cli:user:u1")
@@ -84,3 +91,186 @@ def test_wal_and_foreign_keys_are_enabled(tmp_path):
     assert info["journal_mode"] == "wal"
     assert info["foreign_keys"] is True
     assert info["busy_timeout"] == 5000
+
+
+# ---- Slice 10：无损持久化与 reset ----
+
+
+def test_message_content_parts_and_metadata_roundtrip_losslessly(tmp_path):
+    """§6.2/ADR-6：ContentPart 多模态字段与嵌套 metadata 经 model_dump_json 无损往返。"""
+    db = tmp_path / "memory.db"
+    store = SqliteSessionStore(db)
+    session = store.get_or_create("k", scope=_SCOPE, channel="cli", author_id="u1")
+    original = Message(
+        role="user",
+        author_id="u1",
+        trajectory_id="traj-1",
+        content=[
+            ContentPart(type="text", text="看这张图"),
+            ContentPart(
+                type="image", url="https://example.com/a.png",
+                data={"width": 800, "tags": ["截图", "报错"]},
+            ),
+        ],
+        content_text="看这张图",
+        tool_call_ids=["tc-9"],
+        metadata={"platform": {"name": "飞书", "chat": {"id": "oc_1", "type": "group"}},
+                  "flags": [True, False], "score": 0.75},
+        created_at=1784808000.5,
+    )
+    session.add_message(original)
+    store.commit_turn(session, _turn(session), scope=_SCOPE)
+
+    restored = SqliteSessionStore(db).find("k")
+    assert len(restored.messages) == 1
+    assert restored.messages[0].model_dump(mode="json") == original.model_dump(mode="json")
+
+
+def test_tool_call_result_and_error_roundtrip_losslessly(tmp_path):
+    """§6.2：ToolCall 的结构化结果、错误与 metadata 经 payload_json 无损往返。"""
+    db = tmp_path / "memory.db"
+    store = SqliteSessionStore(db)
+    session = store.get_or_create("k", scope=_SCOPE)
+    session.add_message(Message(role="user", content_text="算一下"))
+    ok_call = ToolCall(
+        tool_call_id="tc-1", trajectory_id="traj-1", tool_name="calculator",
+        arguments={"expression": "1+1"}, status="success",
+        created_at=1784808000.0, finished_at=1784808001.0, durations_ms=1000,
+        tool_call_result={"value": 2, "steps": ["1+1"]}, result_text="2",
+        metadata={"engine": "python"},
+    )
+    err_call = ToolCall(
+        tool_call_id="tc-2", trajectory_id="traj-1", tool_name="search",
+        arguments={"q": "x"}, status="error",
+        created_at=1784808002.0, finished_at=1784808003.5, durations_ms=1500,
+        error="HTTP 503: 服务不可用", metadata={"retries": 2},
+    )
+    session.tool_calls.extend([ok_call, err_call])
+    store.commit_turn(session, _turn(session), scope=_SCOPE)
+
+    restored = SqliteSessionStore(db).find("k")
+    assert [tc.model_dump(mode="json") for tc in restored.tool_calls] == [
+        ok_call.model_dump(mode="json"),
+        err_call.model_dump(mode="json"),
+    ]
+
+
+def test_completed_message_recommit_with_identical_payload_is_idempotent(tmp_path):
+    """§6.3/ADR-12：后续 commit 携带未变的已完成消息 = 幂等成功，不重复、不报错。"""
+    db = tmp_path / "memory.db"
+    store = SqliteSessionStore(db)
+    session = store.get_or_create("k", scope=_SCOPE)
+    session.add_message(Message(role="user", content_text="第一问"))
+    store.commit_turn(session, _turn(session, turn_id="t1"), scope=_SCOPE)
+
+    session.add_message(Message(role="assistant", content_text="第一答"))
+    turn2 = _turn(session, turn_id="t2")
+    store.commit_turn(session, turn2, scope=_SCOPE)  # t1 消息原样再次提交
+
+    restored = SqliteSessionStore(db).find("k")
+    assert [m.content_text for m in restored.messages] == ["第一问", "第一答"]
+
+
+def test_completed_message_recommit_with_changed_payload_raises_audit_conflict(tmp_path):
+    """§6.3/ADR-12：相同 message_id 不同 payload 重提必须暴露冲突，禁止静默覆盖。"""
+    db = tmp_path / "memory.db"
+    store = SqliteSessionStore(db)
+    session = store.get_or_create("k", scope=_SCOPE)
+    original = Message(role="user", content_text="原始内容")
+    session.add_message(original)
+    store.commit_turn(session, _turn(session, turn_id="t1"), scope=_SCOPE)
+
+    tampered = original.model_copy(update={"content_text": "篡改内容"})
+    session.messages[0] = tampered
+    with pytest.raises(AuditConflictError):
+        store.commit_turn(session, _turn(session, turn_id="t2"), scope=_SCOPE)
+
+    restored = SqliteSessionStore(db).find("k")
+    assert [m.content_text for m in restored.messages] == ["原始内容"]  # 未被覆盖
+
+
+def test_close_and_reset_atomically_switches_active_session_and_preserves_old_session(tmp_path):
+    """§6.3：一个事务内关闭旧 session + 创建新 session + 切换 slot；旧数据保留。"""
+    db = tmp_path / "memory.db"
+    store = SqliteSessionStore(db)
+    session = store.get_or_create("k", scope=_SCOPE, channel="cli", author_id="u1")
+    session.add_message(Message(role="user", content_text="旧会话消息"))
+    store.commit_turn(session, _turn(session), scope=_SCOPE)
+
+    result = store.close_and_reset(
+        "k", session, scope=_SCOPE, channel="cli", author_id="u1"
+    )
+
+    assert result.closed_session is not None
+    assert result.closed_session.session_id == session.session_id
+    assert result.closed_session.status == "completed"
+    assert [m.content_text for m in result.closed_session.messages] == ["旧会话消息"]
+    assert result.new_session.session_id != session.session_id
+    assert result.new_session.messages == []
+    assert result.new_session.session_key == "k"
+
+    active = SqliteSessionStore(db).find("k")  # 新实例验证切换已落库
+    assert active is not None
+    assert active.session_id == result.new_session.session_id
+    assert active.messages == []
+
+
+def test_close_and_reset_persists_unsaved_old_messages_before_switch(tmp_path):
+    """§6.3-2/ADR-13：切换前必须把调用方最新状态（含未 commit 消息）落库。"""
+    db = tmp_path / "memory.db"
+    store = SqliteSessionStore(db)
+    session = store.get_or_create("k", scope=_SCOPE)
+    session.add_message(Message(role="user", content_text="已提交"))
+    store.commit_turn(session, _turn(session, turn_id="t1"), scope=_SCOPE)
+    session.add_message(Message(role="user", content_text="尚未提交"))  # 从未 commit
+
+    result = store.close_and_reset("k", session, scope=_SCOPE)
+
+    assert [m.content_text for m in result.closed_session.messages] == [
+        "已提交", "尚未提交",
+    ]
+    # 持久化探针（只经公开 seam，不 SELECT）：新实例对旧会话那条「尚未提交」
+    # 消息做异 payload 重提——若切换时已落库，必须报 audit_conflict
+    tampered = result.closed_session.model_copy(deep=True)
+    tampered.messages[1].content_text = "篡改"
+    with pytest.raises(AuditConflictError):
+        SqliteSessionStore(db).commit_turn(
+            tampered, _turn(tampered, turn_id="t2"), scope=_SCOPE
+        )
+
+
+def _explode_id() -> str:
+    raise RuntimeError("boom")
+
+
+def test_failed_close_and_reset_does_not_fire_session_end_hook(tmp_path):
+    """§3.3：事务失败整体回滚——无 ResetResult（Gateway 无从发 hook），旧 active 不变。"""
+    db = tmp_path / "memory.db"
+    store = SqliteSessionStore(db)
+    session = store.get_or_create("k", scope=_SCOPE)
+    session.add_message(Message(role="user", content_text="旧消息"))
+    store.commit_turn(session, _turn(session), scope=_SCOPE)
+
+    exploding = SqliteSessionStore(db, id_factory=_explode_id)
+    with pytest.raises(RuntimeError, match="boom"):
+        exploding.close_and_reset("k", session, scope=_SCOPE)
+
+    active = SqliteSessionStore(db).find("k")
+    assert active is not None
+    assert active.session_id == session.session_id  # slot 未切换
+    assert active.status == "active"                # 旧 session 未被标记 completed
+    assert [m.content_text for m in active.messages] == ["旧消息"]
+
+
+def test_slot_scope_mismatch_is_rejected_as_integrity_error(tmp_path):
+    """§6.3：get_or_create 传入 scope 与 slot 记录不一致 → 完整性错误，不跨 scope 恢复。"""
+    db = tmp_path / "memory.db"
+    store = SqliteSessionStore(db)
+    store.get_or_create("k", scope=_SCOPE)
+
+    other = MemoryScope(kind="group", key="cli:chat:c1")
+    with pytest.raises(SessionIntegrityError):
+        store.get_or_create("k", scope=other)
+
+    # 原 scope 不受影响，仍正常恢复
+    assert store.find("k") is not None

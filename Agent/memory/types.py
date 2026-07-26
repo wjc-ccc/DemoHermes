@@ -19,6 +19,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ..core.types import Session
+
 _DAILY_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -208,3 +210,10 @@ class TurnEnvelope(BaseModel):
     completed: bool
     interrupted: bool
     error: str | None
+
+
+class ResetResult(BaseModel):
+    """close_and_reset 的原子转换结果；事务成功后 Gateway 才对 closed_session 发结束 hook。"""
+
+    closed_session: Session | None
+    new_session: Session
