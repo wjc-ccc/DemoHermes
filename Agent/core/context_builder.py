@@ -20,6 +20,12 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
+from .context_budget import (
+    ContextBudget,
+    ContextBudgetExceededError,
+    TokenEstimator,
+    trim_to_budget,
+)
 from .types import Message, Session
 from ..Provider import SYSTEM_PROMPT_PATH
 
@@ -27,6 +33,18 @@ if TYPE_CHECKING:
     from ..memory.snapshot import MemoryContextSnapshot
 
 logger = logging.getLogger(__name__)
+
+_MESSAGE_OVERHEAD_BYTES = 16  # role/协议字段的保守固定开销
+
+
+class _ConservativeEstimator:
+    """§4.3 兜底估算：JSON 序列化 UTF-8 字节数 + 每消息固定 overhead。"""
+
+    def estimate_messages(self, messages) -> int:
+        return sum(
+            len(json.dumps(m, ensure_ascii=False).encode("utf-8")) + _MESSAGE_OVERHEAD_BYTES
+            for m in messages
+        )
 
 
 class ContextBuilder:
@@ -37,6 +55,9 @@ class ContextBuilder:
         memory_context: MemoryContextSnapshot | None = None,
         skill_registry=None,
         ephemeral_prompt: str | None = None,
+        budget: ContextBudget | None = None,
+        token_estimator: TokenEstimator | None = None,
+        provider_min_recall_chars: int | None = None,
     ):
         self.session: Session = session
         # 本 turn 的不可变记忆快照（7.23 方案 §2 Seam C）：
@@ -48,7 +69,17 @@ class ContextBuilder:
         )
         # 仅当次生效的平台说明（如「你在飞书群里」），不写入 Session.messages
         self._ephemeral_prompt = ephemeral_prompt
+        # §4.3 整轮预算：None 表示不启用裁剪（现状行为）
+        self._budget = budget
+        self._token_estimator = token_estimator
+        # 裁剪顺序 2 的 Provider recall 最小配额；None 表示不做缩短步骤
+        self._provider_min_recall_chars = provider_min_recall_chars
         self.messages: list[dict] = []  # 组装后发给 LLM 的 messages
+        self._tagged: list[tuple[str, dict]] = []  # 预算裁剪用的带分类副本
+
+    def _append(self, kind: str, message: dict) -> None:
+        self.messages.append(message)
+        self._tagged.append((kind, message))
 
     # ---- 1. system prompt ----
     def _loading_system_prompt(self) -> None:
@@ -57,28 +88,50 @@ class ContextBuilder:
         except FileNotFoundError:
             logger.warning("system prompt 文件缺失: %s，使用兜底文案", SYSTEM_PROMPT_PATH)
             content = "你是一个友好的AI助手。"
-        self.messages.append({"role": "system", "content": content})
+        self._append("system_prompt", {"role": "system", "content": content})
 
     # ---- 1.5 记忆快照（整段带围栏注入）----
     def _loading_memory(self) -> None:
-        if self._memory_context is not None:
-            self.messages.append({"role": "system", "content": self._memory_context.prompt})
+        if self._memory_context is None:
+            return
+        if self._budget is None:
+            # 无预算：整段注入完整 prompt（现状行为）
+            self._append(
+                "memory_hot",
+                {"role": "system", "content": self._memory_context.prompt},
+            )
+            return
+        # §4.3 启用预算：结构化分段注入，裁剪才能区分 Hot/Daily/Provider
+        snapshot = self._memory_context
+        hot = snapshot.hot_prompt if snapshot.hot_prompt is not None else snapshot.prompt
+        self._append("memory_hot", {"role": "system", "content": hot})
+        if snapshot.daily_prompt:
+            self._append(
+                "memory_daily", {"role": "system", "content": snapshot.daily_prompt}
+            )
+        if snapshot.provider_prompt:
+            self._append(
+                "memory_provider",
+                {"role": "system", "content": snapshot.provider_prompt},
+            )
 
     # ---- 2. 技能摘要（Level 1）----
     def _loading_skills(self) -> None:
         if self._skill_summary:
             # 并入 system 角色，避免占用对话轮次
-            self.messages.append({"role": "system", "content": self._skill_summary})
+            self._append("skill", {"role": "system", "content": self._skill_summary})
 
     # ---- 3. ephemeral 平台说明 ----
     def _loading_ephemeral(self) -> None:
         if self._ephemeral_prompt:
-            self.messages.append({"role": "system", "content": self._ephemeral_prompt})
+            self._append(
+                "ephemeral", {"role": "system", "content": self._ephemeral_prompt}
+            )
 
     # ---- 4. 对话消息（含 tool 协议映射）----
     def _loading_messages(self) -> None:
         for m in self.session.messages:
-            self.messages.append(self._map_message(m))
+            self._append("history", self._map_message(m))
 
     @staticmethod
     def _map_message(m: Message) -> dict:
@@ -112,12 +165,31 @@ class ContextBuilder:
     # ---- 组装入口 ----
     def building_context(self) -> list[dict]:
         self.messages = []  # 每轮重置
+        self._tagged = []
         self._loading_system_prompt()
         self._loading_memory()
         self._loading_skills()
         self._loading_ephemeral()
         self._loading_messages()
+        if self._budget is not None:
+            # §4.3：每次发模型前检查最终 messages，而不只统计记忆快照
+            trimmed = trim_to_budget(
+                self._tagged, self._budget, self._estimator(),
+                provider_min_recall_chars=self._provider_min_recall_chars,
+            )
+            if trimmed is None:
+                raise ContextBudgetExceededError()
+            self.messages = trimmed
         return self.messages
+
+    def _estimator(self) -> TokenEstimator:
+        """未提供 tokenizer 时的保守估算：序列化 UTF-8 字节数 + 每消息固定 overhead。
+
+        允许过度裁剪，不允许乐观低估（§4.3）。
+        """
+        if self._token_estimator is not None:
+            return self._token_estimator
+        return _ConservativeEstimator()
 
     # ---- 统计（观测用）----
     def context_stats(self) -> dict:

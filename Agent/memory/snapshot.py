@@ -31,3 +31,7 @@ class MemoryContextSnapshot(BaseModel):
     built_at: float
     revisions: tuple[DocumentRevision, ...]
     diagnostics: tuple[MemoryDiagnostic, ...] = ()
+    # ---- §4.3 预算裁剪用的结构化分段（可选；不设预算时 Builder 仍整段注入 prompt）----
+    hot_prompt: str | None = None  # 仅 Hot（profile+MEMORY）围栏块；永远保留
+    daily_prompt: str | None = None  # 今日 Daily 块；裁剪顺序 1 最先移除
+    provider_prompt: str | None = None  # Provider recall 块（Slice 12 填）；顺序 2 缩短

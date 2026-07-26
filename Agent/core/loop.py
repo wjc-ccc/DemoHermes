@@ -22,6 +22,7 @@ import logging
 import time
 import uuid
 
+from .context_budget import ContextBudgetExceededError
 from .context_builder import ContextBuilder
 from .events import EventBus, LoopEvent, default_event_bus
 from .messages import build_assistant_message, build_tool_message
@@ -106,6 +107,9 @@ class AgentLoop:
         ephemeral_prompt: str | None = None,
         session_key: str = "",
         memory_context=None,
+        context_budget=None,
+        token_estimator=None,
+        provider_min_recall_chars: int | None = None,
     ) -> TurnResult:
         self._interrupt = False
         turn_id = uuid.uuid4().hex[:12]
@@ -136,8 +140,23 @@ class AgentLoop:
                 memory_context=memory_context,
                 skill_registry=self.skills,
                 ephemeral_prompt=ephemeral_prompt,
+                budget=context_budget,
+                token_estimator=token_estimator,
+                provider_min_recall_chars=provider_min_recall_chars,
             )
-            messages = builder.building_context()
+            try:
+                messages = builder.building_context()
+            except ContextBudgetExceededError:
+                # §4.3：仍超限则明确失败，不发送已破坏协议的请求
+                logger.warning("turn 上下文预算超限 turn_id=%s", turn_id)
+                self._emit(
+                    "turn_error", turn_id, session, session_key,
+                    error="context_budget_exceeded",
+                )
+                return TurnResult(
+                    final_text=None, session_id=session.session_id,
+                    completed=False, error="context_budget_exceeded",
+                )
             stats = builder.context_stats()
 
             # 发射事件 用于前端展示记录

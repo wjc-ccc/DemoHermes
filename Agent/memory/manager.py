@@ -241,6 +241,7 @@ class MemoryManager:
         memory_text = self._bounded_hot_text(memory_store, "memory", diagnostics)
 
         # §4.1 / ADR-4：Daily 默认不注入，仅显式要求时加入今日（由注入 Clock + 时区决定）
+        daily_prompt: str | None = None
         daily_block = ""
         if include_today_daily:
             if self._timezone is None:
@@ -252,16 +253,21 @@ class MemoryManager:
                 )
             today = self._resolve_date(None)
             daily_text = self._store_for(scope, "daily", date=today).read_text()
-            daily_block = (
-                f'\n\n<today-daily date="{today}">\n{daily_text}\n</today-daily>'
-            )
+            daily_prompt = f'<today-daily date="{today}">\n{daily_text}\n</today-daily>'
+            daily_block = f"\n\n{daily_prompt}"
 
+        hot_prompt = (
+            "<memory-context>\n"
+            f"{_FENCE_NOTE}\n\n"
+            f"<profile-memory>\n{profile_text}\n</profile-memory>\n\n"
+            f"<agent-memory>\n{memory_text}\n</agent-memory>\n"
+            "</memory-context>"
+        )
         prompt = (
             "<memory-context>\n"
             f"{_FENCE_NOTE}\n\n"
             f"<profile-memory>\n{profile_text}\n</profile-memory>\n\n"
-            f"<agent-memory>\n{memory_text}\n</agent-memory>"
-            f"{daily_block}\n"
+            f"<agent-memory>\n{memory_text}\n</agent-memory>{daily_block}\n"
             "</memory-context>"
         )
         return MemoryContextSnapshot(
@@ -274,6 +280,8 @@ class MemoryManager:
                 DocumentRevision(source="memory", revision=memory_store.revision()),
             ),
             diagnostics=tuple(diagnostics),
+            hot_prompt=hot_prompt,
+            daily_prompt=daily_prompt,
         )
 
     @staticmethod
