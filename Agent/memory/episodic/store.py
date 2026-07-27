@@ -35,6 +35,21 @@ class ArchivedMessage(NamedTuple):
     created_at: float
 
 
+class ReviewJob(NamedTuple):
+    """review outbox 中一条任务的类型化投影（§8.2）；不含 payload_json 原文。"""
+
+    turn_id: str
+    session_id: str
+    scope_kind: str
+    scope_key: str
+    status: str
+    attempts: int
+    available_at: float
+    lease_until: float | None
+    claimed_by: str | None
+    last_error: str | None
+
+
 def _escape_like(text: str) -> str:
     r"""§6.4：`\`、`%`、`_` 必须先转义按字面量搜索（配合 LIKE ... ESCAPE '\'）。"""
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -237,6 +252,120 @@ class SqliteSessionStore:
             }
         finally:
             conn.close()
+
+    def pending_review_jobs(self) -> list[ReviewJob]:
+        """返回 status='pending' 的 review job（§8.2 outbox 观察面）。"""
+        conn = connect(self._db_path)
+        try:
+            rows = conn.execute(
+                "SELECT turn_id, session_id, scope_kind, scope_key, status, attempts, "
+                "available_at, lease_until, claimed_by, last_error "
+                "FROM review_jobs WHERE status = 'pending' ORDER BY available_at"
+            ).fetchall()
+        finally:
+            conn.close()
+        return [ReviewJob(*row) for row in rows]
+
+    def claim_review_job(
+        self, *, worker_id: str, now: float, lease_seconds: float
+    ) -> "tuple[ReviewJob, TurnEnvelope] | None":
+        """§8.2：原子认领一个 pending job（status->running, attempts+1, lease_until）。
+
+        返回 (ReviewJob, TurnEnvelope) 或 None（无可领取任务）。
+        """
+        conn = connect(self._db_path)
+        try:
+            with conn:
+                row = conn.execute(
+                    "SELECT turn_id, session_id, scope_kind, scope_key, status, attempts, "
+                    "available_at, lease_until, claimed_by, last_error, payload_json "
+                    "FROM review_jobs "
+                    "WHERE (status = 'pending' AND available_at <= ?) "
+                    "OR (status = 'running' AND lease_until IS NOT NULL AND lease_until < ?) "
+                    "ORDER BY available_at LIMIT 1",
+                    (now, now),
+                ).fetchone()
+                if row is None:
+                    return None
+                turn_id = row[0]
+                lease_until = now + lease_seconds
+                conn.execute(
+                    "UPDATE review_jobs SET status = 'running', attempts = attempts + 1, "
+                    "lease_until = ?, claimed_by = ? WHERE turn_id = ?",
+                    (lease_until, worker_id, turn_id),
+                )
+                job = ReviewJob(
+                    turn_id=row[0], session_id=row[1], scope_kind=row[2], scope_key=row[3],
+                    status="running", attempts=row[5] + 1, available_at=row[6],
+                    lease_until=lease_until, claimed_by=worker_id, last_error=row[9],
+                )
+                turn = TurnEnvelope.model_validate_json(row[10])
+        finally:
+            conn.close()
+        return job, turn
+
+    def complete_review_job(self, turn_id: str) -> None:
+        """§8.2：标记 job done。"""
+        conn = connect(self._db_path)
+        try:
+            with conn:
+                conn.execute(
+                    "UPDATE review_jobs SET status = 'done' WHERE turn_id = ?",
+                    (turn_id,),
+                )
+        finally:
+            conn.close()
+
+    def fail_review_job(
+        self, turn_id: str, error: str, *, next_available_at: float, max_attempts: int
+    ) -> None:
+        """§8.2：失败有界退避回 pending；超 max_attempts 标 failed。"""
+        conn = connect(self._db_path)
+        try:
+            with conn:
+                row = conn.execute(
+                    "SELECT attempts FROM review_jobs WHERE turn_id = ?", (turn_id,)
+                ).fetchone()
+                if row is None:
+                    return
+                if row[0] >= max_attempts:
+                    conn.execute(
+                        "UPDATE review_jobs SET status = 'failed', last_error = ? "
+                        "WHERE turn_id = ?",
+                        (error, turn_id),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE review_jobs SET status = 'pending', last_error = ?, "
+                        "available_at = ? WHERE turn_id = ?",
+                        (error, next_available_at, turn_id),
+                    )
+        finally:
+            conn.close()
+
+    def requeue_review_job(self, turn_id: str, *, available_at: float = 0.0) -> None:
+        """把 job 重置为 pending（模拟重复投递 / lease 回收后重排，§8.2）。"""
+        conn = connect(self._db_path)
+        try:
+            with conn:
+                conn.execute(
+                    "UPDATE review_jobs SET status = 'pending', available_at = ?, "
+                    "lease_until = NULL, claimed_by = NULL WHERE turn_id = ?",
+                    (available_at, turn_id),
+                )
+        finally:
+            conn.close()
+
+    def review_job_status(self, turn_id: str) -> str | None:
+        """观察某 turn 的 review job 状态（§8.2 测试观察面）。"""
+        conn = connect(self._db_path)
+        try:
+            row = conn.execute(
+                "SELECT status FROM review_jobs WHERE turn_id = ?", (turn_id,)
+            ).fetchone()
+        finally:
+            conn.close()
+        return None if row is None else row[0]
 
     # ---- 内部：审计不可变事实的插入（§6.3/ADR-12）----
     @staticmethod
