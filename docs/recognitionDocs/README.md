@@ -112,7 +112,7 @@
 | 确定性的原子操作（输入→输出固定） | Tool | 计算器、查天气、查数据库 |
 | 引导 LLM 按某流程做事的经验文本 | Skill | 周报生成指南、代码评审 checklist |
 | 新增数据结构 / 字段 | types | 加 MemoryItem、扩展 ContentPart |
-| 跨会话/跨用户的知识沉淀 | memory（后续） | USER.md、episodic 检索 |
+| 跨会话/跨用户的知识沉淀 | memory | USER.md/GROUP.md、daily、SQLite 检索 |
 
 **铁律：Loop 文件里不应出现任何平台 SDK import；Channel 文件里不应出现 model.chat。** 这条边界一旦守住，扩展平台和换模型都不会互相牵连。
 
@@ -125,6 +125,7 @@
 - [gateway.md](./gateway.md) — 消息枢纽与调度
 - [agent loop.md](./agent%20loop.md) — 对话大脑与 OTAP
 - [tool&skill&plugin.md](./tool&skill&plugin.md) — 能力扩展体系
+- [memory.md](./memory.md) — 记忆系统（精选记忆 / daily / SQLite transcript / Provider / Reviewer）
 
 ---
 
@@ -134,10 +135,10 @@
 |------|---------|-----------|
 | types | ✅ 完整（含 tool 协议字段） | 多模态 ContentPart 落地 |
 | channel | ✅ CLI / frontier / wechat 骨架 | 飞书/微信真实 SDK 接入 |
-| gateway | ✅ 双队列 + dict store + 并发锁 | JSONL/SQLite store、Redis 分布式锁 |
-| agent loop | ✅ OTAP + 工具内循环 + 容错 | memory 注入、trajectory 回放 |
-| tool | ✅ 抽象基类 + registry + calculator 示例 | bash/file/memory 工具完善 |
+| gateway | ✅ 双队列 + 并发锁 + SQLite SessionStore | Redis 分布式锁 |
+| agent loop | ✅ OTAP + 工具内循环 + 容错 + 记忆快照注入 | trajectory 回放 |
+| tool | ✅ registry + calculator/bash/file/memory_read/memory_edit | 更多平台工具 |
 | skill | ✅ SKILL.md 解析 + 两级加载 | 运行期 skill_creator 自建 |
 | plugin | 🔲 预留位 | 动态加载外部 tool/skill |
-| memory | 🔲 接口预留 | L1/L2/L3 三层记忆 |
+| memory | ✅ Slice 1–14 验收通过（Hot 精选 / Daily / SQLite transcript / Provider / Reviewer） | Slice 15 环境快照、FTS5、向量检索 |
 | evolution | 🔲 接口预留 | reviewer/optimizer 旁路 |

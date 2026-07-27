@@ -11,3 +11,5 @@ errorDocs：demo hermes构建期间遇到的语法错误积累
 timeDocs：该项目每日计划与进度情况
 
 testDocs：该项目每个开发阶段已经通过的测试
+
+recognitionDocs：架构认知文档（types / channel / gateway / agent loop / tool&skill&plugin / memory 各自是什么、边界在哪），入口为该目录 README

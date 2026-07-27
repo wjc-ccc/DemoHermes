@@ -2,27 +2,30 @@
 
 自主 Agent 框架，目标复现 Cursor 的 Agent 能力并增强可观测性与自我进化。
 
-### 初步计划目标（截止日期 7.13）
+### 当前状态（2026-07-27）
 
-- 通过 claude-agent-sdk 复现和使用 Claude 的所有能力
-- 可视化所有步骤流程和完整上下文，增强 Agent 可复现性
-- 实现自主进化（记忆整理、Skill 自动创建与优化）
+- CLI / HTTP（frontier 前端）双入口；Gateway 双队列调度 + AgentLoop 工具内循环
+- Memory 系统（TDD Slice 1–14）已验收：USER/GROUP + MEMORY 精选记忆、daily 日志、SQLite transcript 永久记录与检索、外部 Provider 接入、后台 Reviewer 自动提炼
+- 架构认知见 `docs/recognitionDocs/`；Memory 设计契约见 `docs/aiDocs/7.23 Memory架构TDD方案.md`
 
 ### 项目结构速览
 
 ```
 DemoCursor/
-├── agent/              # 核心代码包 → Agent/README_Agent.md
-│   ├── core/           # 主循环、会话、上下文 → README_core.md
-│   ├── memory/         # 三层记忆系统 → README_memory.md
-│   ├── model/          # LLM 接入 → README_model.md
-│   ├── tools/          # 工具系统 → README_tools.md
-│   ├── prompt/         # 提示词构建 → README_prompt.md
-│   ├── evolution/      # 自我进化 → README_evolution.md
-│   └── gateway/        # CLI / API 入口 → README_gateway.md
-├── data/               # 运行时数据 → README_data.md
-├── logging/            # 日志工具 → README_Logging.md
-├── docs/               # 开发进度 → README_docs.md
+├── main.py             # 一键启动：默认 HTTP :8000（frontier 后端）；--cli 终端模式
+├── frontier/           # 可视化前端
+├── Agent/              # 核心代码包（大写；import 必须保持 Agent）
+│   ├── core/           # AgentLoop、ContextBuilder、ContextBudget、Session/types
+│   ├── gateway/        # 消息枢纽、SessionStore（dict + SQLite adapter）
+│   ├── memory/         # 精选记忆 Hot/Daily、SQLite transcript、Provider、Reviewer
+│   ├── channel/        # 平台适配（CLI / frontier / 飞书 / 微信 / QQ）
+│   ├── model/          # LLM 接入（claude / deepseek）
+│   ├── tools/          # 工具（calculator / bash / file / memory_read / memory_edit）
+│   ├── skills/         # Skill 加载与注册
+│   ├── prompt/         # 系统提示词
+│   └── evolution/      # 自我进化（reviewer / curator / skill_creator）
+├── tests/              # pytest 入口；tests/memory/ 为 Memory TDD 测试
+├── data/               # 运行时数据（记忆文件、日志）
+├── logging/            # 日志工具
+├── docs/               # 开发文档 → docs/README_docs.md
 ```
-
-每个目录下都有 `README_目录名.md`，介绍该目录的职责和文件说明。
