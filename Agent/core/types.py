@@ -196,6 +196,7 @@ class TurnResult(BaseModel):
     """Loop → Gateway：一轮对话结果。"""
     final_text: str | None = None
     session_id: str = Field(default_factory=str)
+    turn_id: str = Field(default_factory=str)
     completed: bool = True
     interrupted: bool = False
     error: str | None = None

@@ -29,6 +29,8 @@ from ..core.events import EventBus, LoopEvent, default_event_bus
 from ..core.loop import AgentLoop
 from ..core.messages import build_user_message
 from ..core.types import InboundEvent, Message, OutboundReply
+from ..memory import MemoryManager, build_memory_scope
+from ..memory.types import TurnEnvelope
 from .message_bus import MessageBus
 from .session_key import build_session_key
 from .session_store import DictSessionStore
@@ -49,12 +51,16 @@ class Gateway:
         event_bus: EventBus | None = None,
         agent_id: str = "main",
         workers: int = 2,
+        memory: MemoryManager | None = None,
+        on_session_end=None,
     ):
         self.agent_id = agent_id
         self.loop = loop or AgentLoop()          # 对话核心
         self.store = store or DictSessionStore()  # session_key → Session（dict）
         self.bus = bus or MessageBus()            # 入站/出站双队列
         self.events = event_bus or default_event_bus 
+        self._memory = memory  # 可选 MemoryManager；配置后每 turn build_context 一次 + commit_turn 持久化（§8.1）
+        self._on_session_end = on_session_end  # 可选；reset 事务 commit 后才对 closed_session 触发（§8.3）
         self._channels: dict[str, BaseChannel] = {} # channel 注册与管理
         # 同 session_key 串行：每 key 一把锁
         self._session_locks: dict[str, threading.Lock] = {} # 同 session_key 串行：每 key 一把锁
@@ -199,6 +205,8 @@ class Gateway:
     # 本质首先解析text 然后判断是否为斜杠命令 不是的话根据key获取session上下文 然后把session 和message加入进去 然后交给loop去跑一轮
     def _run_turn_locked(self, session_key: str, event: InboundEvent) -> OutboundReply:
         corr = event.metadata.get("correlation_id")
+        if self._memory is not None:
+            return self._run_turn_memory(session_key, event, corr)
 
         # ---- 斜杠命令：Gateway 短路，不进 Loop ----
         text = (event.text or "").strip()
@@ -244,6 +252,71 @@ class Gateway:
             source=event.source,
             reply_to=event.source.reply_to_message_id,
             metadata={"correlation_id": corr},
+        )
+
+    def _run_turn_memory(self, session_key: str, event: InboundEvent, corr) -> OutboundReply:
+        """memory 接线路径（§8.1）：build_memory_scope -> get_or_create -> build_context 一次 ->
+        run_turn(memory_context) -> commit_turn 持久化。store 须为 scope 感知的 SessionStore。"""
+        scope = build_memory_scope(event.source)
+        text = (event.text or "").strip()
+        channel = event.source.channel
+        author_id = event.source.user_id or ""
+
+        if text in {"/new", "/reset"}:
+            session = self.store.get_or_create(
+                session_key, scope=scope, channel=channel, author_id=author_id,
+            )
+            reset = self.store.close_and_reset(
+                session_key, session, scope=scope, channel=channel, author_id=author_id,
+            )
+            # §8.3：事务 commit 成功后才对 closed_session 触发 session_end hook
+            if self._on_session_end is not None:
+                self._on_session_end(reset.closed_session)
+            return OutboundReply(
+                text=f"已新开会话 session_id={reset.new_session.session_id}",
+                source=event.source, reply_to=event.source.reply_to_message_id,
+                metadata={"correlation_id": corr},
+            )
+        if text == "/help":
+            return OutboundReply(
+                text="可用命令：/new 或 /reset 新开会话；/help 查看帮助。其他内容直接对话。",
+                source=event.source, reply_to=event.source.reply_to_message_id,
+                metadata={"correlation_id": corr},
+            )
+
+        session = self.store.get_or_create(
+            session_key, scope=scope, channel=channel, author_id=author_id,
+        )
+        snapshot = self._memory.build_context(
+            scope=scope, query=event.text or "", session_id=session.session_id,
+        )
+        user_msg = self.build_message(event)
+        started = time.time()
+        result = self.loop.run_turn(
+            session, user_msg,
+            memory_context=snapshot,
+            ephemeral_prompt=event.channel_prompt,
+            session_key=session_key,
+        )
+        turn = TurnEnvelope(
+            turn_id=result.turn_id, session_id=session.session_id, scope=scope,
+            user_message_id=user_msg.message_id,
+            assistant_message_ids=(), tool_call_ids=(),
+            started_at=started, finished_at=time.time(),
+            completed=result.completed, interrupted=result.interrupted, error=result.error,
+        )
+        # §8.1：SQLite 提交失败不丢模型回复--返回 reply 但 metadata 标 persistence_error
+        metadata = {"correlation_id": corr}
+        try:
+            self.store.commit_turn(session, turn, scope=scope)
+        except Exception as exc:
+            logger.exception("commit_turn 失败 turn_id=%s", result.turn_id)
+            metadata["persistence_error"] = str(exc)
+        text_out = result.final_text if result.completed else (result.error or "处理失败")
+        return OutboundReply(
+            text=text_out or "", source=event.source,
+            reply_to=event.source.reply_to_message_id,
+            metadata=metadata,
         )
 
     # ================= 线程task2：出站分发 ================= ✅️

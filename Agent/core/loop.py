@@ -129,7 +129,7 @@ class AgentLoop:
                 logger.info("turn 被打断 turn_id=%s", turn_id)
                 return TurnResult(
                     final_text=None, session_id=session.session_id,
-                    completed=False, interrupted=True,
+                    turn_id=turn_id, completed=False, interrupted=True,
                 )
 
             # ---- think：组装上下文 → 调模型 ----
@@ -155,7 +155,7 @@ class AgentLoop:
                 )
                 return TurnResult(
                     final_text=None, session_id=session.session_id,
-                    completed=False, error="context_budget_exceeded",
+                    turn_id=turn_id, completed=False, error="context_budget_exceeded",
                 )
             stats = builder.context_stats()
 
@@ -171,7 +171,7 @@ class AgentLoop:
                 self._emit("turn_error", turn_id, session, session_key, error=str(e))
                 return TurnResult(
                     final_text=None, session_id=session.session_id,
-                    completed=False, error=f"模型调用失败: {e}",
+                    turn_id=turn_id, completed=False, error=f"模型调用失败: {e}",
                 )
 
             # 发射事件 用于前端展示当前模型调用结果
@@ -203,6 +203,7 @@ class AgentLoop:
             return TurnResult(
                 final_text=response.text,
                 session_id=session.session_id,
+                turn_id=turn_id,
                 completed=True,
             )
 
@@ -214,6 +215,7 @@ class AgentLoop:
         return TurnResult(
             final_text=fallback,
             session_id=session.session_id,
+            turn_id=turn_id,
             completed=False,
             error="max_iterations",
         )
