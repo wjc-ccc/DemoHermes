@@ -1,9 +1,12 @@
 """episodic SQLite 连接工厂（7.23 方案 §6.1）。
 
-约束：
-- 每个连接都执行 foreign_keys / WAL / busy_timeout 三条 PRAGMA；
-- 禁止跨线程共享同一个 connection——多线程经本工厂各自取连接；
-- 每次 save/reset 是短事务，连接即用即关。
+每个新连接执行三条 PRAGMA 并注册一个自定义 SQL 函数：
+- foreign_keys = ON   外键约束生效
+- journal_mode = WAL  写不阻塞读
+- busy_timeout = 5000 锁等待上限 5s
+- py_casefold(x)      Unicode casefold，大小写匹配不依赖 SQLite build collation（§6.4）
+
+约束：禁止跨线程共享 connection；多线程经本工厂各取连接；每次事务即用即关。
 """
 from __future__ import annotations
 
@@ -12,7 +15,7 @@ from pathlib import Path
 
 
 def _py_casefold(value) -> str:
-    """SQL 函数：Unicode casefold——大小写匹配不依赖 SQLite build 的默认 collation（§6.4）。"""
+    """SQL 函数：Unicode casefold--大小写匹配不依赖 SQLite build 的默认 collation。"""
     return "" if value is None else str(value).casefold()
 
 

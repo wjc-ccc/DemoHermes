@@ -24,10 +24,18 @@ class Skill(PydanticModel):
     description: str = Field(default_factory=str, description="一句话描述（Level 1 注入用）")
     body: str = Field(default_factory=str, description="完整正文（Level 3 加载用）")
     path: str = Field(default_factory=str, description="SKILL.md 所在路径")
+    status: str = Field(
+        default="active",
+        description="draft|active；缺省 active 兼容 builtin",
+    )
 
     def summary_line(self) -> str:
         """Level 1：注入 system prompt 的一行摘要。"""
         return f"- {self.name}: {self.description}"
+
+    @property
+    def is_active(self) -> bool:
+        return (self.status or "active").strip().lower() == "active"
 
     @classmethod
     def from_file(cls, path: Path) -> "Skill":
@@ -44,9 +52,13 @@ class Skill(PydanticModel):
                         key, _, value = line.partition(":")
                         meta[key.strip()] = value.strip()
                 body = text[end + 4:].strip()
+        status = (meta.get("status") or "active").strip().lower()
+        if status not in ("draft", "active"):
+            status = "active"
         return cls(
             name=meta.get("name") or path.parent.name,
             description=meta.get("description", ""),
             body=body,
             path=str(path),
+            status=status,
         )

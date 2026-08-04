@@ -1,21 +1,19 @@
 """
-HotStore — 精选记忆 Markdown 文档存储（7.23 方案 §3.4 / §3.5）
+HotStore — 精选记忆 Markdown 文档存储
 
-文档结构：固定标题 + 若干 entry，entry 用稳定 ID 围栏标记：
+hot类别能力限定： 物理存储对应的md文件 user.md group.md  memory.md
+     对应的类别初始化路径
+	提供read外部文档接口
+	提供版本查询外部文档接口
+	提供对于markdown文件操作的一些工具 比如replace 和精确地增删改查 （markdown本身应该如何增删改查？）
+	提供对于写文件的锁和对应的retry退避机制
 
-    # USER
+HotStore 是一个 Markdown 文档的 CRUD 适配器：
+每次读都重新读盘（无内存缓存，手工编辑立即可见）；
+文档用 <!-- memory-entry:ID -->围栏切分成若干 entry，每个 entry 由 Store 在 add 时生成唯一 id 作为定位身份；
+写入走"临时文件 + fsync + 原子，replace"保证不出半截文件，并发安全由外层锁 + revision 校验负责。
 
-    <!-- memory-entry:e_01JABC -->
-    用户偏好简洁、先给结论。
-    <!-- /memory-entry:e_01JABC -->
 
-规则（§3.5）：
-    - entry_id 由 Store 生成，调用方不可指定；
-    - revision 为完整文件 bytes 的 SHA-256；
-    - 写入 UTF-8、LF；operator 可直接阅读文件。
-
-当前只实现 Slice 1 需要的最小面：整文件读取 + add 追加。
-replace/remove/解析在 Slice 2 随 CRUD 测试补齐。
 """
 from __future__ import annotations
 
@@ -37,22 +35,22 @@ _ENTRY_RE = re.compile(
     re.DOTALL,
 )
 
-
+## entry id
 def new_entry_id() -> str:
     return "e_" + uuid.uuid4().hex[:12]
 
-
+### 渲染entry
 def render_entry(entry_id: str, content: str) -> str:
     return f"{ENTRY_OPEN.format(entry_id=entry_id)}\n{content}\n{ENTRY_CLOSE.format(entry_id=entry_id)}"
 
-
+### 去重比较
 def _normalize(content: str) -> str:
     """去重比较用：NFKC + casefold + 去首尾空白；存储仍保留原文。"""
     return unicodedata.normalize("NFKC", content).casefold().strip()
 
-
+### 校验markdown文件
 def is_valid_document(text: str) -> bool:
-    """校验文档是可解析、entry 格式完好的候选（§4.4 缩减输出校验）。
+    """校验文档是可解析、entry 格式完好的候选。
 
     - 首行是 Markdown 标题；
     - 每个 open 围栏都有配对 close，且都能解析出非空 entry。
@@ -67,10 +65,11 @@ def is_valid_document(text: str) -> bool:
     return len(parsed) == opens
 
 
+### Markdown 文档加载
 class HotStore:
     """单个 Markdown 文档（一个 scope 的一个 target）。
 
-    mutation 分两步（§4.4 事务）：candidate_* 只算新文本不写盘，
+    mutation 分两步：candidate_* 只算新文本不写盘，
     由 Manager 校验预算后决定 write_text / 备份+缩减。
     """
 
@@ -79,6 +78,7 @@ class HotStore:
         self._title = title
         self._id_factory = id_factory
 
+    ### 接口读取文档
     def read_text(self) -> str:
         """整文件内容；文件不存在时等价于只有标题的空文档。"""
         if not self._path.exists():
@@ -102,7 +102,7 @@ class HotStore:
     def bounded_text(self, max_chars: int) -> tuple[str, bool]:
         """返回 (注入用文本, 是否发生了降级)。
 
-        文档被外部改到超限时，build_context 不改磁盘（§4.4 末段）：
+        文档被外部改到超限时，build_context 不改磁盘：
         只在 entry 边界取前缀——保留标题与尽可能多的完整 entry，
         绝不截出半截 entry。
         """
@@ -120,7 +120,7 @@ class HotStore:
             degraded = candidate
         return degraded, True
 
-    # ---- candidate：只计算，不写盘 ----
+    # ---- 增删改 本质都是基于 content和entry id进行增删改 ----
     def candidate_add(self, content: str) -> tuple[str, str | None]:
         """返回 (entry_id, candidate_text)；重复内容返回 (既有 ID, None) 表示无需写。"""
         wanted = _normalize(content)
@@ -160,7 +160,7 @@ class HotStore:
         return self._path
 
     def write_text(self, text: str) -> None:
-        """原子替换：同目录唯一临时文件 → flush+fsync → os.replace（§5.1）。
+        """原子替换：同目录唯一临时文件 → flush+fsync → os.replace。
 
         调用方必须已持有 PathLockRegistry 中本文件的锁。
         """
@@ -178,7 +178,7 @@ class HotStore:
     def _replace_with_retry(self, tmp: Path, attempts: int = 200) -> None:
         """os.replace 在 Windows 上会因 reader 瞬时持有句柄而 PermissionError，
 
-        reader 每次只持有微秒级，做有界退避重试（§5.1 单进程保证内）。
+        reader 每次只持有微秒级，做有界退避重试。
         """
         for attempt in range(attempts):
             try:

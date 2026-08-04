@@ -5,13 +5,18 @@
 超 max_attempts 标 failed。Reviewer 不直接写文件，只调 Manager（§8.2）。
 
 模型抽取器是外部 seam，测试用 FakeExtractor 返回固定 mutation；不 Fake Reviewer 本身。
+生产默认可用 RuleBasedExtractor；LLM 抽取后续替换同一 seam。
 """
 from __future__ import annotations
 
+import logging
+import threading
 import time
 from typing import Protocol
 
 from .types import MemoryMutation, TurnEnvelope
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryExtractor(Protocol):
@@ -33,6 +38,7 @@ class MemoryReviewer:
         max_attempts: int = 3,
         lease_seconds: float = 30.0,
         backoff_seconds: float = 60.0,
+        worker_id: str = "reviewer",
     ) -> None:
         self._store = store
         self._manager = manager
@@ -41,13 +47,14 @@ class MemoryReviewer:
         self._max_attempts = max_attempts
         self._lease_seconds = lease_seconds
         self._backoff_seconds = backoff_seconds
+        self._worker_id = worker_id
 
     def process_pending(self) -> int:
         """处理所有当前可领取的 pending job；返回处理数量。"""
         count = 0
         while True:
             claimed = self._store.claim_review_job(
-                worker_id="reviewer",
+                worker_id=self._worker_id,
                 now=self._clock(),
                 lease_seconds=self._lease_seconds,
             )
@@ -71,3 +78,61 @@ class MemoryReviewer:
                 next_available_at=self._clock() + self._backoff_seconds,
                 max_attempts=self._max_attempts,
             )
+
+
+class ReviewerWorker:
+    """后台线程：轮询 / 被 notify 唤醒后消费 review outbox（§8.1 / §8.3）。
+
+    不阻断主对话；shutdown 时停止 claim 新 job，并给正在处理的有限 grace。
+    """
+
+    def __init__(
+        self,
+        reviewer: MemoryReviewer,
+        *,
+        poll_interval: float = 0.5,
+        shutdown_grace: float = 5.0,
+    ) -> None:
+        self._reviewer = reviewer
+        self._poll_interval = poll_interval
+        self._shutdown_grace = shutdown_grace
+        self._wakeup = threading.Event()
+        self._running = False
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._running:
+            return
+        self._running = True
+        self._thread = threading.Thread(
+            target=self._loop, name="memory-reviewer", daemon=True,
+        )
+        self._thread.start()
+        logger.info("MemoryReviewer worker 已启动")
+
+    def notify(self, *_args, **_kwargs) -> None:
+        """commit_turn / session_end 后唤醒；忽略多余参数便于当 hook 用。"""
+        self._wakeup.set()
+
+    def stop(self, timeout: float | None = None) -> None:
+        self._running = False
+        self._wakeup.set()
+        if self._thread is not None:
+            self._thread.join(timeout if timeout is not None else self._shutdown_grace)
+            self._thread = None
+        try:
+            n = self._reviewer.process_pending()
+            if n:
+                logger.info("shutdown 时额外处理了 %d 个 review job", n)
+        except Exception:
+            logger.exception("shutdown review drain 失败")
+        logger.info("MemoryReviewer worker 已停止")
+
+    def _loop(self) -> None:
+        while self._running:
+            try:
+                self._reviewer.process_pending()
+            except Exception:
+                logger.exception("reviewer process_pending 异常（已吞掉，不阻断主对话）")
+            self._wakeup.wait(timeout=self._poll_interval)
+            self._wakeup.clear()

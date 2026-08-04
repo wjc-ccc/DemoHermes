@@ -28,11 +28,19 @@ DEFAULT_SKILL_DIRS = [
 
 class SkillRegistry:
     def __init__(self, skill_dirs: list[Path] | None = None) -> None:
+        self._skill_dirs = list(
+            skill_dirs if skill_dirs is not None else DEFAULT_SKILL_DIRS
+        )
         self._skills: dict[str, Skill] = {}
-        for directory in skill_dirs if skill_dirs is not None else DEFAULT_SKILL_DIRS:
-            self._scan_dir(directory)
+        self.reload()
 
     # ---- 扫描注册 ----
+    def reload(self) -> None:
+        """清空并重新扫描全部 skill_dirs（Phase 3：Creator 写盘后热更新）。"""
+        self._skills.clear()
+        for directory in self._skill_dirs:
+            self._scan_dir(directory)
+
     def _scan_dir(self, directory: Path) -> None:
         if not directory.exists():
             return
@@ -44,7 +52,7 @@ class SkillRegistry:
 
     def register(self, skill: Skill) -> None:
         self._skills[skill.name] = skill
-        logger.info("注册技能 name=%s path=%s", skill.name, skill.path)
+        logger.info("注册技能 name=%s status=%s path=%s", skill.name, skill.status, skill.path)
 
     # ---- 查询 ----
     def get(self, name: str) -> Skill | None:
@@ -55,10 +63,11 @@ class SkillRegistry:
 
     # ---- 两级加载 ----
     def summaries_prompt(self) -> str:
-        """Level 1：所有技能的一行摘要，拼成 prompt 块；无技能时返回空串。"""
-        if not self._skills:
+        """Level 1：仅 active 技能的一行摘要；无可用技能时返回空串。"""
+        active = [s for s in self._skills.values() if s.is_active]
+        if not active:
             return ""
-        lines = [skill.summary_line() for skill in self._skills.values()]
+        lines = [skill.summary_line() for skill in active]
         return (
             "## 可用技能（Skills）\n"
             "以下技能可显著提升特定任务的表现。当用户请求与某技能描述匹配时，"
@@ -67,6 +76,6 @@ class SkillRegistry:
         )
 
     def load_content(self, name: str) -> str | None:
-        """Level 3：技能完整正文；不存在返回 None。"""
+        """Level 3：技能完整正文；不存在返回 None（draft 仍可按名加载）。"""
         skill = self._skills.get(name)
         return skill.body if skill else None

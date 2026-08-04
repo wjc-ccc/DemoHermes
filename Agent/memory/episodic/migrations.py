@@ -1,6 +1,14 @@
-"""SQLite schema migration（7.23 方案 §6.2）：PRAGMA user_version 管理版本。
+"""SQLite schema migration（7.23 方案 §6.2）：PRAGMA user_version 管理版本，只前进不回退。
 
-v1 一次性创建 session_slots / sessions / messages / tool_calls / review_jobs；
+v1 一次性创建 5 张表 + 5 个索引：
+- sessions / session_slots  会话与 active 槽位
+- messages / tool_calls      不可变审计事实
+- review_jobs                后台 review outbox
+
+每行存「可索引列 + 完整 payload_json」：索引列用于查询投影，payload_json 用
+model_dump_json() 存完整 Pydantic model，保证 ContentPart/metadata 等无损（ADR-6）。
+sessions.payload_json 排除 messages/tool_calls，恢复时只从子表按 seq 组装，避免两个事实源。
+
 后续演进（FTS5、environment_snapshots）以独立 migration 追加，禁止改旧版本。
 """
 

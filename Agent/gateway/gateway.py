@@ -53,6 +53,11 @@ class Gateway:
         workers: int = 2,
         memory: MemoryManager | None = None,
         on_session_end=None,
+        on_turn_committed=None,
+        reviewer_worker=None,
+        context_budget=None,
+        token_estimator=None,
+        signal_collector=None,
     ):
         self.agent_id = agent_id
         self.loop = loop or AgentLoop()          # 对话核心
@@ -61,6 +66,11 @@ class Gateway:
         self.events = event_bus or default_event_bus 
         self._memory = memory  # 可选 MemoryManager；配置后每 turn build_context 一次 + commit_turn 持久化（§8.1）
         self._on_session_end = on_session_end  # 可选；reset 事务 commit 后才对 closed_session 触发（§8.3）
+        self._on_turn_committed = on_turn_committed  # 可选；commit_turn 成功后唤醒 reviewer
+        self._reviewer_worker = reviewer_worker  # 可选；随 Gateway start/stop 启停
+        self._context_budget = context_budget  # 可选；整轮 prompt token 预算（8.04 Phase 0.1）
+        self._token_estimator = token_estimator  # 可选；与 context_budget 配套的 TokenEstimator
+        self._signal_collector = signal_collector  # 可选；EventBus → evolution signals（8.04 Phase 0.4）
         self._channels: dict[str, BaseChannel] = {} # channel 注册与管理
         # 同 session_key 串行：每 key 一把锁
         self._session_locks: dict[str, threading.Lock] = {} # 同 session_key 串行：每 key 一把锁
@@ -95,6 +105,10 @@ class Gateway:
         ]
         for t in self._threads:
             t.start()
+        if self._reviewer_worker is not None:
+            self._reviewer_worker.start()
+        if self._signal_collector is not None:
+            self._signal_collector.start()
         logger.info(
             "gateway 已启动 workers=%s channels=%s",
             self._executor._max_workers, list(self._channels),
@@ -106,6 +120,10 @@ class Gateway:
         self._running = False
         self.bus.close()
         self._executor.shutdown(wait=False, cancel_futures=True)
+        if self._reviewer_worker is not None:
+            self._reviewer_worker.stop()
+        if self._signal_collector is not None:
+            self._signal_collector.stop()
         logger.info("gateway 已停止")
 
     # ================= 消息构建 =================  ✅️
@@ -295,8 +313,11 @@ class Gateway:
         result = self.loop.run_turn(
             session, user_msg,
             memory_context=snapshot,
+            memory_scope=scope,
             ephemeral_prompt=event.channel_prompt,
             session_key=session_key,
+            context_budget=self._context_budget,
+            token_estimator=self._token_estimator,
         )
         turn = TurnEnvelope(
             turn_id=result.turn_id, session_id=session.session_id, scope=scope,
@@ -307,11 +328,25 @@ class Gateway:
         )
         # §8.1：SQLite 提交失败不丢模型回复--返回 reply 但 metadata 标 persistence_error
         metadata = {"correlation_id": corr}
+        if not result.completed and result.error:
+            metadata["error"] = result.error
         try:
             self.store.commit_turn(session, turn, scope=scope)
         except Exception as exc:
             logger.exception("commit_turn 失败 turn_id=%s", result.turn_id)
             metadata["persistence_error"] = str(exc)
+        else:
+            # §8.1 / 8.04 Phase 0.2：事实落库成功后 sync_turn（幂等；无 Provider 时 no-op）
+            try:
+                self._memory.sync_turn(turn)
+            except Exception:
+                logger.exception("sync_turn 失败 turn_id=%s", result.turn_id)
+            # 事实落库成功后才唤醒 reviewer（§8.1：提交失败则不启后台提炼）
+            if self._on_turn_committed is not None:
+                try:
+                    self._on_turn_committed(turn)
+                except Exception:
+                    logger.exception("on_turn_committed hook 失败 turn_id=%s", result.turn_id)
         text_out = result.final_text if result.completed else (result.error or "处理失败")
         return OutboundReply(
             text=text_out or "", source=event.source,
@@ -372,6 +407,7 @@ class Gateway:
             },
             "bus": {"inbound": self.bus.inbound_size, "outbound": self.bus.outbound_size},
             "sessions": self.store.list_sessions(),
+            "memory_enabled": self._memory is not None,
             "model": getattr(self.loop.model, "name", "unknown"),
             "tools": self.loop.tools.list_tools() if self.loop.tools else [],
             "skills": self.loop.skills.list_skills() if self.loop.skills else [],

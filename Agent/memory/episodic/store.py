@@ -1,13 +1,16 @@
-"""SqliteSessionStore — SessionStore seam 的 SQLite adapter（7.23 方案 §2 Seam B / §6）。
+"""SqliteSessionStore - 会话与对话回合的 SQLite 持久化存储
 
-与 DictSessionStore 同一 seam；额外提供：
-- 跨进程重启的持久化恢复（session_slots → sessions → messages 按 seq 组装）；
-- commit_turn 单事务写入 session header + 本 turn messages + review outbox；
-- 已完成 Message 首次 INSERT 后重复提交相同 payload 幂等成功（INSERT OR IGNORE）。
+episodic 类别能力限定： 把一次会话(session)及其每轮对话(turn)的事实落进 SQLite，重启可完整恢复
+	 session_key -> active session 的槽位映射：一个 key 同一时刻只指向一个活跃会话
+	 turn 的 messages / tool_calls 作为不可变审计事实插入（同 payload 幂等，异 payload 拒绝覆盖）
+	 review outbox：每个 turn 同事务入队一条待审任务，供后台 Reviewer 认领/完成/失败/重排
+	 只读历史检索器：按 scope + casefold 子串召回历史消息候选（不冒充 FTS）
 
-sessions.payload_json 保存 Session 完整字段但排除 messages/tool_calls；
-恢复时只从子表按 seq 组装 messages（tool_calls 恢复在 Slice 10 落地），
-避免两个事实源（§6.2 / ADR-6）。
+SqliteSessionStore 是 SessionStore seam 的 SQLite 适配器（与内存版 DictSessionStore 同一接口）：
+每个公共方法自开自关一个连接，with conn: 包一个短事务，单进程多线程经连接工厂各取连接；
+事实与 review job 写在同一事务里，消除"事实已提交但入队前崩溃"的漏审窗口；
+sessions.payload_json 只存 Session 自身字段（排除 messages/tool_calls），
+恢复时从子表按 seq 组装 messages——单一事实源，避免 header 与子表两份数据打架。
 """
 from __future__ import annotations
 
@@ -26,6 +29,7 @@ from .migrations import migrate
 logger = logging.getLogger(__name__)
 
 
+## 检索候选：历史消息的只读投影（索引列，不把 SQL 细节泄露给上层）
 class ArchivedMessage(NamedTuple):
     """archive reader 返回的检索候选：索引列投影，不含 SQL 细节。"""
 
@@ -35,6 +39,7 @@ class ArchivedMessage(NamedTuple):
     created_at: float
 
 
+## 调度任务：review outbox 一条待审作业的类型化投影（不含 payload_json 原文）
 class ReviewJob(NamedTuple):
     """review outbox 中一条任务的类型化投影（§8.2）；不含 payload_json 原文。"""
 
@@ -50,11 +55,13 @@ class ReviewJob(NamedTuple):
     last_error: str | None
 
 
+### LIKE 字面量转义：% _ \ 先转义，让通配符当普通字符参与 LIKE ... ESCAPE '\'
 def _escape_like(text: str) -> str:
     r"""§6.4：`\`、`%`、`_` 必须先转义按字面量搜索（配合 LIKE ... ESCAPE '\'）。"""
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+### 只读历史检索器：与 Store 共用一个库，只 SELECT 不产生任何写副作用
 class SqliteSessionArchiveReader:
     r"""只读 SessionArchiveReader（§2）：与 SqliteSessionStore 共用数据库与连接工厂。
 
@@ -88,24 +95,31 @@ class SqliteSessionArchiveReader:
         return [ArchivedMessage(*row) for row in rows]
 
 
+### 两类异常：审计冲突 / 会话完整性——都禁止静默覆盖，抛出让上层决策
 class AuditConflictError(Exception):
-    """§6.3/ADR-12：已完成 Message/ToolCall 以不同 payload 重提——暴露冲突，禁止覆盖。"""
+    """§6.3/ADR-12：已完成 Message/ToolCall 以不同 payload 重提--暴露冲突，禁止覆盖。"""
 
     error_code = "audit_conflict"
 
 
 class SessionIntegrityError(Exception):
-    """§6.3：slot / session / scope 三者不一致——拒绝跨 scope 恢复。"""
+    """§6.3：slot / session / scope 三者不一致--拒绝跨 scope 恢复。"""
 
     error_code = "session_integrity_error"
 
 
+### SQLite 会话存储主体：会话生命周期 + turn 持久化 + review outbox 调度
 class SqliteSessionStore:
-    """SQLite 会话存储：单进程多线程经连接工厂各取连接（§6.1）。"""
+    """SQLite 会话存储：单进程多线程经连接工厂各取连接（§6.1）。
+
+    三类职责：会话生命周期（find/get_or_create/close_and_reset）、
+    turn 持久化（commit_turn）、review outbox 调度（claim/complete/fail）。
+    每个公共方法自开自关连接，with conn: 包短事务。
+    """
 
     def __init__(self, db_path: str | Path, *, id_factory=None) -> None:
         self._db_path = Path(db_path)
-        # 外部 seam（§10.1-8 允许 Fake）：session_id 生成；默认 uuid4
+        # session_id 生成器注入点（外部 seam，§10.1-8 测试可塞 Fake 控制幂等）；不传则 uuid4
         self._id_factory = id_factory
         conn = connect(self._db_path)
         try:
@@ -125,7 +139,7 @@ class SqliteSessionStore:
             author_id=author_id,
         )
 
-    # ---- 上下文寻找：session_key → Session ----
+    # ---- 上下文寻找：session_key -> Session ----
     def find(self, session_key: str) -> Session | None:
         """按 session_key 找 active session；找不到返回 None（不自动创建）。"""
         conn = connect(self._db_path)
@@ -137,6 +151,14 @@ class SqliteSessionStore:
             if row is None:
                 return None
             return self._load_session(conn, row[0])
+        finally:
+            conn.close()
+
+    def get_session(self, session_id: str) -> Session | None:
+        """按 session_id 加载 Session（含 messages）；供 Reviewer Extractor 读 turn 原文。"""
+        conn = connect(self._db_path)
+        try:
+            return self._load_session(conn, session_id)
         finally:
             conn.close()
 
@@ -158,7 +180,7 @@ class SqliteSessionStore:
             ).fetchone()
             if row is not None:
                 if (row[1], row[2]) != (scope.kind, scope.key):
-                    # §6.3：slot/session/scope 三者不一致 → 完整性错误，不跨 scope 恢复
+                    # §6.3：slot/session/scope 三者不一致 -> 完整性错误，不跨 scope 恢复
                     raise SessionIntegrityError(
                         f"session_key={session_key} 的 slot scope "
                         f"({row[1]}:{row[2]}) 与请求 scope ({scope.kind}:{scope.key}) 不一致"
@@ -182,7 +204,12 @@ class SqliteSessionStore:
     def commit_turn(
         self, session: Session, turn: TurnEnvelope, *, scope: MemoryScope
     ) -> None:
-        """原子保存 Session 增量，并以 turn_id 写入 review job（重复 commit 幂等）。"""
+        """单事务保存 Session 增量 + 本 turn 的 messages/tool_calls + review job（ADR-11）。
+
+        事实与 outbox 同事务，消除"事实已提交但入队前崩溃"的漏审窗口。
+        messages/tool_calls 走审计不可变插入（同 payload 幂等，异 payload 抛 AuditConflictError）；
+        review job 用 INSERT OR IGNORE + turn_id 幂等。
+        """
         conn = connect(self._db_path)
         try:
             with conn:  # 短事务
@@ -215,10 +242,10 @@ class SqliteSessionStore:
         channel: str = "",
         author_id: str = "",
     ) -> ResetResult:
-        """一个事务内完成状态转换；事务成功后调用方才允许发 session_end hook。
+        """一个事务内：落库旧 session（含未 commit 消息）并标 completed -> 建新 session -> 切换 slot（ADR-13）。
 
-        传入的 `session` 是调用方持有的最新状态（可能含未 commit 的消息），
-        先落库并标记 completed，再创建新 session 并切换 slot。
+        传入的 `session` 是调用方持有的最新状态；事务成功后调用方才允许发 session_end hook，
+        失败整体回滚不得提前发 hook。旧 session/messages/tool_calls 永不删除。
         """
         conn = connect(self._db_path)
         try:
@@ -238,7 +265,7 @@ class SqliteSessionStore:
         finally:
             conn.close()
 
-    # ---- 观测：连接配置健康检查（§6.1 契约的可观察面）----
+    # ---- 观测：连接配置健康检查 + outbox 状态查询（§6.1 契约的可观察面）----
     def diagnostics(self) -> dict:
         """经连接工厂开一个新连接并读回 PRAGMA，验证每个连接都满足 §6.1。"""
         conn = connect(self._db_path)
@@ -271,6 +298,7 @@ class SqliteSessionStore:
     ) -> "tuple[ReviewJob, TurnEnvelope] | None":
         """§8.2：原子认领一个 pending job（status->running, attempts+1, lease_until）。
 
+        也回收 lease 已过期的 running job--进程崩溃后其他 worker 据此接管（at-least-once）。
         返回 (ReviewJob, TurnEnvelope) 或 None（无可领取任务）。
         """
         conn = connect(self._db_path)
@@ -460,6 +488,7 @@ class SqliteSessionStore:
 
     @staticmethod
     def _load_session(conn, session_id: str) -> Session | None:
+        """从 sessions.payload_json + 子表按 seq 组装恢复 Session（单一事实源，ADR-6）。"""
         row = conn.execute(
             "SELECT payload_json FROM sessions WHERE session_id = ?", (session_id,)
         ).fetchone()

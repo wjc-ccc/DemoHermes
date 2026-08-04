@@ -62,6 +62,7 @@ class AgentLoop:
         self.max_iterations = max_iterations
         self.model_retries = model_retries
         self._interrupt = False
+        self._turn_memory_scope = None  # 由 run_turn 注入；供 memory 工具使用
 
     # ---- 请求打断 ----   ✅️ 7.20
     def request_interrupt(self) -> None:
@@ -107,13 +108,43 @@ class AgentLoop:
         ephemeral_prompt: str | None = None,
         session_key: str = "",
         memory_context=None,
+        memory_scope=None,
         context_budget=None,
         token_estimator=None,
         provider_min_recall_chars: int | None = None,
     ) -> TurnResult:
         self._interrupt = False
         turn_id = uuid.uuid4().hex[:12]
+        # 本 turn 工具调用可注入的 MemoryScope（模型参数不得覆盖，§9）
+        self._turn_memory_scope = memory_scope
+        try:
+            return self._run_turn_body(
+                session,
+                user_message,
+                turn_id=turn_id,
+                ephemeral_prompt=ephemeral_prompt,
+                session_key=session_key,
+                memory_context=memory_context,
+                context_budget=context_budget,
+                token_estimator=token_estimator,
+                provider_min_recall_chars=provider_min_recall_chars,
+            )
+        finally:
+            self._turn_memory_scope = None
 
+    def _run_turn_body(
+        self,
+        session: Session,
+        user_message: Message,
+        *,
+        turn_id: str,
+        ephemeral_prompt: str | None,
+        session_key: str,
+        memory_context,
+        context_budget,
+        token_estimator,
+        provider_min_recall_chars: int | None,
+    ) -> TurnResult:
         # ---- observe：用户消息入 Session ----
         session.add_message(user_message)
         # 发射事件 用于前端展示当前任务已开始
@@ -242,7 +273,14 @@ class AgentLoop:
             from ..tools.base import ToolResult
             result = ToolResult(ok=False, error="当前 Agent 未配置任何工具")
         else:
-            result = self.tools.dispatch(req.name, req.arguments)
+            arguments = dict(req.arguments or {})
+            # memory_read / memory_edit：scope 由运行上下文注入，模型不得伪造（§9）
+            if (
+                self._turn_memory_scope is not None
+                and req.name in {"memory_read", "memory_edit"}
+            ):
+                arguments["_scope"] = self._turn_memory_scope
+            result = self.tools.dispatch(req.name, arguments)
         record.finished_at = time.time()
         record.durations_ms = int((record.finished_at - started) * 1000)
         record.status = "success" if result.ok else "error"

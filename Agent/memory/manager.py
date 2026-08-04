@@ -7,9 +7,9 @@ MemoryManager — 精选记忆唯一入口（7.23 方案 §2 Seam A）
     - apply(mutation)                                  : 判别写入（当前 Slice 1：profile add）
     - search(request)                                  : 渐进检索（Slice 11）
 
-Agent/工具不得直接接触文件路径或 SQL（§1.1-9）。
+Agent/工具不得直接接触文件路径或 SQL。
 
-build_context 默认构成（§4.1）：profile 整文件 + MEMORY 整文件；
+build_context 默认构成：profile 整文件 + MEMORY 整文件；
 Daily 默认不注入，Provider 在 Slice 12 接入。
 """
 from __future__ import annotations
@@ -73,7 +73,7 @@ def _stable_ref(ref) -> str:
 
 
 def _match(normalized: str, wanted: str) -> tuple[float, int] | None:
-    """§4.2 相关性：整串相等(exact)优先于子串命中(partial)；未命中返回 None。"""
+    """相关性：整串相等(exact)优先于子串命中(partial)；未命中返回 None。"""
     pos = normalized.find(wanted)
     if pos < 0:
         return None
@@ -81,7 +81,7 @@ def _match(normalized: str, wanted: str) -> tuple[float, int] | None:
 
 
 def _snippet(content: str, hit_pos: int, max_chars: int) -> str:
-    """§4.2：短内容整段返回；长内容在命中点两侧截取（code point 边界裁剪）。"""
+    """短内容整段返回；长内容在命中点两侧截取（code point 边界裁剪）。"""
     if len(content) <= max_chars:
         return content
     start = max(0, hit_pos - max_chars // 2)
@@ -98,7 +98,7 @@ _MEMORY_FENCES = (
 
 
 def _sanitize_fences(text: str) -> str:
-    """§4.1：转义内容中的保留围栏标签，避免 provider 输出嵌套闭合/结构注入。
+    """义内容中的保留围栏标签，避免 provider 输出嵌套闭合/结构注入。
 
     只缓解结构注入（闭合围栏）；自然语言 prompt injection 由 _FENCE_NOTE 标记降权，无法机械消除。
     """
@@ -133,15 +133,15 @@ class MemoryManager:
         self._synced_turn_ids: set[str] = set()  # sync_turn 的 turn_id 幂等键（§7.2）
         if provider is not None:
             self.register_provider(provider)
-
+    ### 第四层记忆
     def register_provider(self, provider) -> None:
-        """§7.1：注册唯一外部 Provider；已有则立即失败，不做“最后一个覆盖”。"""
+        """注册唯一外部 Provider；已有则立即失败，不做“最后一个覆盖”。"""
         if self._provider is not None:
             raise ValueError("已有 external provider，不得注册第二个（§7.1）")
         self._provider = provider
-
+    ### 
     def sync_turn(self, turn: TurnEnvelope) -> None:
-        """§8.1/§7.2：完成 turn 后同步到 Provider；同 turn_id 幂等，重复调用只同步一次。"""
+        """完成 turn 后同步到 Provider；同 turn_id 幂等，重复调用只同步一次。"""
         if self._provider is None:
             return
         if not turn.completed or turn.interrupted:
@@ -151,6 +151,7 @@ class MemoryManager:
         self._synced_turn_ids.add(turn.turn_id)
         self._provider.sync_turn(turn)
 
+    ### 
     def _resolve_date(self, date: str | None) -> str:
         """daily 日期：显式给定优先；否则由注入 Clock + 配置时区的自然日决定。"""
         if date is not None:
@@ -158,7 +159,7 @@ class MemoryManager:
         tz = self._timezone or dt_timezone.utc
         return datetime.fromtimestamp(self._clock(), tz).date().isoformat()
 
-    # ---- Seam A：写入 ----
+    # ---- 总的写入函数 用于internal和external的写入 ----
     def apply(self, mutation: MemoryMutation) -> MemoryMutationResult:
         if isinstance(mutation, ExternalMemoryMutation):
             return self._apply_external(mutation)
@@ -364,7 +365,7 @@ class MemoryManager:
             )
         return hits
 
-    # ---- Seam A：构建 turn 快照 ----
+    ### 构建context ###
     def build_context(
         self,
         scope: MemoryScope,
@@ -406,7 +407,7 @@ class MemoryManager:
                     )
                 )
 
-        # §4.1 / ADR-4：Daily 默认不注入，仅显式要求时加入今日（由注入 Clock + 时区决定）
+        # Daily 默认不注入，仅显式要求时加入今日（由注入 Clock + 时区决定）
         daily_prompt: str | None = None
         daily_block = ""
         if include_today_daily:
@@ -470,7 +471,7 @@ class MemoryManager:
         return text
 
     def _run_recall(self, request: ProviderRecallRequest) -> ProviderContribution:
-        """在 worker 线程跑 recall，recall_timeout 内未返回则放弃（迟到结果丢弃，§7.2）。
+        """在 worker 线程跑 recall，recall_timeout 内未返回则放弃（迟到结果丢弃）。
 
         Future.result(timeout) 不能终止底层阻塞调用，故 adapter 仍须自设 HTTP/SDK timeout；
         本方法只保证 Manager 不阻塞超 deadline。worker 残留线程由调用方/Provider.close 收尾。
@@ -482,7 +483,7 @@ class MemoryManager:
         finally:
             executor.shutdown(wait=False)
 
-    # ---- 内部：target → 文档 ----
+    # ---- 根据scope和target获取对应的HotStore ----
     def _store_for(self, scope: MemoryScope, target: str, *, date: str | None = None) -> HotStore:
         directory = ensure_scope_dir(self._root, scope)
         if target == "profile":
