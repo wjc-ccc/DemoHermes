@@ -47,6 +47,7 @@ class EvolutionSignalCollector:
                 tool_failures=tuple(raw.get("tool_failures", ())),
                 tool_sequence=tuple(raw.get("tool_sequence", ())),
                 skills_used=tuple(raw.get("skills_used", ())),
+                recovered_from_failure=bool(raw.get("recovered_from_failure", False)),
             )
 
     def _loop(self) -> None:
@@ -103,6 +104,10 @@ class EvolutionSignalCollector:
                         )
                         failures: list = slot["tool_failures"]
                         failures.append(f"{err_name}: {err}")
+                        slot["had_failure"] = True
+                    elif slot.get("had_failure"):
+                        # Hermes：errors overcome — 失败后再次成功
+                        slot["recovered_from_failure"] = True
                     # use_skill 成功结果里也可能带 skill_name
                     if name == "use_skill" and ok is not False:
                         skill = str(
@@ -115,6 +120,8 @@ class EvolutionSignalCollector:
             elif event.type in ("turn_end", "turn_error"):
                 slot["completed"] = event.type == "turn_end"
                 slot["interrupted"] = bool(data.get("interrupted", False))
+                if event.type == "turn_end" and slot.get("had_failure"):
+                    slot["recovered_from_failure"] = True
                 if event.type == "turn_error":
                     slot["error"] = str(data.get("error") or "turn_error")
                     slot["completed"] = False

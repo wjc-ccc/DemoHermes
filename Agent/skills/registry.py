@@ -61,12 +61,25 @@ class SkillRegistry:
     def list_skills(self) -> list[str]:
         return list(self._skills)
 
+    def active_skills(self) -> list[Skill]:
+        return [s for s in self._skills.values() if s.is_active]
+
     # ---- 两级加载 ----
-    def summaries_prompt(self) -> str:
-        """Level 1：仅 active 技能的一行摘要；无可用技能时返回空串。"""
-        active = [s for s in self._skills.values() if s.is_active]
+    def summaries_prompt(
+        self,
+        *,
+        query: str | None = None,
+        selector=None,
+        top_k: int = 5,
+    ) -> str:
+        """Level 1：active 技能摘要；有 query+selector 时只注入相关子集（Hermes 式）。"""
+        active = self.active_skills()
         if not active:
             return ""
+        if query and selector is not None:
+            active = selector.select(query, active, top_k=top_k)
+            if not active:
+                return ""
         lines = [skill.summary_line() for skill in active]
         return (
             "## 可用技能（Skills）\n"

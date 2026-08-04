@@ -54,6 +54,8 @@ class ContextBuilder:
         *,
         memory_context: MemoryContextSnapshot | None = None,
         skill_registry=None,
+        skill_query: str | None = None,
+        skill_selector=None,
         ephemeral_prompt: str | None = None,
         budget: ContextBudget | None = None,
         token_estimator: TokenEstimator | None = None,
@@ -64,9 +66,12 @@ class ContextBuilder:
         # 本 turn 的不可变记忆快照（7.23 方案 §2 Seam C）：
         # 只读取预构建的 prompt 整体注入，不分辨 Hot/Daily/Provider，也不知道文件/SQLite
         self._memory_context = memory_context
-        # Level 1 技能摘要（无技能注册表时为空串，不占 prompt）
+        # Level 1 技能摘要（Hermes：有 query+selector 时只注入相关子集）
         self._skill_summary: str = (
-            skill_registry.summaries_prompt() if skill_registry else ""
+            skill_registry.summaries_prompt(
+                query=skill_query, selector=skill_selector,
+            )
+            if skill_registry else ""
         )
         # 仅当次生效的平台说明（如「你在飞书群里」），不写入 Session.messages
         self._ephemeral_prompt = ephemeral_prompt

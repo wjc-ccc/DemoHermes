@@ -113,6 +113,8 @@ class AgentLoop:
         token_estimator=None,
         provider_min_recall_chars: int | None = None,
         skill_summary_min_chars: int | None = None,
+        skill_query: str | None = None,
+        skill_selector=None,
     ) -> TurnResult:
         self._interrupt = False
         turn_id = uuid.uuid4().hex[:12]
@@ -130,6 +132,8 @@ class AgentLoop:
                 token_estimator=token_estimator,
                 provider_min_recall_chars=provider_min_recall_chars,
                 skill_summary_min_chars=skill_summary_min_chars,
+                skill_query=skill_query,
+                skill_selector=skill_selector,
             )
         finally:
             self._turn_memory_scope = None
@@ -147,6 +151,8 @@ class AgentLoop:
         token_estimator,
         provider_min_recall_chars: int | None,
         skill_summary_min_chars: int | None,
+        skill_query: str | None,
+        skill_selector,
     ) -> TurnResult:
         # ---- observe：用户消息入 Session ----
         session.add_message(user_message)
@@ -173,6 +179,8 @@ class AgentLoop:
                 session,
                 memory_context=memory_context,
                 skill_registry=self.skills,
+                skill_query=skill_query,
+                skill_selector=skill_selector,
                 ephemeral_prompt=ephemeral_prompt,
                 budget=context_budget,
                 token_estimator=token_estimator,

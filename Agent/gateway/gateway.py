@@ -60,6 +60,7 @@ class Gateway:
         signal_collector=None,
         assembly_policy=None,
         assembly_recorder=None,
+        skill_selector=None,
     ):
         self.agent_id = agent_id
         self.loop = loop or AgentLoop()          # 对话核心
@@ -75,6 +76,7 @@ class Gateway:
         self._signal_collector = signal_collector  # 可选；EventBus → evolution signals（8.04 Phase 0.4）
         self._assembly_policy = assembly_policy  # 可选；8.04 Phase 4 装配策略
         self._assembly_recorder = assembly_recorder  # 可选；记录每 turn 装配选择
+        self._skill_selector = skill_selector  # 可选；Hermes 式按 query 选 L1 Skill
         self._channels: dict[str, BaseChannel] = {} # channel 注册与管理
         # 同 session_key 串行：每 key 一把锁
         self._session_locks: dict[str, threading.Lock] = {} # 同 session_key 串行：每 key 一把锁
@@ -331,6 +333,8 @@ class Gateway:
             token_estimator=self._token_estimator,
             provider_min_recall_chars=provider_min,
             skill_summary_min_chars=skill_min,
+            skill_query=event.text or "",
+            skill_selector=self._skill_selector,
         )
         if self._assembly_recorder is not None:
             from ..evolution.assembly import AssemblyChoice

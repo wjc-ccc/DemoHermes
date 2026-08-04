@@ -24,8 +24,21 @@ class EvolutionInsight(BaseModel):
     content: str | None = None
     entry_id: str | None = None
     rationale: str = ""
-    kind: Literal["playbook"] = "playbook"
+    kind: Literal["playbook", "skill"] = "playbook"
     turn_id: str | None = None
+
+
+class SkillProposal(BaseModel):
+    """Hermes 式程序性沉淀提案；由 Distiller / Reflector 产出，Creator 写盘。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    description: str
+    body: str
+    status: Literal["draft", "active"] = "draft"
+    turn_id: str | None = None
+    rationale: str = ""
 
 
 class GateDecision(BaseModel):
@@ -49,3 +62,5 @@ class EvolutionSignal(BaseModel):
     # Phase 3：按执行顺序的工具名（含 use_skill）；供 SkillCreator / Optimizer
     tool_sequence: tuple[str, ...] = Field(default_factory=tuple)
     skills_used: tuple[str, ...] = Field(default_factory=tuple)
+    # 本 turn 内曾失败后又成功（Hermes：errors overcome）
+    recovered_from_failure: bool = False

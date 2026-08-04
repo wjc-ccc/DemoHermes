@@ -27,7 +27,7 @@ from .core.events import default_event_bus
 from .core.loop import AgentLoop
 from .gateway import FrontierHttpServer, Gateway
 from .model.registry import ModelRegistry
-from .skills import SkillRegistry, UseSkillTool
+from .skills import SkillManageTool, SkillRegistry, UseSkillTool
 from .tools.calculator_tools import CalculatorTool
 from .tools.registry import ToolRegistry
 
@@ -57,11 +57,16 @@ def build_gateway(*, workers: int = 2, use_memory: bool = True) -> Gateway:
     # ---- provider / 模型 ----
     model_registry = ModelRegistry.default()
 
-    # ---- 技能 + 工具（use_skill 是技能体系的入口工具）----
+    # ---- 技能 + 工具（use_skill / skill_manage 是技能体系入口）----
+    from .Provider import ROOT as _ROOT
+
     skill_registry = SkillRegistry()
+    skills_root = _ROOT / "data" / "skills"
+    skills_root.mkdir(parents=True, exist_ok=True)
     tool_registry = ToolRegistry()
     tool_registry.register(CalculatorTool())
     tool_registry.register(UseSkillTool(skill_registry))
+    tool_registry.register(SkillManageTool(skill_registry, skills_root=skills_root))
 
     store = None
     memory = None
@@ -69,6 +74,9 @@ def build_gateway(*, workers: int = 2, use_memory: bool = True) -> Gateway:
     on_turn_committed = None
     on_session_end = None
     signal_collector = None
+    assembly_policy = None
+    assembly_recorder = None
+    skill_selector = None
     if use_memory:
         from .evolution.compactor import GrowAndRefineCompactor
         from .evolution.memory_curator import PlaybookCurator
@@ -85,7 +93,6 @@ def build_gateway(*, workers: int = 2, use_memory: bool = True) -> Gateway:
         )
         from .memory.extractors import RuleBasedExtractor
         from .memory.reviewer import MemoryReviewer, ReviewerWorker
-        from .Provider import ROOT
         from .tools.memory_tools import MemoryEditTool, MemoryReadTool
 
         memory_root, db_path = _memory_paths()
@@ -116,9 +123,19 @@ def build_gateway(*, workers: int = 2, use_memory: bool = True) -> Gateway:
         from .evolution.audit import EvolutionAuditLog
         from .evolution.env_snapshot import EnvironmentSnapshotter
         from .evolution.held_out import HeldOutSelector, HeldOutTask
+        from .evolution.llm_reflector import LlmEvolutionReflector
+        from .evolution.skill_distiller import TrajectorySkillDistiller
+        from .evolution.skill_selector import SkillSelector
 
         signal_collector = EvolutionSignalCollector(default_event_bus)
         reflector = RuleBasedEvolutionReflector(store)
+        try:
+            llm_reflector = LlmEvolutionReflector(model_registry.get())
+        except Exception:
+            llm_reflector = None
+            logger.warning("LLM Reflector 未启用（无可用模型）")
+        skill_distiller = TrajectorySkillDistiller(min_tools=5, frequency_threshold=3)
+        skill_selector = SkillSelector()
         audit_log = EvolutionAuditLog(db_path.parent / "evolution_audit.db")
         held_out = HeldOutSelector(
             tasks=(
@@ -132,8 +149,6 @@ def build_gateway(*, workers: int = 2, use_memory: bool = True) -> Gateway:
             memory, held_out=held_out, audit_log=audit_log,
         )
         env_snapshotter = EnvironmentSnapshotter(db_path.parent / "env_snapshots.db")
-        skills_root = ROOT / "data" / "skills"
-        skills_root.mkdir(parents=True, exist_ok=True)
         skill_creator = SkillCreator(
             skills_root, frequency_threshold=2, registry=skill_registry,
         )
@@ -142,9 +157,38 @@ def build_gateway(*, workers: int = 2, use_memory: bool = True) -> Gateway:
         evolution = EvolutionScheduler()
         evolution.register(reviewer_worker.notify)
 
+        def _user_text_for(turn) -> str:
+            # 尽力从 store 取本 turn 用户消息；失败则空串
+            try:
+                if store is None:
+                    return ""
+                session = store.get_session(turn.session_id) if hasattr(store, "get_session") else None
+                if session is None and hasattr(store, "get"):
+                    session = store.get(turn.session_id)
+                if session is None:
+                    return ""
+                for m in reversed(getattr(session, "messages", []) or []):
+                    if getattr(m, "message_id", None) == turn.user_message_id:
+                        return getattr(m, "content_text", "") or ""
+                    if getattr(m, "role", None) == "user":
+                        return getattr(m, "content_text", "") or ""
+            except Exception:
+                return ""
+            return ""
+
         def _evolve_playbook(turn) -> None:
             signals = signal_collector.get(turn.turn_id)
-            curator.apply_insights(reflector.reflect(turn, signals))
+            insights = list(reflector.reflect(turn, signals))
+            if llm_reflector is not None:
+                try:
+                    insights.extend(
+                        llm_reflector.reflect(
+                            turn, signals, user_text=_user_text_for(turn),
+                        )
+                    )
+                except Exception:
+                    logger.exception("llm playbook reflect 失败 turn_id=%s", turn.turn_id)
+            curator.apply_insights(insights)
             tips: list[str] = []
             if signals is not None:
                 tips.extend(signals.tool_failures)
@@ -157,6 +201,19 @@ def build_gateway(*, workers: int = 2, use_memory: bool = True) -> Gateway:
 
         def _evolve_skills(turn) -> None:
             signals = signal_collector.get(turn.turn_id)
+            user_text = _user_text_for(turn)
+            # Hermes：复杂成功轨迹 distill → proposal → 写盘
+            proposal = skill_distiller.consider(turn, signals, user_text=user_text)
+            if proposal is not None:
+                skill_creator.create_from_proposal(proposal)
+            if llm_reflector is not None:
+                try:
+                    for prop in llm_reflector.reflect_skills(
+                        turn, signals, user_text=user_text,
+                    ):
+                        skill_creator.create_from_proposal(prop)
+                except Exception:
+                    logger.exception("llm skill reflect 失败 turn_id=%s", turn.turn_id)
             skill_creator.consider(turn, signals)
             skill_optimizer.optimize(turn, signals)
             if (
@@ -209,12 +266,9 @@ def build_gateway(*, workers: int = 2, use_memory: bool = True) -> Gateway:
         assembly_recorder = AssemblyRecorder()
         logger.info(
             "记忆已启用 root=%s db=%s reviewer=RuleBasedExtractor "
-            "evolution=playbook+compactor+skills+assembly+heldout+audit+envsnap",
+            "evolution=hermes-loop+playbook+skills+assembly+heldout+audit+envsnap",
             memory_root, db_path,
         )
-    else:
-        assembly_policy = None
-        assembly_recorder = None
 
     # ---- 对话核心 ----
     loop = AgentLoop(
@@ -237,6 +291,7 @@ def build_gateway(*, workers: int = 2, use_memory: bool = True) -> Gateway:
         signal_collector=signal_collector,
         assembly_policy=assembly_policy,
         assembly_recorder=assembly_recorder,
+        skill_selector=skill_selector,
     )
     gateway.register_channel(FrontierChannel())
     return gateway
@@ -251,8 +306,8 @@ def _print_memory_banner(use_memory: bool) -> None:
     print(f"[memory] Hot/Daily 目录: {memory_root}")
     print(f"[memory] SQLite 数据库: {db_path}")
     print("[memory] Reviewer: 后台规则抽取（偏好→USER.md，约束→MEMORY.md，事件→daily/）")
-    print("[memory] Evolution: Phase0-5 playbook/Skill/装配/held-out/审计/环境快照")
-    print("[memory] 可用工具: memory_read / memory_edit；/new 保留旧 transcript")
+    print("[memory] Evolution: Hermes 式 distill/select/manage + Phase0-5 旁路闭环")
+    print("[memory] 可用工具: memory_read / memory_edit / skill_manage；/new 保留旧 transcript")
 
 
 def _run_http(port: int, *, use_memory: bool) -> None:

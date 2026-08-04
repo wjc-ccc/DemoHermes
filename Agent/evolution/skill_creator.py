@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 
 from ..memory.types import TurnEnvelope
-from .types import EvolutionSignal
+from .types import EvolutionSignal, SkillProposal
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,20 @@ def _render_skill_md(*, name: str, description: str, steps: tuple[str, ...]) -> 
     )
 
 
+def _render_proposal_md(proposal: SkillProposal) -> str:
+    body = proposal.body.strip()
+    if not body.startswith("#"):
+        body = f"# {proposal.name}\n\n{body}"
+    return (
+        f"---\n"
+        f"name: {proposal.name}\n"
+        f"description: {proposal.description}\n"
+        f"status: {proposal.status}\n"
+        f"---\n\n"
+        f"{body}\n"
+    )
+
+
 class SkillCreator:
     """旁路 Skill 创建器：consider(turn, signals) 达阈值则写 SKILL.md。"""
 
@@ -63,6 +77,21 @@ class SkillCreator:
         self._frequency_threshold = frequency_threshold
         self._registry = registry
         self._counts: dict[str, int] = {}
+
+    def create_from_proposal(self, proposal: SkillProposal) -> Path | None:
+        """Hermes distill 落盘：已存在同名则跳过。"""
+        name = re.sub(r"[^a-zA-Z0-9_-]+", "_", (proposal.name or "").strip()).strip("_")
+        if not name:
+            return None
+        skill_dir = self._root / name
+        skill_path = skill_dir / "SKILL.md"
+        if skill_path.exists():
+            return None
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        skill_path.write_text(_render_proposal_md(proposal), encoding="utf-8")
+        logger.info("SkillCreator proposal→disk skill=%s path=%s", name, skill_path)
+        self._register_path(skill_path)
+        return skill_path
 
     def consider(
         self,
@@ -92,12 +121,15 @@ class SkillCreator:
         skill_dir.mkdir(parents=True, exist_ok=True)
         skill_path.write_text(text, encoding="utf-8")
         logger.info("SkillCreator 写出 draft skill=%s path=%s", slug, skill_path)
+        self._register_path(skill_path)
+        return skill_path
 
-        if self._registry is not None and hasattr(self._registry, "reload"):
+    def _register_path(self, skill_path: Path) -> None:
+        if self._registry is None:
+            return
+        if hasattr(self._registry, "reload"):
             self._registry.reload()
-        elif self._registry is not None:
+        else:
             from ..skills.base import Skill
 
             self._registry.register(Skill.from_file(skill_path))
-
-        return skill_path

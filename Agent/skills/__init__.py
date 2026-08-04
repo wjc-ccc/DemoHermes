@@ -10,6 +10,8 @@ Agent/skills 包 — 技能系统（L3 程序性记忆的最小实现）
 """
 from .base import Skill
 from .registry import SkillRegistry
+from .skill_manage_tool import SkillManageTool
 from .skill_tool import UseSkillTool
 
-__all__ = ["Skill", "SkillRegistry", "UseSkillTool"]
+__all__ = ["Skill", "SkillRegistry", "UseSkillTool", "SkillManageTool"]
+
