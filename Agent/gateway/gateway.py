@@ -58,6 +58,8 @@ class Gateway:
         context_budget=None,
         token_estimator=None,
         signal_collector=None,
+        assembly_policy=None,
+        assembly_recorder=None,
     ):
         self.agent_id = agent_id
         self.loop = loop or AgentLoop()          # 对话核心
@@ -71,6 +73,8 @@ class Gateway:
         self._context_budget = context_budget  # 可选；整轮 prompt token 预算（8.04 Phase 0.1）
         self._token_estimator = token_estimator  # 可选；与 context_budget 配套的 TokenEstimator
         self._signal_collector = signal_collector  # 可选；EventBus → evolution signals（8.04 Phase 0.4）
+        self._assembly_policy = assembly_policy  # 可选；8.04 Phase 4 装配策略
+        self._assembly_recorder = assembly_recorder  # 可选；记录每 turn 装配选择
         self._channels: dict[str, BaseChannel] = {} # channel 注册与管理
         # 同 session_key 串行：每 key 一把锁
         self._session_locks: dict[str, threading.Lock] = {} # 同 session_key 串行：每 key 一把锁
@@ -305,8 +309,15 @@ class Gateway:
         session = self.store.get_or_create(
             session_key, scope=scope, channel=channel, author_id=author_id,
         )
+        policy = self._assembly_policy
+        include_daily = bool(policy.include_today_daily) if policy is not None else False
+        enable_recall = bool(policy.enable_provider_recall) if policy is not None else True
+        provider_min = policy.provider_min_recall_chars if policy is not None else None
+        skill_min = policy.skill_summary_min_chars if policy is not None else None
         snapshot = self._memory.build_context(
             scope=scope, query=event.text or "", session_id=session.session_id,
+            include_today_daily=include_daily,
+            enable_provider_recall=enable_recall,
         )
         user_msg = self.build_message(event)
         started = time.time()
@@ -318,7 +329,24 @@ class Gateway:
             session_key=session_key,
             context_budget=self._context_budget,
             token_estimator=self._token_estimator,
+            provider_min_recall_chars=provider_min,
+            skill_summary_min_chars=skill_min,
         )
+        if self._assembly_recorder is not None:
+            from ..evolution.assembly import AssemblyChoice
+
+            skill_chars = 0
+            if self.loop.skills is not None:
+                skill_chars = len(self.loop.skills.summaries_prompt() or "")
+            self._assembly_recorder.record(
+                AssemblyChoice(
+                    turn_id=result.turn_id,
+                    include_today_daily=include_daily,
+                    provider_recalled=snapshot.provider_prompt is not None,
+                    skill_summary_chars=skill_chars,
+                    skill_summary_min_chars=skill_min,
+                )
+            )
         turn = TurnEnvelope(
             turn_id=result.turn_id, session_id=session.session_id, scope=scope,
             user_message_id=user_msg.message_id,

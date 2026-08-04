@@ -112,6 +112,7 @@ class AgentLoop:
         context_budget=None,
         token_estimator=None,
         provider_min_recall_chars: int | None = None,
+        skill_summary_min_chars: int | None = None,
     ) -> TurnResult:
         self._interrupt = False
         turn_id = uuid.uuid4().hex[:12]
@@ -128,6 +129,7 @@ class AgentLoop:
                 context_budget=context_budget,
                 token_estimator=token_estimator,
                 provider_min_recall_chars=provider_min_recall_chars,
+                skill_summary_min_chars=skill_summary_min_chars,
             )
         finally:
             self._turn_memory_scope = None
@@ -144,6 +146,7 @@ class AgentLoop:
         context_budget,
         token_estimator,
         provider_min_recall_chars: int | None,
+        skill_summary_min_chars: int | None,
     ) -> TurnResult:
         # ---- observe：用户消息入 Session ----
         session.add_message(user_message)
@@ -174,6 +177,7 @@ class AgentLoop:
                 budget=context_budget,
                 token_estimator=token_estimator,
                 provider_min_recall_chars=provider_min_recall_chars,
+                skill_summary_min_chars=skill_summary_min_chars,
             )
             try:
                 messages = builder.building_context()

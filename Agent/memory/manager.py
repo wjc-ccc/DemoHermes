@@ -373,6 +373,7 @@ class MemoryManager:
         query: str,
         session_id: str,
         include_today_daily: bool = False,
+        enable_provider_recall: bool = True,
     ) -> MemoryContextSnapshot:
         profile_store = self._store_for(scope, "profile")
         memory_store = self._store_for(scope, "memory")
@@ -384,7 +385,7 @@ class MemoryManager:
         # §4.1 / §7.2：外部 Provider recall 注入 <provider-memory> 围栏块；异常/超时降级为 diagnostic，不阻断主对话
         provider_prompt: str | None = None
         provider_block = ""
-        if self._provider is not None:
+        if enable_provider_recall and self._provider is not None:
             request = ProviderRecallRequest(
                 scope=scope,
                 query=query,

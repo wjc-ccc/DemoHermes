@@ -58,6 +58,7 @@ class ContextBuilder:
         budget: ContextBudget | None = None,
         token_estimator: TokenEstimator | None = None,
         provider_min_recall_chars: int | None = None,
+        skill_summary_min_chars: int | None = None,
     ):
         self.session: Session = session
         # 本 turn 的不可变记忆快照（7.23 方案 §2 Seam C）：
@@ -74,6 +75,8 @@ class ContextBuilder:
         self._token_estimator = token_estimator
         # 裁剪顺序 2 的 Provider recall 最小配额；None 表示不做缩短步骤
         self._provider_min_recall_chars = provider_min_recall_chars
+        # 裁剪顺序 4：Skill 摘要最小配额；None 表示不做该步
+        self._skill_summary_min_chars = skill_summary_min_chars
         self.messages: list[dict] = []  # 组装后发给 LLM 的 messages
         self._tagged: list[tuple[str, dict]] = []  # 预算裁剪用的带分类副本
 
@@ -176,6 +179,7 @@ class ContextBuilder:
             trimmed = trim_to_budget(
                 self._tagged, self._budget, self._estimator(),
                 provider_min_recall_chars=self._provider_min_recall_chars,
+                skill_summary_min_chars=self._skill_summary_min_chars,
             )
             if trimmed is None:
                 raise ContextBudgetExceededError()

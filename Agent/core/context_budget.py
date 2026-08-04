@@ -76,11 +76,38 @@ def _shorten_provider_message(message: dict, min_chars: int) -> dict:
     return {**message, "content": f"{opening}\n{inner[:max(0, min_chars)]}\n{closing}"}
 
 
+def _shorten_skill_message(message: dict, min_chars: int) -> dict:
+    """缩短 Skill Level-1 摘要：从尾部丢 bullet，至少保留 min_chars 的前缀。
+
+    格式约定见 SkillRegistry.summaries_prompt（标题 + 说明 + `- name:` 行）。
+    """
+    content = str(message.get("content") or "")
+    if len(content) <= min_chars:
+        return {**message, "content": content}
+    lines = content.splitlines()
+    bullets = [i for i, line in enumerate(lines) if line.startswith("- ")]
+    # 逐个从尾部去掉 skill bullet，直到 ≤ 预算由调用方判定；此处先生成最短候选
+    kept = list(lines)
+    drop_from = len(bullets) - 1
+    while drop_from >= 0:
+        idx = bullets[drop_from]
+        kept = kept[:idx] + kept[idx + 1 :]
+        candidate = "\n".join(kept).rstrip() + ("\n" if content.endswith("\n") else "")
+        # 中间态也返回；调用方按 cost 决定是否继续。这里一次性缩到 min。
+        if len(candidate) <= min_chars or drop_from == 0:
+            if len(candidate) > min_chars:
+                candidate = candidate[:max(0, min_chars)].rstrip()
+            return {**message, "content": candidate}
+        drop_from -= 1
+    return {**message, "content": content[:max(0, min_chars)]}
+
+
 def trim_to_budget(
     tagged: list[tuple[str, dict]],
     budget: ContextBudget,
     estimator: TokenEstimator,
     provider_min_recall_chars: int | None = None,
+    skill_summary_min_chars: int | None = None,
 ) -> list[dict] | None:
     """按 §4.3 固定顺序裁剪；仍超限返回 None（调用方报 context_budget_exceeded）。
 
@@ -114,19 +141,48 @@ def trim_to_budget(
     conv = [i for i, (k, _) in enumerate(items) if k == _TAG_HISTORY]
     user_idx = [i for i in conv if items[i][1].get("role") == "user"]
     if not conv or not user_idx:
-        return None
-    last_user = user_idx[-1]
+        # 无历史可裁：仍可走步骤 4
+        pass
+    else:
+        last_user = user_idx[-1]
 
-    # 历史 turn 分组：会话起点（或一条 user）到下一个 user 之前，从旧到新
-    head = conv[0]
-    splits = [p for p in user_idx if head < p < last_user]
-    bounds = [head, *splits, last_user]
-    groups = [list(range(bounds[i], bounds[i + 1])) for i in range(len(bounds) - 1)]
+        # 历史 turn 分组：会话起点（或一条 user）到下一个 user 之前，从旧到新
+        head = conv[0]
+        splits = [p for p in user_idx if head < p < last_user]
+        bounds = [head, *splits, last_user]
+        groups = [list(range(bounds[i], bounds[i + 1])) for i in range(len(bounds) - 1)]
 
-    removed: set[int] = set()
-    for group in groups:  # 步骤 3：从最旧开始移除完整历史 turn
-        removed.update(group)
-        kept = [t for i, t in enumerate(items) if i not in removed]
-        if cost(kept) <= budget.max_input_tokens:
-            return [m for _, m in kept]
+        removed: set[int] = set()
+        for group in groups:  # 步骤 3：从最旧开始移除完整历史 turn
+            removed.update(group)
+            kept = [t for i, t in enumerate(items) if i not in removed]
+            if cost(kept) <= budget.max_input_tokens:
+                return [m for _, m in kept]
+        items = [t for i, t in enumerate(items) if i not in removed]
+
+    # 步骤 4：缩短 Skill 摘要（§17 缺口；配置了 min 才做）
+    if skill_summary_min_chars is not None:
+        # 先逐条丢 bullet 再硬截到 min，中间每步检查预算
+        skill_indices = [i for i, (k, _) in enumerate(items) if k == _TAG_SKILL]
+        for si in skill_indices:
+            kind, msg = items[si]
+            content = str(msg.get("content") or "")
+            lines = content.splitlines()
+            bullet_idxs = [i for i, line in enumerate(lines) if line.startswith("- ")]
+            # 从尾部逐个去掉 bullet
+            for drop_i in range(len(bullet_idxs) - 1, -1, -1):
+                bi = bullet_idxs[drop_i]
+                lines = lines[:bi] + lines[bi + 1 :]
+                candidate = "\n".join(lines)
+                items[si] = (kind, {**msg, "content": candidate})
+                if cost(items) <= budget.max_input_tokens:
+                    return [m for _, m in items]
+            # 仍超：硬截到 min_chars
+            shortened = _shorten_skill_message(
+                items[si][1], skill_summary_min_chars,
+            )
+            items[si] = (kind, shortened)
+            if cost(items) <= budget.max_input_tokens:
+                return [m for _, m in items]
+
     return None

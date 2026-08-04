@@ -11,7 +11,9 @@ Agent/evolution 包
   - GrowAndRefineCompactor：超限结构化缩减（不摘要）
   - EvolutionSignalCollector：EventBus 轻量信号
   - SkillCreator / SkillOptimizer / SkillLifecycleGate：程序性 Skill 产物
+  - AssemblyPolicy / AssemblyRecorder：装配策略与每 turn 记录
 """
+from .assembly import AssemblyChoice, AssemblyPolicy, AssemblyRecorder
 from .compactor import GrowAndRefineCompactor
 from .gate import EvolutionCommitGate
 from .memory_curator import PlaybookCurator
@@ -24,6 +26,9 @@ from .skill_optimizer import SkillOptimizer
 from .types import EvolutionInsight, EvolutionSignal, GateDecision
 
 __all__ = [
+    "AssemblyChoice",
+    "AssemblyPolicy",
+    "AssemblyRecorder",
     "EvolutionCommitGate",
     "EvolutionInsight",
     "EvolutionScheduler",

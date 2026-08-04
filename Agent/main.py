@@ -161,11 +161,18 @@ def build_gateway(*, workers: int = 2, use_memory: bool = True) -> Gateway:
         )
         on_turn_committed = evolution.notify
         on_session_end = reviewer_worker.notify
+        from .evolution.assembly import AssemblyPolicy, AssemblyRecorder
+
+        assembly_policy = AssemblyPolicy()
+        assembly_recorder = AssemblyRecorder()
         logger.info(
             "记忆已启用 root=%s db=%s reviewer=RuleBasedExtractor "
-            "evolution=playbook+compactor+skills",
+            "evolution=playbook+compactor+skills+assembly",
             memory_root, db_path,
         )
+    else:
+        assembly_policy = None
+        assembly_recorder = None
 
     # ---- 对话核心 ----
     loop = AgentLoop(
@@ -186,6 +193,8 @@ def build_gateway(*, workers: int = 2, use_memory: bool = True) -> Gateway:
         reviewer_worker=reviewer_worker,
         event_bus=default_event_bus,
         signal_collector=signal_collector,
+        assembly_policy=assembly_policy,
+        assembly_recorder=assembly_recorder,
     )
     gateway.register_channel(FrontierChannel())
     return gateway
@@ -200,7 +209,7 @@ def _print_memory_banner(use_memory: bool) -> None:
     print(f"[memory] Hot/Daily 目录: {memory_root}")
     print(f"[memory] SQLite 数据库: {db_path}")
     print("[memory] Reviewer: 后台规则抽取（偏好→USER.md，约束→MEMORY.md，事件→daily/）")
-    print("[memory] Evolution: playbook 增量 + GrowAndRefineCompactor + 每10 turn refine")
+    print("[memory] Evolution: playbook + Skill draft/active + AssemblyPolicy + Budget Skill 裁剪")
     print("[memory] 可用工具: memory_read / memory_edit；/new 保留旧 transcript")
 
 
