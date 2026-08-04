@@ -112,9 +112,26 @@ def build_gateway(*, workers: int = 2, use_memory: bool = True) -> Gateway:
         reviewer_worker = ReviewerWorker(reviewer)
 
         # 8.04：旁路进化 — playbook + Skill plugin 产物
+        from .evolution.assembly import AssemblyPolicy, AssemblyRecorder
+        from .evolution.audit import EvolutionAuditLog
+        from .evolution.env_snapshot import EnvironmentSnapshotter
+        from .evolution.held_out import HeldOutSelector, HeldOutTask
+
         signal_collector = EvolutionSignalCollector(default_event_bus)
         reflector = RuleBasedEvolutionReflector(store)
-        curator = PlaybookCurator(memory)
+        audit_log = EvolutionAuditLog(db_path.parent / "evolution_audit.db")
+        held_out = HeldOutSelector(
+            tasks=(
+                HeldOutTask(
+                    name="no_silent_skip",
+                    forbidden_in_new=("静默跳过",),
+                ),
+            )
+        )
+        curator = PlaybookCurator(
+            memory, held_out=held_out, audit_log=audit_log,
+        )
+        env_snapshotter = EnvironmentSnapshotter(db_path.parent / "env_snapshots.db")
         skills_root = ROOT / "data" / "skills"
         skills_root.mkdir(parents=True, exist_ok=True)
         skill_creator = SkillCreator(
@@ -152,8 +169,35 @@ def build_gateway(*, workers: int = 2, use_memory: bool = True) -> Gateway:
                 for name in signals.skills_used:
                     skill_gate.record_success(name)
 
+        def _capture_env(turn) -> None:
+            try:
+                import os
+
+                from .Provider import SYSTEM_PROMPT_PATH
+
+                skill_versions = {
+                    name: (
+                        skill_registry.get(name).status
+                        if skill_registry.get(name) else "unknown"
+                    )
+                    for name in skill_registry.list_skills()
+                }
+                tool_schemas = tool_registry.get_schemas()
+                env_snapshotter.capture(
+                    session_id=turn.session_id,
+                    turn_id=turn.turn_id,
+                    cwd=os.getcwd(),
+                    model_name=None,
+                    system_prompt_path=SYSTEM_PROMPT_PATH,
+                    tool_schemas=tool_schemas,
+                    skill_versions=skill_versions,
+                )
+            except Exception:
+                logger.exception("env snapshot 失败 turn_id=%s", turn.turn_id)
+
         evolution.register(_evolve_playbook)
         evolution.register(_evolve_skills)
+        evolution.register(_capture_env)
         evolution.register_periodic_refine(
             every_n=10,
             refine=curator.refine,
@@ -161,13 +205,11 @@ def build_gateway(*, workers: int = 2, use_memory: bool = True) -> Gateway:
         )
         on_turn_committed = evolution.notify
         on_session_end = reviewer_worker.notify
-        from .evolution.assembly import AssemblyPolicy, AssemblyRecorder
-
         assembly_policy = AssemblyPolicy()
         assembly_recorder = AssemblyRecorder()
         logger.info(
             "记忆已启用 root=%s db=%s reviewer=RuleBasedExtractor "
-            "evolution=playbook+compactor+skills+assembly",
+            "evolution=playbook+compactor+skills+assembly+heldout+audit+envsnap",
             memory_root, db_path,
         )
     else:
@@ -209,7 +251,7 @@ def _print_memory_banner(use_memory: bool) -> None:
     print(f"[memory] Hot/Daily 目录: {memory_root}")
     print(f"[memory] SQLite 数据库: {db_path}")
     print("[memory] Reviewer: 后台规则抽取（偏好→USER.md，约束→MEMORY.md，事件→daily/）")
-    print("[memory] Evolution: playbook + Skill draft/active + AssemblyPolicy + Budget Skill 裁剪")
+    print("[memory] Evolution: Phase0-5 playbook/Skill/装配/held-out/审计/环境快照")
     print("[memory] 可用工具: memory_read / memory_edit；/new 保留旧 transcript")
 
 

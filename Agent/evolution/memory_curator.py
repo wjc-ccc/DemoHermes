@@ -22,8 +22,10 @@ from ..memory import (
     MemoryProvenance,
     MemoryScope,
 )
+from .audit import EvolutionAuditEntry, EvolutionAuditLog
 from .compactor import HARMFUL_MARK, PLAYBOOK_MARK
 from .gate import EvolutionCommitGate
+from .held_out import HeldOutSelector
 from .types import EvolutionInsight
 
 logger = logging.getLogger(__name__)
@@ -42,11 +44,15 @@ class PlaybookCurator:
         gate: EvolutionCommitGate | None = None,
         *,
         failure_threshold: int = 3,
+        held_out: HeldOutSelector | None = None,
+        audit_log: EvolutionAuditLog | None = None,
     ) -> None:
         self._manager = manager
         self._gate = gate or EvolutionCommitGate()
         self._failure_threshold = max(1, failure_threshold)
         self._failure_counts: dict[tuple[str, str, str], int] = defaultdict(int)
+        self._held_out = held_out
+        self._audit = audit_log
 
     def apply_insights(
         self, insights: Sequence[EvolutionInsight],
@@ -156,11 +162,14 @@ class PlaybookCurator:
             existing_contents=existing,
             current_memory_chars=current_chars,
         )
+        if decision.admitted and self._held_out is not None:
+            decision = self._held_out.admit(insight, existing)
         if not decision.admitted:
             logger.info(
                 "playbook insight 被拒绝 reason=%s turn_id=%s",
                 decision.reason, insight.turn_id,
             )
+            self._audit_delta(insight, decision.reason, admitted=False)
             return None
 
         provenance = MemoryProvenance(
@@ -199,4 +208,33 @@ class PlaybookCurator:
                 "playbook apply 失败 error=%s turn_id=%s",
                 result.error_code or result.message, insight.turn_id,
             )
+            self._audit_delta(
+                insight, result.error_code or result.message or "apply_failed",
+                admitted=False,
+            )
+        else:
+            self._audit_delta(insight, "ok", admitted=True)
         return result
+
+    def _audit_delta(
+        self,
+        insight: EvolutionInsight,
+        reason: str,
+        *,
+        admitted: bool,
+    ) -> None:
+        if self._audit is None:
+            return
+        preview = (insight.content or insight.entry_id or "")[:200]
+        self._audit.append(
+            EvolutionAuditEntry(
+                actor="PlaybookCurator",
+                op=insight.op,
+                target="memory",
+                content_preview=preview,
+                turn_id=insight.turn_id,
+                reason=reason,
+                admitted=admitted,
+                scope_key=insight.scope.key,
+            )
+        )

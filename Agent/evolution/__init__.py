@@ -12,10 +12,14 @@ Agent/evolution 包
   - EvolutionSignalCollector：EventBus 轻量信号
   - SkillCreator / SkillOptimizer / SkillLifecycleGate：程序性 Skill 产物
   - AssemblyPolicy / AssemblyRecorder：装配策略与每 turn 记录
+  - HeldOutSelector / EvolutionAuditLog / EnvironmentSnapshotter：可靠性
 """
 from .assembly import AssemblyChoice, AssemblyPolicy, AssemblyRecorder
+from .audit import EvolutionAuditEntry, EvolutionAuditLog
 from .compactor import GrowAndRefineCompactor
+from .env_snapshot import EnvironmentSnapshot, EnvironmentSnapshotter
 from .gate import EvolutionCommitGate
+from .held_out import HeldOutSelector, HeldOutTask
 from .memory_curator import PlaybookCurator
 from .reviewer import RuleBasedEvolutionReflector
 from .scheduler import EvolutionScheduler
@@ -29,6 +33,10 @@ __all__ = [
     "AssemblyChoice",
     "AssemblyPolicy",
     "AssemblyRecorder",
+    "EnvironmentSnapshot",
+    "EnvironmentSnapshotter",
+    "EvolutionAuditEntry",
+    "EvolutionAuditLog",
     "EvolutionCommitGate",
     "EvolutionInsight",
     "EvolutionScheduler",
@@ -36,6 +44,8 @@ __all__ = [
     "EvolutionSignalCollector",
     "GateDecision",
     "GrowAndRefineCompactor",
+    "HeldOutSelector",
+    "HeldOutTask",
     "PlaybookCurator",
     "RuleBasedEvolutionReflector",
     "SkillCreator",
