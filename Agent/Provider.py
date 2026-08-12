@@ -29,4 +29,12 @@ MODEL = os.getenv("MODEL", "deepseek-v4-flash")
 SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent / "prompt" / "systemPrompt.md"
 
 # Channel 配置文件路径
-CHANNEL_CONFIG = os.getenv("CHANNEL_CONFIG")
+def _resolve_channel_config() -> str:
+    """CHANNEL_CONFIG 未设置或路径失效时，回退到包内 channel/registry.json。"""
+    env = os.getenv("CHANNEL_CONFIG")
+    if env and Path(env).exists():
+        return env
+    return str(Path(__file__).resolve().parent / "channel" / "registry.json")
+
+
+CHANNEL_CONFIG = _resolve_channel_config()

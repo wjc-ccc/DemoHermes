@@ -68,8 +68,22 @@ OutboundReply（统一出站）<──deliver_to_OutboundEvent── 平台回�
 |---------|------|------|------|
 | `CliChannel` | `channel_cli.py` | ✅ 完整 | input()/print，chat_id="local" |
 | `FrontierChannel` | `channel_frontier.py` | ✅ HTTP | 供前端 HTTP API 调用，走 Gateway.ask 同步等回复 |
-| `WechatChannel` | `channel_wechat.py` | 🔲 骨架 | 预留 webhook 接入点 |
-| `FeishuChannel` | `channel_feishu.py` | 🔲 待实现 | 需飞书 SDK 长连 |
+| `FeishuChannel` | `channel_feishu.py` | ✅ 完整 | lark-oapi ws 长连（SDK 自动重连）+ REST 投递；群聊 require_mention + TTL 去重 |
+| `QQChannel` | `channel_qq.py` | ✅ 完整 | 官方 bot wss 网关（Hello→Identify→心跳→断线退避重连）+ REST 投递 |
+| `WechatChannel` | `channel_wechat.py` | ✅ 完整（文本版） | 腾讯 iLink Bot API 长轮询 + sendmessage；context_token 随 source.metadata 回流 |
+
+### 3.4 配置即连（Hermes 式自动启用）
+
+平台 channel 不需要写代码接线：`Agent/main.py` 的 `build_gateway()` 末尾调
+`autostart_channels(gateway)`（`channel/registry.py`），按以下规则自动启用：
+
+1. `Agent/channel/registry.json`（入库）该渠道节 `"enable": false` → 永不启动
+2. 凭据填齐（registry.json 同名 key，或 .env 对应变量）且未显式关闭 → 自动 register + start
+3. `"enable": true` 但凭据缺失 → 启动时 warn 跳过；单 channel 启动失败不拖垮其他
+
+凭据分工：密钥只放 `.env`（FEISHU_APP_ID/FEISHU_APP_SECRET、QQ_APP_ID/QQ_CLIENT_SECRET、
+WEIXIN_TOKEN/WEIXIN_ACCOUNT_ID），registry.json 只放开关与非敏感配置（domain、require_mention 等）。
+新平台接入：写一个 BaseChannel 子类 + 在 `CHANNEL_ENTRIES` 加一条 ChannelEntry 即可。
 
 ---
 
@@ -193,7 +207,7 @@ event = feishu_channel.parse_to_InboundEvent(raw)
 | **错误未上报** | deliver 失败只 log，平台侧无重试 | 加 Channel 内重试 + 指数退避，失败进死信队列 |
 | **配置热更新** | 密钥变更需重启 | 支持 reload_config()，运行期切换 |
 | **多账号/多实例** | 一个 Channel 只能连一个账号 | Channel 工厂化，按 account_id 多实例 |
-| **骨架未实现** | wechat/feishu 只是空壳 | 接入真实 SDK，但**保持 parse/deliver 签名不变** |
+| **骨架已实现** ✅ | wechat/feishu/qq 已接入真实平台（2026-08-12） | 后续：媒体消息、typing 状态、配置热更新 |
 
 ---
 

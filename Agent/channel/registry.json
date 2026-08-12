@@ -1,6 +1,9 @@
 {
-    "wechat":{},
-    "qq":{},
-    "feishu":{},
-    "cli":{}
+    "feishu": {
+        "domain": "feishu",
+        "require_mention": true
+    },
+    "qq": {},
+    "wechat": {},
+    "cli": {}
 }

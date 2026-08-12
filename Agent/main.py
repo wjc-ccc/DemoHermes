@@ -23,6 +23,7 @@ from pathlib import Path
 
 from .channel.channel_cli import CliChannel
 from .channel.channel_frontier import FrontierChannel
+from .channel.registry import autostart_channels
 from .core.events import default_event_bus
 from .core.loop import AgentLoop
 from .gateway import FrontierHttpServer, Gateway
@@ -294,6 +295,8 @@ def build_gateway(*, workers: int = 2, use_memory: bool = True) -> Gateway:
         skill_selector=skill_selector,
     )
     gateway.register_channel(FrontierChannel())
+    # 平台 channel 自动启用：registry.json 未显式关闭且凭据（env/JSON）填齐即连接
+    autostart_channels(gateway)
     return gateway
 
 
