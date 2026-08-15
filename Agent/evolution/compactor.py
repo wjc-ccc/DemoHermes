@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 import unicodedata
 
-from ..memory.hot.store import is_valid_document, render_entry
+from ..memory.hot.store import HotStore, render_entry
 
 _ENTRY_RE = re.compile(
     r"<!-- memory-entry:(?P<id>\S+) -->\n(?P<content>.*?)\n<!-- /memory-entry:(?P=id) -->",
@@ -103,11 +103,11 @@ class GrowAndRefineCompactor:
             kept = [(entry_id, self._fit_single(title, entry_id, content, max_chars))]
 
         out = _rebuild(title, kept)
-        if not is_valid_document(out) or len(out) > max_chars:
+        if not HotStore.is_valid_document(out) or len(out) > max_chars:
             # 极端：只留标题（is_valid 要求至少格式完好；空 entry 文档：只有标题时 opens=0）
             # is_valid_document 允许只有标题（opens==closes==0 且 startswith #）
             bare = f"# {title}\n"
-            if is_valid_document(bare) and len(bare) <= max_chars:
+            if HotStore.is_valid_document(bare) and len(bare) <= max_chars:
                 return bare
             raise ValueError("grow-and-refine 无法产生合法且不超限的文档")
         return out
@@ -124,7 +124,7 @@ class GrowAndRefineCompactor:
                 hi = mid - 1
                 continue
             doc = _rebuild(title, [(entry_id, trial_content)])
-            if len(doc) <= max_chars and is_valid_document(doc):
+            if len(doc) <= max_chars and HotStore.is_valid_document(doc):
                 best = trial_content
                 lo = mid + 1
             else:

@@ -18,7 +18,7 @@ import time
 import unicodedata
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone as dt_timezone
+from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -154,7 +154,7 @@ class MemoryManager:
         """daily 日期：显式给定优先；否则由注入 Clock + 配置时区的自然日决定。"""
         if date is not None:
             return date
-        tz = self._timezone or dt_timezone.gettz("Asia/Shanghai")
+        tz = self._timezone or ZoneInfo("Asia/Shanghai")
         return datetime.fromtimestamp(self._clock(), tz).date().isoformat()
 
     ### 写入reviewer发来的记忆增删改请求 执行时调用store的对应函数 返回执行结果（本质锁＋函数调用） 8.15✅️

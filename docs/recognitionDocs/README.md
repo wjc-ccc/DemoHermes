@@ -146,4 +146,4 @@
 | plugin | 🔲 预留位 | 动态加载后置 |
 | memory | ✅ Slice 1–14；Provider 仅 recall+sync_turn | 抽取评测集；FTS/向量后置 |
 | evolution | ✅ Phase 0–6 已接线（playbook/skills/held-out/audit/envsnap） | Replay Gate + Eval 质量闭环 |
-| eval | 🔲 方案见 `docs/aiDocs/8.15` | `run(suite)→Report` 最小面 |
+| eval | ✅ E1 最小面（`Agent/eval` + `tests/eval`） | E2 抽取集 → E3 装配 → E4 Replay Gate |
