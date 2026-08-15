@@ -22,11 +22,12 @@
 ┌──────────────── Gateway（枢纽 / 薄编排）─────────┐
 │  MessageBus: [in_dto] → worker → [out_dto]      │
 │  build_session_key(source)  唯一会话键           │
-│  DictSessionStore: session_key → Session         │
+│  SessionStore: session_key → Session              │
+│  生产默认 SqliteSessionStore；Dict 仅测试替身     │
 │  同 key 串行（每 key 一锁）/ 异 key 并行（线程池）│
 │  斜杠命令 /new /reset /help 短路，不进 Loop       │
 └─────────────────────┬───────────────────────────┘
-                      │ Session + Message
+                      │ Session + Message + MemorySnapshot
                       ▼
 ┌──────────────── Agent Loop（大脑 / OTAP）────────┐
 │  observe → think ⇄ act(工具内循环) → 返回        │
@@ -34,12 +35,14 @@
 │  解析 tool_calls → ToolRegistry 执行 → 回注 → 再 think │
 │  容错：模型重试 / 工具失败回注 / max_iterations 兜底 │
 └─────────────────────┬───────────────────────────┘
-                      │ TurnResult
+                      │ TurnResult → commit_turn
                       ▼
+         EvolutionScheduler（旁路）→ 下一 turn 上下文
+                      │
               Gateway → Channel → 用户
 ```
 
-一句话定位：**Channel 管 I/O 归一化，Gateway 管调度与会话，Loop 管思考与行动，types 是它们共同的契约语言，tool/skill/plugin 是 Loop 的手脚和经验包。**
+一句话定位：**Channel 管 I/O 归一化，Gateway 管调度与会话，Loop 管思考与行动，Memory/Evolution 管下一 turn 的上下文，types 是契约语言，tool/skill/plugin 是手脚和经验包。**
 
 ---
 
@@ -126,6 +129,7 @@
 - [agent loop.md](./agent%20loop.md) — 对话大脑与 OTAP
 - [tool&skill&plugin.md](./tool&skill&plugin.md) — 能力扩展体系
 - [memory.md](./memory.md) — 记忆系统（精选记忆 / daily / SQLite transcript / Provider / Reviewer）
+- 方案：`docs/aiDocs/8.04`（进化旁路）、`docs/aiDocs/8.15`（Eval 质量闭环）
 
 ---
 
@@ -134,11 +138,12 @@
 | 模块 | 当前状态 | 下一步演进 |
 |------|---------|-----------|
 | types | ✅ 完整（含 tool 协议字段） | 多模态 ContentPart 落地 |
-| channel | ✅ CLI / frontier / wechat 骨架 | 飞书/微信真实 SDK 接入 |
-| gateway | ✅ 双队列 + 并发锁 + SQLite SessionStore | Redis 分布式锁 |
-| agent loop | ✅ OTAP + 工具内循环 + 容错 + 记忆快照注入 | trajectory 回放 |
-| tool | ✅ registry + calculator/bash/file/memory_read/memory_edit | 更多平台工具 |
-| skill | ✅ SKILL.md 解析 + 两级加载 | 运行期 skill_creator 自建 |
-| plugin | 🔲 预留位 | 动态加载外部 tool/skill |
-| memory | ✅ Slice 1–14 验收通过（Hot 精选 / Daily / SQLite transcript / Provider / Reviewer） | Slice 15 环境快照、FTS5、向量检索 |
-| evolution | 🔲 接口预留 | reviewer/optimizer 旁路 |
+| channel | ✅ CLI / frontier / 飞书/QQ/微信（凭据填齐可连） | 按使用需要加深，非主线 |
+| gateway | ✅ 双队列 + 并发锁；生产 SqliteSessionStore | Redis 分布式锁（后置） |
+| agent loop | ✅ OTAP + 工具内循环 + MemorySnapshot + AssemblyPolicy | Eval 驱动的装配加深 |
+| tool | ✅ registry + calculator/bash/file/memory_read/memory_edit | 按任务需要加，非主线 |
+| skill | ✅ SKILL.md + 两级加载；evolution 可写 draft | SkillSelector 按 query 裁剪 |
+| plugin | 🔲 预留位 | 动态加载后置 |
+| memory | ✅ Slice 1–14；Provider 仅 recall+sync_turn | 抽取评测集；FTS/向量后置 |
+| evolution | ✅ Phase 0–6 已接线（playbook/skills/held-out/audit/envsnap） | Replay Gate + Eval 质量闭环 |
+| eval | 🔲 方案见 `docs/aiDocs/8.15` | `run(suite)→Report` 最小面 |

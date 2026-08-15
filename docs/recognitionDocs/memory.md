@@ -33,6 +33,8 @@ InboundEvent → build_memory_scope(source)           # personal/group + channel
   → provider.sync_turn / Reviewer 从 outbox 消费     # at-least-once + turn_id 幂等；只调 Manager.apply
 ```
 
-## 当前状态（2026-07-27）
+## 当前状态（2026-08-15）
 
-Slice 1–14 验收通过（方案 §14 全部 17 条标准 PASS，125 tests 全绿）。Slice 15（环境快照/精确复现）与 FTS5/向量检索为方案明确的后置阶段；4 个已知缺口见方案 §17。
+Slice 1–14 验收通过。Provider 公共面已收口为 **`recall` + `sync_turn`**（外部 CRUD 不再经 Manager 路由）。环境快照最小面由 `evolution.EnvironmentSnapshotter` 旁路采集。FTS5/向量检索仍后置。
+
+下一主线不是再加检索后端，而是 **Eval 质量闭环**（`docs/aiDocs/8.15 Eval与质量闭环TDD方案.md`）：先度量抽取/装配/进化是否变好，再考虑 FTS/向量。

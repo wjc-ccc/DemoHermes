@@ -36,7 +36,7 @@ Gateway 的核心能力可以归为 5 项（对应代码顶部注释）：
 
 4. **session_key 构建与上下文寻找**
    - `build_session_key(source)`：全项目唯一的会话键公式
-   - `DictSessionStore`：session_key -> Session 的 dict 查找（现在只用 dict，不落盘）
+   - `SessionStore`：生产默认 `SqliteSessionStore`（transcript + review outbox）；`DictSessionStore` 仅测试替身
 
 5. **并发控制**
    - 同 session_key **串行**（每 key 一把锁，避免连击/多渠道把同一会话打断）
@@ -96,7 +96,7 @@ Gateway 的核心能力可以归为 5 项（对应代码顶部注释）：
 - 不调模型、不组装上下文（那是 Loop + ContextBuilder）
 - 不解析平台原始载荷（那是 Channel.parse）
 - 不投递到平台（那是 Channel.deliver）
-- 不写 transcript 落盘（当前 DictSessionStore 只存内存；后续 Store 负责落盘）
+- 不自己写业务文件；transcript 落盘由注入的 `SqliteSessionStore.commit_turn` 负责（Dict 替身则仅内存）
 - 不执行工具（那是 ToolRegistry.dispatch，由 Loop 调用）
 
 **边界守则：** Gateway 文件里出现 `model.chat`、`tool.execute`、平台 SDK 就是越界。Gateway 是"调度局"，不是"思考者"也不是"邮差"。
@@ -133,7 +133,7 @@ Gateway 是 MessageBus 的**唯一消费者**（入站侧）和**唯一生产者
 
 ### 5.4 与 SessionStore 的连接
 
-Gateway 持有 `self.store: DictSessionStore`，通过 `get_or_create` / `save` / `reset` 管理 Session。当前是纯 dict，后续可换 JSONL/SQLite/Redis，接口不变。
+Gateway 持有 `self.store`（SessionStore 协议）。生产路径注入 `SqliteSessionStore`；测试可注入 `DictSessionStore`。接口不变，换适配器即可。
 
 ### 5.5 与 EventBus 的连接
 
@@ -198,7 +198,7 @@ if text in {"/new", "/reset"}:
 
 | 问题 | 现状 | 优化方向 |
 |------|------|---------|
-| **session 只存内存** | `DictSessionStore` 重启即丢 | 换 JSONL/SQLite，接口已抽象好 |
+| **Dict 替身重启即丢** | 仅测试用 | 生产已用 SqliteSessionStore；评测见 8.15 Eval |
 | **锁字典无限增长** | `_session_locks` 只增不减 | 加 LRU 淘汰或定期清理空闲 key 的锁 |
 | **线程池无背压** | 入站洪峰时队列堆积无上限 | MessageBus 加 maxsize + 拒绝策略 |
 | **ask 超时无清理** | 超时后回调已 pop，但 Loop 还在跑 | 加可取消的 interrupt 传播 |

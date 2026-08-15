@@ -238,7 +238,7 @@ result = loop.run_turn(session, user_msg)
 | **interrupt 检查粒度粗** | 只在每轮 think 前检查，工具执行中无法打断 | 长工具支持 cooperative cancel |
 | **无并行的工具调用** | tool_calls 串行执行 | 独立工具调用可并行（ThreadPool） |
 | **上下文无记忆注入** | ContextBuilder 只组装 system+skills+messages | 接入 hot memory 快照 + episodic 检索 |
-| **无 trajectory 落盘** | ToolCall 记录只在 Session 内存 | turn 结束后异步写 trajectory，供回放/进化 |
+| **轨迹评测不足** | ToolCall 已随 `commit_turn` 进 SQLite | 用 Eval suite 回放 + Report，而非另起空转 trajectory 表 |
 | **ephemeral_prompt 每轮注入** | 每次 think 都重建 ContextBuilder | 若无变化可缓存 system 部分 |
 | **观测事件无采样** | 高频发事件可能拖慢 Loop | 事件总线加采样/批量 |
 
@@ -251,4 +251,4 @@ result = loop.run_turn(session, user_msg)
 3. **不写磁盘**：Loop 只改内存 Session，持久化交给 Gateway，保持 Loop 可测试、可回放。
 4. **容错优先**：模型重试 + 工具失败回注 + max_iterations 兜底，三层防线保证不崩。
 5. **事件驱动观测**：全程发事件，前端/日志/进化模块都靠订阅事件，不侵入 Loop 主流程。
-6. **签名稳定**：`run_turn(session, user_message, *, ephemeral_prompt, session_key)` 签名不轻易变，后续挂 memory/trajectory 都走内部或事件，不动入口。
+6. **签名稳定**：`run_turn(session, user_message, *, memory_snapshot, assembly_policy, ...)` 不把进化塞进主路径；评测与进化旁路走公开 seam（见 8.15 Eval）。
