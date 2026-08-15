@@ -11,7 +11,7 @@ import ast
 import math
 import operator
 
-from .base import Tool, ToolResult
+from .base import Tool, ToolCallResult
 
 # 允许的二元运算符
 _BIN_OPS = {
@@ -72,18 +72,18 @@ class CalculatorTool(Tool):
         "required": ["expression"],
     }
 
-    def execute(self, arguments: dict) -> ToolResult:
+    def execute(self, arguments: dict) -> ToolCallResult:
         expression = str(arguments.get("expression", "")).strip()
         if not expression:
-            return ToolResult(ok=False, error="缺少参数 expression")
+            return ToolCallResult(ok=False, error="缺少参数 expression")
         try:
             value = _safe_eval(ast.parse(expression, mode="eval"))
         except Exception as e:
-            return ToolResult(ok=False, error=f"表达式无法计算: {e}")
+            return ToolCallResult(ok=False, error=f"表达式无法计算: {e}")
         # 整数结果去掉 .0，阅读更友好
         if isinstance(value, float) and value.is_integer():
             value = int(value)
-        return ToolResult(
+        return ToolCallResult(
             ok=True,
             result_text=f"{expression} = {value}",
             data={"expression": expression, "value": value},

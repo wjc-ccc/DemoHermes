@@ -12,7 +12,7 @@ AgentLoop — 核心对话循环（observe → think ⇄ act → 返回）
 
 容错兜底：
     - 模型调用失败：按 model_retries 重试，仍失败 → TurnResult(error)
-    - 工具执行失败：ToolRegistry 已兜底成 ToolResult(ok=False)，回注让 LLM 自我修正
+    - 工具执行失败：ToolRegistry 已兜底成 ToolCallResult(ok=False)，回注让 LLM 自我修正
     - 超过 max_iterations：写入兜底文案，TurnResult(completed=False, error="max_iterations")
     - 全程 logging + EventBus 事件，前端可逐步观测
 """
@@ -21,12 +21,18 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from typing import TYPE_CHECKING
 
 from .context_budget import ContextBudgetExceededError
 from .context_builder import ContextBuilder
 from .events import EventBus, LoopEvent, default_event_bus
 from .messages import build_assistant_message, build_tool_message
 from .types import Message, Session, ToolCall, TurnResult
+
+if TYPE_CHECKING:
+    from ..evolution.assembly import AssemblyPolicy
+    from ..memory.snapshot import MemorySnapshot
+    from ..memory.types import MemoryScope
 
 logger = logging.getLogger(__name__)
 
@@ -107,12 +113,11 @@ class AgentLoop:
         *,
         ephemeral_prompt: str | None = None,
         session_key: str = "",
-        memory_context=None,
-        memory_scope=None,
+        memory_snapshot: MemorySnapshot | None = None,
+        memory_scope: MemoryScope | None = None,
         context_budget=None,
         token_estimator=None,
-        provider_min_recall_chars: int | None = None,
-        skill_summary_min_chars: int | None = None,
+        assembly_policy: AssemblyPolicy | None = None,
         skill_query: str | None = None,
         skill_selector=None,
     ) -> TurnResult:
@@ -127,11 +132,10 @@ class AgentLoop:
                 turn_id=turn_id,
                 ephemeral_prompt=ephemeral_prompt,
                 session_key=session_key,
-                memory_context=memory_context,
+                memory_snapshot=memory_snapshot,
                 context_budget=context_budget,
                 token_estimator=token_estimator,
-                provider_min_recall_chars=provider_min_recall_chars,
-                skill_summary_min_chars=skill_summary_min_chars,
+                assembly_policy=assembly_policy,
                 skill_query=skill_query,
                 skill_selector=skill_selector,
             )
@@ -146,11 +150,10 @@ class AgentLoop:
         turn_id: str,
         ephemeral_prompt: str | None,
         session_key: str,
-        memory_context,
+        memory_snapshot,
         context_budget,
         token_estimator,
-        provider_min_recall_chars: int | None,
-        skill_summary_min_chars: int | None,
+        assembly_policy,
         skill_query: str | None,
         skill_selector,
     ) -> TurnResult:
@@ -177,15 +180,21 @@ class AgentLoop:
             # 快照由调用方每 turn 构建一次，Loop 不重建、不缓存
             builder = ContextBuilder(
                 session,
-                memory_context=memory_context,
+                memory_snapshot=memory_snapshot,
                 skill_registry=self.skills,
                 skill_query=skill_query,
                 skill_selector=skill_selector,
                 ephemeral_prompt=ephemeral_prompt,
                 budget=context_budget,
                 token_estimator=token_estimator,
-                provider_min_recall_chars=provider_min_recall_chars,
-                skill_summary_min_chars=skill_summary_min_chars,
+                provider_min_recall_chars=(
+                    assembly_policy.provider_min_recall_chars
+                    if assembly_policy is not None else None
+                ),
+                skill_summary_min_chars=(
+                    assembly_policy.skill_summary_min_chars
+                    if assembly_policy is not None else None
+                ),
             )
             try:
                 messages = builder.building_context()
@@ -282,8 +291,8 @@ class AgentLoop:
         started = time.time()
         if self.tools is None:
             # 模型发了工具调用但 Loop 没配工具注册表 —— 明确告知，不静默吞掉
-            from ..tools.base import ToolResult
-            result = ToolResult(ok=False, error="当前 Agent 未配置任何工具")
+            from ..tools.base import ToolCallResult
+            result = ToolCallResult(ok=False, error="当前 Agent 未配置任何工具")
         else:
             arguments = dict(req.arguments or {})
             # memory_read / memory_edit：scope 由运行上下文注入，模型不得伪造（§9）

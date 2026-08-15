@@ -9,7 +9,7 @@ import logging
 import re
 from typing import Any
 
-from ..memory.types import MemoryScope, TurnEnvelope
+from ..memory.types import MemoryScope, TurnRecord
 from .types import EvolutionInsight, EvolutionSignal, SkillProposal
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ class LlmEvolutionReflector:
 
     def reflect(
         self,
-        turn: TurnEnvelope,
+        turn: TurnRecord,
         signals: EvolutionSignal | None = None,
         *,
         user_text: str = "",
@@ -46,7 +46,7 @@ class LlmEvolutionReflector:
 
     def reflect_skills(
         self,
-        turn: TurnEnvelope,
+        turn: TurnRecord,
         signals: EvolutionSignal | None = None,
         *,
         user_text: str = "",
@@ -66,7 +66,7 @@ class LlmEvolutionReflector:
 
     def _build_prompt(
         self,
-        turn: TurnEnvelope,
+        turn: TurnRecord,
         signals: EvolutionSignal | None,
         user_text: str,
         transcript: str,
@@ -90,7 +90,7 @@ class LlmEvolutionReflector:
 
     def _build_skill_prompt(
         self,
-        turn: TurnEnvelope,
+        turn: TurnRecord,
         signals: EvolutionSignal | None,
         user_text: str,
         transcript: str,

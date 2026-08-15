@@ -1,10 +1,9 @@
 """
-Hot 持久化字符硬上限（7.23 方案 §4.2）
+Markdown 文件字符数限制 apply后判断是否需要summarize。
 
-这些是字符数，不是模型 tokenizer 的精确 token 数；
-整轮 prompt 的 token 预算走 Agent/core/context_budget.py（Slice 8），两者不得混淆。
+这些是字符数，不是模型 tokenizer 的精确 token 数；整轮 prompt 的 token 预算走core/context_budget.py。
 
-Daily 不默认进 prompt，不做破坏性总量截断（§4.2），故无总量上限。
+Daily 不默认进 prompt，不做破坏性总量截断，故无总量上限。
 """
 
 PROFILE_MAX_CHARS = 1375  # USER.md / GROUP.md

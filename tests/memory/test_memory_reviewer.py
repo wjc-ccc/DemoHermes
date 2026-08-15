@@ -1,6 +1,6 @@
 """Slice 13: 自动 Background Reviewer（§8.2）。
 
-公共 seam：MemoryReviewer + SessionStore outbox + Manager。
+公共 seam：TurnReviewer + SessionStore outbox + Manager。
 真实 Reviewer/调度器，在其模型抽取 seam 注入 FakeExtractor；不 Fake Reviewer 本身，不 mock Manager。
 reviewer 结果通过 manager.read/search 验证；outbox 原子性这类直接观察 outbox。
 """
@@ -8,15 +8,15 @@ import pytest
 
 from Agent.core.types import Message
 from Agent.memory import (
-    BuiltinMemoryMutation,
-    BuiltinMemoryReadRequest,
+    BuiltinMemoryRequest,
+    MemoryReadRequest,
     MemoryManager,
     MemoryProvenance,
     MemoryScope,
 )
 from Agent.memory.episodic.store import AuditConflictError, SqliteSessionStore
-from Agent.memory.reviewer import MemoryReviewer
-from Agent.memory.types import TurnEnvelope
+from Agent.memory.reviewer import TurnReviewer
+from Agent.memory.types import TurnRecord
 
 _SCOPE = MemoryScope(kind="personal", key="cli:user:u1")
 _PROVENANCE = MemoryProvenance(source="reviewer", turn_id="t_001")
@@ -28,12 +28,12 @@ class _FakeExtractor:
     def __init__(self, mutations) -> None:
         self._mutations = list(mutations)
 
-    def extract(self, turn: TurnEnvelope):
+    def extract(self, turn: TurnRecord):
         return list(self._mutations)
 
 
-def _turn(session, *, turn_id="t1") -> TurnEnvelope:
-    return TurnEnvelope(
+def _turn(session, *, turn_id="t1") -> TurnRecord:
+    return TurnRecord(
         turn_id=turn_id,
         session_id=session.session_id,
         scope=_SCOPE,
@@ -92,17 +92,17 @@ def test_reviewer_daily_decision_creates_daily_entry(tmp_path):
     store.commit_turn(session, _turn(session), scope=_SCOPE)
 
     extractor = _FakeExtractor([
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="daily", action="add", date="2026-07-23",
             content="部署到 staging", provenance=_PROVENANCE,
         )
     ])
-    reviewer = MemoryReviewer(store, manager, extractor)
+    reviewer = TurnReviewer(store, manager, extractor)
     processed = reviewer.process_pending()
 
     assert processed == 1
     view = manager.read(
-        BuiltinMemoryReadRequest(scope=_SCOPE, target="daily", date="2026-07-23")
+        MemoryReadRequest(scope=_SCOPE, target="daily", date="2026-07-23")
     )
     assert any("部署到 staging" in e.content for e in view.entries)
     assert store.pending_review_jobs() == []  # job 已 done
@@ -117,12 +117,12 @@ def test_reviewer_stable_preference_updates_profile(tmp_path):
     session.add_message(Message(role="user", content_text="我喜欢简洁"))
     store.commit_turn(session, _turn(session), scope=_SCOPE)
 
-    MemoryReviewer(store, manager, _FakeExtractor([BuiltinMemoryMutation(
+    TurnReviewer(store, manager, _FakeExtractor([BuiltinMemoryRequest(
         scope=_SCOPE, target="profile", action="add",
         content="偏好简洁回答", provenance=_PROVENANCE,
     )])).process_pending()
 
-    view = manager.read(BuiltinMemoryReadRequest(scope=_SCOPE, target="profile"))
+    view = manager.read(MemoryReadRequest(scope=_SCOPE, target="profile"))
     assert any("偏好简洁回答" in e.content for e in view.entries)
 
 
@@ -135,10 +135,10 @@ def test_reviewer_one_off_fact_creates_no_hot_memory(tmp_path):
     session.add_message(Message(role="user", content_text="今天天气不错"))
     store.commit_turn(session, _turn(session), scope=_SCOPE)
 
-    MemoryReviewer(store, manager, _FakeExtractor([])).process_pending()
+    TurnReviewer(store, manager, _FakeExtractor([])).process_pending()
 
-    profile = manager.read(BuiltinMemoryReadRequest(scope=_SCOPE, target="profile"))
-    memory = manager.read(BuiltinMemoryReadRequest(scope=_SCOPE, target="memory"))
+    profile = manager.read(MemoryReadRequest(scope=_SCOPE, target="profile"))
+    memory = manager.read(MemoryReadRequest(scope=_SCOPE, target="memory"))
     assert len(profile.entries) == 0
     assert len(memory.entries) == 0
     assert store.pending_review_jobs() == []  # 无 mutation 也是成功完成
@@ -153,12 +153,12 @@ def test_reviewer_invalid_mutation_is_rejected_by_manager(tmp_path):
     session.add_message(Message(role="user", content_text="随便"))
     store.commit_turn(session, _turn(session), scope=_SCOPE)
 
-    MemoryReviewer(store, manager, _FakeExtractor([BuiltinMemoryMutation(
+    TurnReviewer(store, manager, _FakeExtractor([BuiltinMemoryRequest(
         scope=_SCOPE, target="profile", action="add",
         content="含保留标记 <!-- memory-entry:evil -->", provenance=_PROVENANCE,
     )])).process_pending()
 
-    profile = manager.read(BuiltinMemoryReadRequest(scope=_SCOPE, target="profile"))
+    profile = manager.read(MemoryReadRequest(scope=_SCOPE, target="profile"))
     assert len(profile.entries) == 0  # 被 Manager 拒绝，未写入
 
 
@@ -171,18 +171,18 @@ def test_duplicate_review_delivery_produces_one_memory_result(tmp_path):
     session.add_message(Message(role="user", content_text="部署到 staging"))
     store.commit_turn(session, _turn(session), scope=_SCOPE)
 
-    mutation = BuiltinMemoryMutation(
+    mutation = BuiltinMemoryRequest(
         scope=_SCOPE, target="daily", action="add", date="2026-07-23",
         content="部署到 staging", provenance=_PROVENANCE,
     )
-    reviewer = MemoryReviewer(store, manager, _FakeExtractor([mutation]))
+    reviewer = TurnReviewer(store, manager, _FakeExtractor([mutation]))
     reviewer.process_pending()  # 第一次投递
 
     store.requeue_review_job("t1")  # 模拟重复投递（at-least-once）
     reviewer.process_pending()  # 第二次投递，同内容
 
     view = manager.read(
-        BuiltinMemoryReadRequest(scope=_SCOPE, target="daily", date="2026-07-23")
+        MemoryReadRequest(scope=_SCOPE, target="daily", date="2026-07-23")
     )
     assert len(view.entries) == 1  # 只一条，重复投递未产生第二条
 
@@ -200,7 +200,7 @@ def test_reviewer_failure_is_retried_then_marked_failed(tmp_path):
         def extract(self, turn):
             raise RuntimeError("extract failed")
 
-    reviewer = MemoryReviewer(
+    reviewer = TurnReviewer(
         store, manager, _BoomExtractor(),
         clock=lambda: 2000.0, max_attempts=3, backoff_seconds=0.0,
     )
@@ -223,9 +223,9 @@ def test_expired_running_job_lease_is_reclaimed_after_restart(tmp_path):
     assert store.review_job_status("t1") == "running"
 
     # 重启后 now=3000 > lease 2010：新 reviewer 回收 expired running job 并处理
-    MemoryReviewer(
+    TurnReviewer(
         store, manager,
-        _FakeExtractor([BuiltinMemoryMutation(
+        _FakeExtractor([BuiltinMemoryRequest(
             scope=_SCOPE, target="daily", action="add", date="2026-07-23",
             content="崩溃后回顾", provenance=_PROVENANCE,
         )]),
@@ -251,12 +251,12 @@ def test_reviewer_failure_does_not_break_reply(tmp_path):
         def extract(self, turn):
             if turn.turn_id == "t1":
                 raise RuntimeError("fail t1")
-            return [BuiltinMemoryMutation(
+            return [BuiltinMemoryRequest(
                 scope=_SCOPE, target="profile", action="add",
                 content="好 turn 偏好", provenance=_PROVENANCE,
             )]
 
-    reviewer = MemoryReviewer(
+    reviewer = TurnReviewer(
         store, manager, _SelectiveExtractor(),
         clock=lambda: 2000.0, max_attempts=1, backoff_seconds=0.0,
     )
@@ -281,13 +281,13 @@ def test_session_end_runs_final_review_after_reset_commit(tmp_path):
     assert reset.closed_session is not None
 
     # final review：处理旧 session 遗留的 pending job
-    MemoryReviewer(store, manager, _FakeExtractor([BuiltinMemoryMutation(
+    TurnReviewer(store, manager, _FakeExtractor([BuiltinMemoryRequest(
         scope=_SCOPE, target="daily", action="add", date="2026-07-23",
         content="session 结束回顾", provenance=_PROVENANCE,
     )]), clock=lambda: 2000.0).process_pending()
 
     assert store.review_job_status("t1") == "done"
     view = manager.read(
-        BuiltinMemoryReadRequest(scope=_SCOPE, target="daily", date="2026-07-23")
+        MemoryReadRequest(scope=_SCOPE, target="daily", date="2026-07-23")
     )
     assert any("session 结束回顾" in e.content for e in view.entries)

@@ -92,8 +92,12 @@ def build_gateway(*, workers: int = 2, use_memory: bool = True) -> Gateway:
             SqliteSessionArchiveReader,
             SqliteSessionStore,
         )
-        from .memory.extractors import RuleBasedExtractor
-        from .memory.reviewer import MemoryReviewer, ReviewerWorker
+        from .memory.extractors import (
+            FallbackMemoryExtractor,
+            ModelBasedExtractor,
+            RuleBasedExtractor,
+        )
+        from .memory.reviewer import TurnReviewer, ReviewerWorker
         from .tools.memory_tools import MemoryEditTool, MemoryReadTool
 
         memory_root, db_path = _memory_paths()
@@ -114,9 +118,18 @@ def build_gateway(*, workers: int = 2, use_memory: bool = True) -> Gateway:
                 provenance_factory=lambda: MemoryProvenance(source="tool"),
             )
         )
-        reviewer = MemoryReviewer(
-            store, memory, RuleBasedExtractor(store),
-        )
+        try:
+            extract_model = model_registry.get()
+        except Exception:
+            extract_model = None
+        if extract_model is not None:
+            extractor = FallbackMemoryExtractor(
+                ModelBasedExtractor(store, extract_model),
+                RuleBasedExtractor(store),
+            )
+        else:
+            extractor = RuleBasedExtractor(store)
+        reviewer = TurnReviewer(store, memory, extractor)
         reviewer_worker = ReviewerWorker(reviewer)
 
         # 8.04：旁路进化 — playbook + Skill plugin 产物
@@ -266,7 +279,7 @@ def build_gateway(*, workers: int = 2, use_memory: bool = True) -> Gateway:
         assembly_policy = AssemblyPolicy()
         assembly_recorder = AssemblyRecorder()
         logger.info(
-            "记忆已启用 root=%s db=%s reviewer=RuleBasedExtractor "
+            "记忆已启用 root=%s db=%s reviewer=ModelBased→RuleBased "
             "evolution=hermes-loop+playbook+skills+assembly+heldout+audit+envsnap",
             memory_root, db_path,
         )

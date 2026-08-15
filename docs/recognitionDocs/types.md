@@ -37,9 +37,8 @@ types 是一组 **pydantic 数据模型**，定义了 Agent 各模块之间传�
 | 类型 | 用途 | 关键字段 |
 |------|------|---------|
 | `Session` | 一次会话的完整状态 | session_id, session_key, author_id, channel, messages[], tool_calls[], summary, created_at |
-| `MemoryItem` | 记忆条目（预留） | memory_id, created_at, metadata |
 
-### 3.3 通道传输类（DTO）
+### 3.3 通道传输类
 
 | 类型 | 用途 | 关键字段 |
 |------|------|---------|
@@ -154,7 +153,6 @@ ToolCall(
 | **Message.metadata 滥用风险** | tool_calls 存在 metadata["tool_calls"] 里，类型不安全 | 抽成独立字段或专门模型，避免 dict 套 dict 难维护 |
 | **Session 无 token 预算** | messages 无限增长，长对话会撑爆上下文窗口 | 在 ContextBuilder 或 Session 层加滑动窗口/摘要压缩 |
 | **序列化兼容** | 代码里同时处理 pydantic v1/v2（`model_validate_json` vs `parse_raw`） | 项目固定 pydantic 版本后清理兼容代码 |
-| **MemoryItem 是空壳** | 只有 id/created_at/metadata，无实际字段 | 设计 L1/L2/L3 分层字段（layer, content, source, score） |
 | **Session 缺少状态机** | status 只有 active/paused/completed 但无迁移逻辑 | 补 idle/daily reset 的状态迁移，或先明确不用就移除 |
 
 ---

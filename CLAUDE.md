@@ -19,6 +19,7 @@ Python 3.11 · Pydantic v2（>=2,<3，不维护 v1 兼容层）· SQLite（WAL +
   memory（Hot 精选 / Daily / SQLite transcript / Provider / Reviewer）、channel、model、tools、skills、evolution
 - `tests/`：pytest（pytest.ini：testpaths=tests, pythonpath=.）；Memory 测试在 `tests/memory/`
 - `docs/`：aiDocs（方案/计划）、errorDocs（debug 日志）、timeDocs（每日进度）、testDocs（阶段测试）、recognitionDocs（架构认知）
+- 类型与数据流：载体用自然名（`Session`/`Message`/`ToolCall`）；一次操作的输入输出用 `XxxRequest`/`XxxResult`。详见 `.cursor/rules/python-types-dataflow.mdc`（每次会话自动加载）
 - 提交纪律：只在非 main 分支 commit，不 push
 
 ## 当前状态（2026-07-27）

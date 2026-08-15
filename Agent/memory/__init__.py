@@ -6,33 +6,33 @@ Agent/memory 包
 """
 from .manager import MemoryManager
 from .scope import build_memory_scope
-from .snapshot import DocumentRevision, MemoryContextSnapshot
+from .snapshot import DocumentRevision, MemorySnapshot
 from .types import (
-    BuiltinMemoryMutation,
-    BuiltinMemoryReadRequest,
+    BuiltinMemoryRequest,
+    MemoryReadRequest,
     DailyEntryRef,
     MemoryDiagnostic,
     MemoryDocumentView,
     MemoryEntry,
     MemoryHit,
-    MemoryMutationResult,
+    BuiltinMemoryResult,
     MemoryProvenance,
     MemoryScope,
     MemorySearchRequest,
 )
 
 __all__ = [
-    "BuiltinMemoryMutation",
-    "BuiltinMemoryReadRequest",
+    "BuiltinMemoryRequest",
+    "MemoryReadRequest",
     "DailyEntryRef",
     "DocumentRevision",
-    "MemoryContextSnapshot",
+    "MemorySnapshot",
     "MemoryDiagnostic",
     "MemoryDocumentView",
     "MemoryEntry",
     "MemoryHit",
     "MemoryManager",
-    "MemoryMutationResult",
+    "BuiltinMemoryResult",
     "MemoryProvenance",
     "MemoryScope",
     "MemorySearchRequest",

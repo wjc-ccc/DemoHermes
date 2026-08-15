@@ -19,7 +19,7 @@ memory 是独立深模块：**SQLite transcript 是事实源，Hot（USER/GROUP/
 
 - **MemoryManager** 是精选记忆唯一入口：只暴露 `build_context / read / apply / search`，无裸 `write(path, text)`；工具与 Reviewer 都走它。
 - **SessionStore** 管会话生命周期：`commit_turn`（事实 + review outbox 同事务）、`close_and_reset`（单事务切换，旧 transcript 永留）。
-- **ContextBuilder** 只读 `MemoryContextSnapshot.prompt`（frozen、带围栏）；同一 turn 所有模型迭代复用同一快照，下一 turn 才见更新。
+- **ContextBuilder** 只读 `MemorySnapshot.prompt`（frozen、带围栏）；同一 turn 所有模型迭代复用同一快照，下一 turn 才见更新。
 - 工具（`memory_read` / `memory_edit`）是 Manager 薄 adapter：不暴露绝对路径/SQL，scope 由运行上下文注入，不能改 transcript。
 - 单进程保证：进程级锁注册表 + 原子写；不声称支持多进程 writer（方案 §5.2）。
 

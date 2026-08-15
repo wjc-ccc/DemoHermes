@@ -17,13 +17,13 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from ..memory.types import MemoryScope, TurnEnvelope
+from ..memory.types import MemoryScope, TurnRecord
 
 logger = logging.getLogger(__name__)
 
-TurnHandler = Callable[[TurnEnvelope], Any]
+TurnHandler = Callable[[TurnRecord], Any]
 RefineFn = Callable[[MemoryScope], Any]
-ScopeOfFn = Callable[[TurnEnvelope], MemoryScope]
+ScopeOfFn = Callable[[TurnRecord], MemoryScope]
 
 
 class EvolutionScheduler:
@@ -53,7 +53,7 @@ class EvolutionScheduler:
         self._refine = refine
         self._scope_of = scope_of
 
-    def notify(self, turn: TurnEnvelope) -> None:
+    def notify(self, turn: TurnRecord) -> None:
         for handler in self._handlers:
             try:
                 handler(turn)

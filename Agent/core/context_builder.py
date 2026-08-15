@@ -30,7 +30,7 @@ from .types import Message, Session
 from ..Provider import SYSTEM_PROMPT_PATH
 
 if TYPE_CHECKING:
-    from ..memory.snapshot import MemoryContextSnapshot
+    from ..memory.snapshot import MemorySnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ class ContextBuilder:
         self,
         session: Session,
         *,
-        memory_context: MemoryContextSnapshot | None = None,
+        memory_snapshot: MemorySnapshot | None = None,
         skill_registry=None,
         skill_query: str | None = None,
         skill_selector=None,
@@ -65,7 +65,7 @@ class ContextBuilder:
         self.session: Session = session
         # 本 turn 的不可变记忆快照（7.23 方案 §2 Seam C）：
         # 只读取预构建的 prompt 整体注入，不分辨 Hot/Daily/Provider，也不知道文件/SQLite
-        self._memory_context = memory_context
+        self._memory_snapshot = memory_snapshot
         # Level 1 技能摘要（Hermes：有 query+selector 时只注入相关子集）
         self._skill_summary: str = (
             skill_registry.summaries_prompt(
@@ -100,17 +100,17 @@ class ContextBuilder:
 
     # ---- 1.5 记忆快照（整段带围栏注入）----
     def _loading_memory(self) -> None:
-        if self._memory_context is None:
+        if self._memory_snapshot is None:
             return
         if self._budget is None:
             # 无预算：整段注入完整 prompt（现状行为）
             self._append(
                 "memory_hot",
-                {"role": "system", "content": self._memory_context.prompt},
+                {"role": "system", "content": self._memory_snapshot.prompt},
             )
             return
         # §4.3 启用预算：结构化分段注入，裁剪才能区分 Hot/Daily/Provider
-        snapshot = self._memory_context
+        snapshot = self._memory_snapshot
         hot = snapshot.hot_prompt if snapshot.hot_prompt is not None else snapshot.prompt
         self._append("memory_hot", {"role": "system", "content": hot})
         if snapshot.daily_prompt:

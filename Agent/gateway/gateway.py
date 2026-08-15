@@ -30,7 +30,7 @@ from ..core.loop import AgentLoop
 from ..core.messages import build_user_message
 from ..core.types import InboundEvent, Message, OutboundReply
 from ..memory import MemoryManager, build_memory_scope
-from ..memory.types import TurnEnvelope
+from ..memory.types import TurnRecord
 from .message_bus import MessageBus
 from .session_key import build_session_key
 from .session_store import DictSessionStore
@@ -280,7 +280,7 @@ class Gateway:
 
     def _run_turn_memory(self, session_key: str, event: InboundEvent, corr) -> OutboundReply:
         """memory 接线路径（§8.1）：build_memory_scope -> get_or_create -> build_context 一次 ->
-        run_turn(memory_context) -> commit_turn 持久化。store 须为 scope 感知的 SessionStore。"""
+        run_turn(memory_snapshot) -> commit_turn 持久化。store 须为 scope 感知的 SessionStore。"""
         scope = build_memory_scope(event.source)
         text = (event.text or "").strip()
         channel = event.source.channel
@@ -314,8 +314,6 @@ class Gateway:
         policy = self._assembly_policy
         include_daily = bool(policy.include_today_daily) if policy is not None else False
         enable_recall = bool(policy.enable_provider_recall) if policy is not None else True
-        provider_min = policy.provider_min_recall_chars if policy is not None else None
-        skill_min = policy.skill_summary_min_chars if policy is not None else None
         snapshot = self._memory.build_context(
             scope=scope, query=event.text or "", session_id=session.session_id,
             include_today_daily=include_daily,
@@ -325,14 +323,13 @@ class Gateway:
         started = time.time()
         result = self.loop.run_turn(
             session, user_msg,
-            memory_context=snapshot,
+            memory_snapshot=snapshot,
             memory_scope=scope,
             ephemeral_prompt=event.channel_prompt,
             session_key=session_key,
             context_budget=self._context_budget,
             token_estimator=self._token_estimator,
-            provider_min_recall_chars=provider_min,
-            skill_summary_min_chars=skill_min,
+            assembly_policy=policy,
             skill_query=event.text or "",
             skill_selector=self._skill_selector,
         )
@@ -348,17 +345,33 @@ class Gateway:
                     include_today_daily=include_daily,
                     provider_recalled=snapshot.provider_prompt is not None,
                     skill_summary_chars=skill_chars,
-                    skill_summary_min_chars=skill_min,
+                    skill_summary_min_chars=(
+                        policy.skill_summary_min_chars if policy is not None else None
+                    ),
                 )
             )
-        turn = TurnEnvelope(
-            turn_id=result.turn_id, session_id=session.session_id, scope=scope,
+        turn = TurnRecord(
+            turn_id=result.turn_id,
+            session_id=session.session_id,
+            scope=scope,
             user_message_id=user_msg.message_id,
-            assistant_message_ids=(), tool_call_ids=(),
-            started_at=started, finished_at=time.time(),
-            completed=result.completed, interrupted=result.interrupted, error=result.error,
+            assistant_message_ids=tuple(
+                m.message_id
+                for m in session.messages
+                if m.role == "assistant" and m.seq_id > user_msg.seq_id
+            ),
+            tool_call_ids=tuple(
+                tc.tool_call_id
+                for tc in session.tool_calls
+                if tc.trajectory_id == result.turn_id
+            ),
+            started_at=started,
+            finished_at=time.time(),
+            completed=result.completed,
+            interrupted=result.interrupted,
+            error=result.error,
         )
-        # §8.1：SQLite 提交失败不丢模型回复--返回 reply 但 metadata 标 persistence_error
+        # SQLite 提交失败不丢模型回复--返回 reply 但 metadata 标 persistence_error
         metadata = {"correlation_id": corr}
         if not result.completed and result.error:
             metadata["error"] = result.error
@@ -370,7 +383,7 @@ class Gateway:
         else:
             # §8.1 / 8.04 Phase 0.2：事实落库成功后 sync_turn（幂等；无 Provider 时 no-op）
             try:
-                self._memory.sync_turn(turn)
+                self._memory.sync_turn(turn, session)
             except Exception:
                 logger.exception("sync_turn 失败 turn_id=%s", result.turn_id)
             # 事实落库成功后才唤醒 reviewer（§8.1：提交失败则不启后台提炼）

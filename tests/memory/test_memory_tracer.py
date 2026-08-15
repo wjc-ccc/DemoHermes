@@ -2,7 +2,7 @@
 from Agent.core.context_builder import ContextBuilder
 from Agent.core.types import Session
 from Agent.memory import (
-    BuiltinMemoryMutation,
+    BuiltinMemoryRequest,
     MemoryManager,
     MemoryProvenance,
     MemoryScope,
@@ -16,7 +16,7 @@ def test_added_profile_memory_reaches_context_builder_system_messages(tmp_path):
 
     # act：apply add → build_context → snapshot 传给真实 ContextBuilder
     result = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=scope,
             target="profile",
             action="add",
@@ -28,7 +28,7 @@ def test_added_profile_memory_reaches_context_builder_system_messages(tmp_path):
 
     snapshot = manager.build_context(scope, query="帮我写方案", session_id="s1")
     messages = ContextBuilder(
-        Session(session_id="s1"), memory_context=snapshot
+        Session(session_id="s1"), memory_snapshot=snapshot
     ).building_context()
 
     # assert：Builder 产出的一个 system message 含该字面量和 memory 围栏

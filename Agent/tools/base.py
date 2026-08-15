@@ -5,7 +5,7 @@ Tool — 工具抽象基类 + 统一执行结果
     name        : 工具名称（如 "calculator"）
     description : 工具描述（供 LLM 理解用途）
     parameters  : JSON Schema 参数定义
-    execute()   : 执行工具，返回 ToolResult
+    execute()   : 执行工具，返回 ToolCallResult
 
 LLM 通过 to_openai_schema() 生成的 schema 决定何时、如何调用工具。
 """
@@ -17,7 +17,7 @@ from pydantic import BaseModel as PydanticModel
 from pydantic import Field
 
 
-class ToolResult(PydanticModel):
+class ToolCallResult(PydanticModel):
     """工具执行的统一结果。ok=False 时 error 会被回注给 LLM 让其自我修正。"""
 
     ok: bool = Field(default=True, description="是否执行成功")
@@ -34,8 +34,8 @@ class Tool(ABC):
     parameters: dict = {"type": "object", "properties": {}}
 
     @abstractmethod
-    def execute(self, arguments: dict) -> ToolResult:
-        """执行工具。实现内部应自行捕获预期内异常并返回 ToolResult(ok=False)。"""
+    def execute(self, arguments: dict) -> ToolCallResult:
+        """执行工具。实现内部应自行捕获预期内异常并返回 ToolCallResult(ok=False)。"""
         pass
 
     def to_openai_schema(self) -> dict:

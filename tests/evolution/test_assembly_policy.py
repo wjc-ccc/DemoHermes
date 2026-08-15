@@ -13,7 +13,7 @@ from Agent.evolution.assembly import (
     AssemblyRecorder,
 )
 from Agent.memory import (
-    BuiltinMemoryMutation,
+    BuiltinMemoryRequest,
     MemoryManager,
     MemoryProvenance,
     MemoryScope,
@@ -26,7 +26,6 @@ _SCOPE = MemoryScope(kind="personal", key="cli:user:asm1")
 
 class _Provider(MemoryProvider):
     name = "fake"
-    capabilities = frozenset({"recall"})
 
     def recall(self, request: ProviderRecallRequest) -> ProviderContribution:
         return ProviderContribution(name=self.name, text="recalled-bits")
@@ -39,7 +38,7 @@ def test_policy_controls_daily_and_provider(tmp_path):
         provider=_Provider(),
     )
     r = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="daily", action="add",
             content="今日笔记", provenance=MemoryProvenance(source="user_request"),
         )

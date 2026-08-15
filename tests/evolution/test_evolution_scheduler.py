@@ -8,14 +8,14 @@ from __future__ import annotations
 import pytest
 
 from Agent.memory import MemoryScope
-from Agent.memory.types import TurnEnvelope
+from Agent.memory.types import TurnRecord
 
 
 _SCOPE = MemoryScope(kind="personal", key="cli:user:u1")
 
 
-def _turn(turn_id: str = "t1") -> TurnEnvelope:
-    return TurnEnvelope(
+def _turn(turn_id: str = "t1") -> TurnRecord:
+    return TurnRecord(
         turn_id=turn_id,
         session_id="s1",
         scope=_SCOPE,
@@ -31,7 +31,7 @@ def _turn(turn_id: str = "t1") -> TurnEnvelope:
 
 
 def test_scheduler_notify_fans_out_to_registered_handlers():
-    """notify 把同一 TurnEnvelope 交给所有已注册 handler。"""
+    """notify 把同一 TurnRecord 交给所有已注册 handler。"""
     from Agent.evolution.scheduler import EvolutionScheduler
 
     seen: list[str] = []

@@ -2,8 +2,8 @@
 import threading
 
 from Agent.memory import (
-    BuiltinMemoryMutation,
-    BuiltinMemoryReadRequest,
+    BuiltinMemoryRequest,
+    MemoryReadRequest,
     MemoryManager,
     MemoryProvenance,
     MemoryScope,
@@ -31,7 +31,7 @@ def test_two_concurrent_adds_from_two_managers_are_both_preserved(tmp_path):
             try:
                 barrier.wait(timeout=10)
                 result = manager.apply(
-                    BuiltinMemoryMutation(
+                    BuiltinMemoryRequest(
                         scope=scope, target="profile", action="add",
                         content=content, provenance=_PROVENANCE,
                     )
@@ -45,7 +45,7 @@ def test_two_concurrent_adds_from_two_managers_are_both_preserved(tmp_path):
         t1.start(); t2.start(); t1.join(); t2.join()
         assert not errors
 
-        view = manager_a.read(BuiltinMemoryReadRequest(scope=scope, target="profile"))
+        view = manager_a.read(MemoryReadRequest(scope=scope, target="profile"))
         assert {e.content for e in view.entries} == {
             f"甲线程第{round_no}条", f"乙线程第{round_no}条"
         }
@@ -56,7 +56,7 @@ def test_concurrent_replace_with_stale_revision_reports_one_conflict(tmp_path):
     manager_a = MemoryManager(root=root)
     manager_b = MemoryManager(root=root)
     added = manager_a.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="profile", action="add",
             content="原始偏好", provenance=_PROVENANCE,
         )
@@ -68,7 +68,7 @@ def test_concurrent_replace_with_stale_revision_reports_one_conflict(tmp_path):
     def replace(manager: MemoryManager, content: str) -> None:
         barrier.wait(timeout=10)
         results.append(manager.apply(
-            BuiltinMemoryMutation(
+            BuiltinMemoryRequest(
                 scope=_SCOPE, target="profile", action="replace",
                 entry_id=added.entry_id, content=content,
                 expected_revision=added.revision, provenance=_PROVENANCE,
@@ -82,7 +82,7 @@ def test_concurrent_replace_with_stale_revision_reports_one_conflict(tmp_path):
     assert sorted(r.ok for r in results) == [False, True]
     loser = next(r for r in results if not r.ok)
     assert loser.conflict and loser.error_code == "revision_conflict"
-    view = manager_a.read(BuiltinMemoryReadRequest(scope=_SCOPE, target="profile"))
+    view = manager_a.read(MemoryReadRequest(scope=_SCOPE, target="profile"))
     assert view.entries[0].content in ("甲的改写", "乙的改写")
 
 
@@ -90,7 +90,7 @@ def test_reader_never_observes_partial_markdown_during_replace(tmp_path):
     root = tmp_path / "memory"
     manager = MemoryManager(root=root)
     manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="profile", action="add",
             content="第0条偏好", provenance=_PROVENANCE,
         )
@@ -105,7 +105,7 @@ def test_reader_never_observes_partial_markdown_during_replace(tmp_path):
         try:
             for n in range(1, 200):
                 manager.apply(
-                    BuiltinMemoryMutation(
+                    BuiltinMemoryRequest(
                         scope=_SCOPE, target="profile", action="add",
                         content=f"第{n}条偏好", provenance=_PROVENANCE,
                     )

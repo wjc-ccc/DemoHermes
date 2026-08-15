@@ -2,9 +2,10 @@
 from Agent.core.context_budget import ContextBudget
 from Agent.core.loop import AgentLoop
 from Agent.core.types import Message, Session
+from Agent.evolution.assembly import AssemblyPolicy
 from Agent.memory import (
-    BuiltinMemoryMutation,
-    MemoryContextSnapshot,
+    BuiltinMemoryRequest,
+    MemorySnapshot,
     MemoryManager,
     MemoryProvenance,
     MemoryScope,
@@ -39,7 +40,7 @@ class _FixedCostEstimator:
 
 def _add_profile(manager: MemoryManager, content: str) -> None:
     result = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="profile", action="add",
             content=content, provenance=_PROVENANCE,
         )
@@ -74,7 +75,7 @@ def test_long_session_request_stays_within_input_budget(tmp_path):
 
     result = loop.run_turn(
         session, Message(role="user", content_text="最新问题"),
-        memory_context=snapshot,
+        memory_snapshot=snapshot,
         context_budget=budget, token_estimator=estimator,
     )
 
@@ -101,7 +102,7 @@ def test_output_token_reservation_reduces_available_input_budget(tmp_path):
         session = _history_session(turns=3)  # 9 条 ×100 = 900
         result = AgentLoop(model=model).run_turn(
             session, Message(role="user", content_text="最新问题"),
-            memory_context=snapshot,
+            memory_snapshot=snapshot,
             context_budget=ContextBudget(
                 model_context_tokens=1000, reserved_output_tokens=reserved
             ),
@@ -128,7 +129,7 @@ def test_latest_user_message_is_never_trimmed(tmp_path):
     session = _history_session(turns=3)
     result = AgentLoop(model=model).run_turn(
         session, Message(role="user", content_text="最新问题"),
-        memory_context=snapshot,
+        memory_snapshot=snapshot,
         context_budget=ContextBudget(model_context_tokens=1000, reserved_output_tokens=700),
         token_estimator=estimator,
     )
@@ -177,7 +178,7 @@ def test_assistant_tool_call_and_tool_results_are_trimmed_as_one_group(tmp_path)
         model = _FakeModel([ModelResponse(text="回答")])
         result = AgentLoop(model=model).run_turn(
             _tool_turn_session(), Message(role="user", content_text="最新问题"),
-            memory_context=snapshot,
+            memory_snapshot=snapshot,
             context_budget=ContextBudget(
                 model_context_tokens=max_input + 300, reserved_output_tokens=300
             ),
@@ -210,7 +211,7 @@ def test_optional_daily_is_removed_before_hot_memory(tmp_path):
     manager = MemoryManager(root=tmp_path / "memory", clock=lambda: _FIXED_NOON)
     _add_profile(manager, "偏好：先给结论")
     daily = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="daily", action="add",
             content="今日流水：开了三个会", provenance=_PROVENANCE,
         )
@@ -225,7 +226,7 @@ def test_optional_daily_is_removed_before_hot_memory(tmp_path):
     model = _FakeModel([ModelResponse(text="回答")])
     result = AgentLoop(model=model).run_turn(
         _history_session(turns=3), Message(role="user", content_text="最新问题"),
-        memory_context=snapshot,
+        memory_snapshot=snapshot,
         context_budget=ContextBudget(model_context_tokens=1200, reserved_output_tokens=300),
         token_estimator=estimator,
     )
@@ -249,7 +250,7 @@ def test_provider_recall_is_shortened_before_old_turns_when_configured(tmp_path)
     provider_block = (
         '<provider-memory name="fake">\n' + "长" * 2000 + "\n</provider-memory>"
     )
-    snapshot = MemoryContextSnapshot(
+    snapshot = MemorySnapshot(
         scope=_SCOPE, session_id="s1", prompt="HOT记忆块", built_at=0.0,
         revisions=(), provider_prompt=provider_block,
     )
@@ -260,9 +261,9 @@ def test_provider_recall_is_shortened_before_old_turns_when_configured(tmp_path)
     probe_model = _FakeModel([ModelResponse(text="探针")])
     AgentLoop(model=probe_model).run_turn(
         _history_session(turns=3), Message(role="user", content_text="最新问题"),
-        memory_context=snapshot,
+        memory_snapshot=snapshot,
         context_budget=big_budget, token_estimator=estimator,
-        provider_min_recall_chars=50,
+        assembly_policy=AssemblyPolicy(provider_min_recall_chars=50),
     )
     full_cost = estimator.estimate_messages(probe_model.calls[0])
 
@@ -271,12 +272,12 @@ def test_provider_recall_is_shortened_before_old_turns_when_configured(tmp_path)
     model = _FakeModel([ModelResponse(text="回答")])
     result = AgentLoop(model=model).run_turn(
         _history_session(turns=3), Message(role="user", content_text="最新问题"),
-        memory_context=snapshot,
+        memory_snapshot=snapshot,
         context_budget=ContextBudget(
             model_context_tokens=full_cost - 100 + 300, reserved_output_tokens=300
         ),
         token_estimator=estimator,
-        provider_min_recall_chars=50,
+        assembly_policy=AssemblyPolicy(provider_min_recall_chars=50),
     )
 
     assert result.completed, result.error
@@ -303,7 +304,7 @@ def test_same_messages_and_budget_produce_same_trimmed_context(tmp_path):
         model = _FakeModel([ModelResponse(text="回答")])
         result = AgentLoop(model=model).run_turn(
             _history_session(turns=3), Message(role="user", content_text="最新问题"),
-            memory_context=snapshot,
+            memory_snapshot=snapshot,
             context_budget=budget, token_estimator=estimator,
         )
         assert result.completed, result.error
@@ -323,7 +324,7 @@ def test_impossible_required_context_returns_context_budget_exceeded_without_mod
     model = _FakeModel([ModelResponse(text="不应被调用")])
     result = AgentLoop(model=model).run_turn(
         _history_session(turns=3), Message(role="user", content_text="最新问题"),
-        memory_context=snapshot,
+        memory_snapshot=snapshot,
         context_budget=ContextBudget(model_context_tokens=500, reserved_output_tokens=300),
         token_estimator=estimator,
     )

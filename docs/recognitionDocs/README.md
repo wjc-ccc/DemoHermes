@@ -84,7 +84,7 @@
    │    model.chat(messages, tools=[calculator_schema])
    │    → response.tool_calls = [ToolRequest(name="calculator", args={expr:"23*17"})]
    ├─ act: ToolRegistry.dispatch("calculator", {expr:"23*17"})
-   │    → ToolResult(ok=True, result_text="391")
+   │    → ToolCallResult(ok=True, result_text="391")
    │    session.add_message(tool_result_msg)
    ├─ iteration 2 (think): 模型看到 391 → 返回纯文本 "23×17=391"
    └─ return TurnResult(final_text="23×17=391", completed=True)
@@ -111,7 +111,7 @@
 | 涉及思考、多步推理、调模型、调工具 | Agent Loop | 工具内循环、上下文组装、重试 |
 | 确定性的原子操作（输入→输出固定） | Tool | 计算器、查天气、查数据库 |
 | 引导 LLM 按某流程做事的经验文本 | Skill | 周报生成指南、代码评审 checklist |
-| 新增数据结构 / 字段 | types | 加 MemoryItem、扩展 ContentPart |
+| 新增数据结构 / 字段 | types | 扩展 ContentPart |
 | 跨会话/跨用户的知识沉淀 | memory | USER.md/GROUP.md、daily、SQLite 检索 |
 
 **铁律：Loop 文件里不应出现任何平台 SDK import；Channel 文件里不应出现 model.chat。** 这条边界一旦守住，扩展平台和换模型都不会互相牵连。

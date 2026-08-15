@@ -48,23 +48,6 @@ def _normalize(content: str) -> str:
     """去重比较用：NFKC + casefold + 去首尾空白；存储仍保留原文。"""
     return unicodedata.normalize("NFKC", content).casefold().strip()
 
-### 校验markdown文件
-def is_valid_document(text: str) -> bool:
-    """校验文档是可解析、entry 格式完好的候选。
-
-    - 首行是 Markdown 标题；
-    - 每个 open 围栏都有配对 close，且都能解析出非空 entry。
-    """
-    if not text.startswith("# "):
-        return False
-    opens = text.count("<!-- memory-entry:")
-    closes = text.count("<!-- /memory-entry:")
-    if opens != closes:
-        return False
-    parsed = [m for m in _ENTRY_RE.finditer(text) if m.group("content").strip()]
-    return len(parsed) == opens
-
-
 ### Markdown 文档加载
 class HotStore:
     """单个 Markdown 文档（一个 scope 的一个 target）。
@@ -188,3 +171,20 @@ class HotStore:
                 if attempt == attempts - 1:
                     raise
                 time.sleep(0.005)
+
+    @staticmethod
+    ### 校验markdown文件
+    def is_valid_document(text: str) -> bool:
+        """校验文档是可解析、entry 格式完好的候选。
+
+        - 首行是 Markdown 标题；
+        - 每个 open 围栏都有配对 close，且都能解析出非空 entry。
+        """
+        if not text.startswith("# "):
+            return False
+        opens = text.count("<!-- memory-entry:")
+        closes = text.count("<!-- /memory-entry:")
+        if opens != closes:
+            return False
+        parsed = [m for m in _ENTRY_RE.finditer(text) if m.group("content").strip()]
+        return len(parsed) == opens

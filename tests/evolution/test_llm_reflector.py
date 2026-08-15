@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from Agent.evolution.llm_reflector import LlmEvolutionReflector
 from Agent.evolution.types import EvolutionSignal
-from Agent.memory.types import MemoryScope, TurnEnvelope
+from Agent.memory.types import MemoryScope, TurnRecord
 from Agent.model.baseStructure import BaseModel, ModelResponse
 
 _SCOPE = MemoryScope(kind="personal", key="cli:user:llm1")
@@ -20,8 +20,8 @@ class _ScriptModel(BaseModel):
         return ModelResponse(text=self._text)
 
 
-def _turn() -> TurnEnvelope:
-    return TurnEnvelope(
+def _turn() -> TurnRecord:
+    return TurnRecord(
         turn_id="t1",
         session_id="s1",
         scope=_SCOPE,

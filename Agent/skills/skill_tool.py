@@ -8,7 +8,7 @@ Loop 无需为 Skill 单开分支。
 """
 from __future__ import annotations
 
-from ..tools.base import Tool, ToolResult
+from ..tools.base import Tool, ToolCallResult
 from .registry import SkillRegistry
 
 
@@ -32,17 +32,17 @@ class UseSkillTool(Tool):
     def __init__(self, registry: SkillRegistry):
         self._registry = registry
 
-    def execute(self, arguments: dict) -> ToolResult:
+    def execute(self, arguments: dict) -> ToolCallResult:
         skill_name = str(arguments.get("skill_name", "")).strip()
         if not skill_name:
-            return ToolResult(ok=False, error="缺少参数 skill_name")
+            return ToolCallResult(ok=False, error="缺少参数 skill_name")
         content = self._registry.load_content(skill_name)
         if content is None:
-            return ToolResult(
+            return ToolCallResult(
                 ok=False,
                 error=f"技能不存在: {skill_name}（可用: {self._registry.list_skills()}）",
             )
-        return ToolResult(
+        return ToolCallResult(
             ok=True,
             result_text=f"已加载技能「{skill_name}」，请严格按以下说明执行：\n\n{content}",
             data={"skill_name": skill_name},

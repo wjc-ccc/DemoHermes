@@ -12,13 +12,13 @@ from Agent.memory.episodic.store import (
     SessionIntegrityError,
     SqliteSessionStore,
 )
-from Agent.memory.types import TurnEnvelope
+from Agent.memory.types import TurnRecord
 
 _SCOPE = MemoryScope(kind="personal", key="cli:user:u1")
 
 
-def _turn(session: Session, *, turn_id: str = "t1") -> TurnEnvelope:
-    return TurnEnvelope(
+def _turn(session: Session, *, turn_id: str = "t1") -> TurnRecord:
+    return TurnRecord(
         turn_id=turn_id,
         session_id=session.session_id,
         scope=_SCOPE,
@@ -244,7 +244,7 @@ def _explode_id() -> str:
 
 
 def test_failed_close_and_reset_does_not_fire_session_end_hook(tmp_path):
-    """§3.3：事务失败整体回滚——无 ResetResult（Gateway 无从发 hook），旧 active 不变。"""
+    """§3.3：事务失败整体回滚——无 SessionReset（Gateway 无从发 hook），旧 active 不变。"""
     db = tmp_path / "memory.db"
     store = SqliteSessionStore(db)
     session = store.get_or_create("k", scope=_SCOPE)

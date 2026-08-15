@@ -7,7 +7,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from ..tools.base import Tool, ToolResult
+from ..tools.base import Tool, ToolCallResult
 from .registry import SkillRegistry
 
 
@@ -57,26 +57,26 @@ class SkillManageTool(Tool):
         self._registry = registry
         self._root = Path(skills_root)
 
-    def execute(self, arguments: dict) -> ToolResult:
+    def execute(self, arguments: dict) -> ToolCallResult:
         action = str(arguments.get("action", "")).strip()
         name = _safe_name(str(arguments.get("name", "")))
         if not name:
-            return ToolResult(ok=False, error="缺少有效 name")
+            return ToolCallResult(ok=False, error="缺少有效 name")
         if action == "create":
             return self._create(name, arguments)
         if action == "patch":
             return self._patch(name, arguments)
-        return ToolResult(ok=False, error=f"不支持的 action: {action}")
+        return ToolCallResult(ok=False, error=f"不支持的 action: {action}")
 
-    def _create(self, name: str, arguments: dict) -> ToolResult:
+    def _create(self, name: str, arguments: dict) -> ToolCallResult:
         description = str(arguments.get("description", "")).strip()
         body = str(arguments.get("body", "")).strip()
         if not description or not body:
-            return ToolResult(ok=False, error="create 需要 description 与 body")
+            return ToolCallResult(ok=False, error="create 需要 description 与 body")
         skill_dir = self._root / name
         path = skill_dir / "SKILL.md"
         if path.exists():
-            return ToolResult(ok=False, error=f"技能已存在: {name}")
+            return ToolCallResult(ok=False, error=f"技能已存在: {name}")
         if not body.startswith("#"):
             body = f"# {name}\n\n{body}"
         text = (
@@ -86,32 +86,32 @@ class SkillManageTool(Tool):
         skill_dir.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
         self._registry.reload()
-        return ToolResult(
+        return ToolCallResult(
             ok=True,
             result_text=f"已创建 draft 技能「{name}」",
             data={"skill_name": name, "path": str(path)},
         )
 
-    def _patch(self, name: str, arguments: dict) -> ToolResult:
+    def _patch(self, name: str, arguments: dict) -> ToolCallResult:
         old = str(arguments.get("old_string", ""))
         new = str(arguments.get("new_string", ""))
         if not old:
-            return ToolResult(ok=False, error="patch 需要 old_string")
+            return ToolCallResult(ok=False, error="patch 需要 old_string")
         skill = self._registry.get(name)
         if skill is None or not skill.path:
-            return ToolResult(ok=False, error=f"技能不存在: {name}")
+            return ToolCallResult(ok=False, error=f"技能不存在: {name}")
         path = Path(skill.path)
         if not path.is_file():
-            return ToolResult(ok=False, error=f"技能文件缺失: {name}")
+            return ToolCallResult(ok=False, error=f"技能文件缺失: {name}")
         before = path.read_text(encoding="utf-8")
         if old not in before:
-            return ToolResult(ok=False, error="old_string 未在 SKILL.md 中找到")
+            return ToolCallResult(ok=False, error="old_string 未在 SKILL.md 中找到")
         bak = _next_bak(path)
         bak.write_text(before, encoding="utf-8")
         after = before.replace(old, new, 1)
         path.write_text(after, encoding="utf-8")
         self._registry.reload()
-        return ToolResult(
+        return ToolCallResult(
             ok=True,
             result_text=f"已 patch 技能「{name}」（备份 {bak.name}）",
             data={"skill_name": name, "bak": str(bak)},

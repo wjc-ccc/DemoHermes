@@ -46,7 +46,7 @@ observe: 用户消息入 Session
 
 6. **容错兜底**：
    - 模型调用失败：按 `model_retries` 重试（带退避），仍失败 -> `TurnResult(error)`
-   - 工具执行失败：ToolRegistry 已兜底成 `ToolResult(ok=False)`，回注让 LLM 自我修正
+   - 工具执行失败：ToolRegistry 已兜底成 `ToolCallResult(ok=False)`，回注让 LLM 自我修正
    - 全程 `logging` + `EventBus` 事件，前端可逐步观测
 
 ---
@@ -194,12 +194,12 @@ result = loop.run_turn(session, user_msg)
 # 内部:
 #   iteration 1:
 #     think: model 返回 tool_calls=[{name:"calculator", args:{expr:"23*17"}}]
-#     act ①: dispatch -> ToolResult(result_text="391")
+#     act ①: dispatch -> ToolCallResult(result_text="391")
 #            session.add_message(assistant_msg with tool_calls)
 #            session.add_message(tool_msg with result_text="391")
 #   iteration 2:
 #     think: model 看到 391 -> 返回 tool_calls=[{name:"calculator", args:{expr:"391+100"}}]
-#     act ①: dispatch -> ToolResult(result_text="491")
+#     act ①: dispatch -> ToolCallResult(result_text="491")
 #            回注
 #   iteration 3:
 #     think: model 看到 491 -> 返回纯文本 "23×17 再加 100 等于 491"
@@ -211,7 +211,7 @@ result = loop.run_turn(session, user_msg)
 
 ```python
 # 模型调 calculator 传了 expr="23*17a"（非法）
-# dispatch 抛异常 -> ToolRegistry 兜底成 ToolResult(ok=False, error="表达式非法")
+# dispatch 抛异常 -> ToolRegistry 兜底成 ToolCallResult(ok=False, error="表达式非法")
 # 回注 tool 消息: "工具执行异常: 表达式非法"
 # 下一轮 think: 模型看到错误 -> 换个参数重试或向用户澄清
 ```

@@ -11,15 +11,15 @@ from pathlib import Path
 
 from Agent.evolution.skill_creator import SkillCreator
 from Agent.evolution.types import EvolutionSignal
-from Agent.memory.types import MemoryScope, TurnEnvelope
+from Agent.memory.types import MemoryScope, TurnRecord
 from Agent.skills import SkillRegistry
 from Agent.skills.base import Skill
 
 _SCOPE = MemoryScope(kind="personal", key="cli:user:skill2")
 
 
-def _turn(turn_id: str) -> TurnEnvelope:
-    return TurnEnvelope(
+def _turn(turn_id: str) -> TurnRecord:
+    return TurnRecord(
         turn_id=turn_id,
         session_id="s1",
         scope=_SCOPE,

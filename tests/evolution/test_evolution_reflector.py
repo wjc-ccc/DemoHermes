@@ -10,15 +10,15 @@ from Agent.core.types import Message
 from Agent.evolution.memory_curator import PlaybookCurator
 from Agent.evolution.scheduler import EvolutionScheduler
 from Agent.evolution.types import EvolutionSignal
-from Agent.memory import BuiltinMemoryReadRequest, MemoryManager, MemoryScope
+from Agent.memory import MemoryReadRequest, MemoryManager, MemoryScope
 from Agent.memory.episodic.store import SqliteSessionStore
-from Agent.memory.types import TurnEnvelope
+from Agent.memory.types import TurnRecord
 
 _SCOPE = MemoryScope(kind="personal", key="cli:user:ref1")
 
 
-def _turn(session, *, turn_id="t1") -> TurnEnvelope:
-    return TurnEnvelope(
+def _turn(session, *, turn_id="t1") -> TurnRecord:
+    return TurnRecord(
         turn_id=turn_id,
         session_id=session.session_id,
         scope=_SCOPE,
@@ -95,5 +95,5 @@ def test_scheduler_pipeline_writes_playbook_after_notify(tmp_path):
     sched.register(_evolve)
     sched.notify(turn)
 
-    view = manager.read(BuiltinMemoryReadRequest(scope=_SCOPE, target="memory"))
+    view = manager.read(MemoryReadRequest(scope=_SCOPE, target="memory"))
     assert any("[playbook]" in e.content for e in view.entries)

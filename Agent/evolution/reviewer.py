@@ -1,6 +1,6 @@
 """EvolutionReflector — 回合后策略复盘（8.04 Phase 1.2）。
 
-与 MemoryReviewer（事实抽取）职责分离：本模块只产出 EvolutionInsight（策略），
+与 TurnReviewer（事实抽取）职责分离：本模块只产出 EvolutionInsight（策略），
 由 PlaybookCurator + Gate 写入 MEMORY playbook。
 
 模型抽取是外部 seam；生产可先用 RuleBasedEvolutionReflector。
@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Protocol
 
-from ..memory.types import TurnEnvelope
+from ..memory.types import TurnRecord
 from .types import EvolutionInsight, EvolutionSignal
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,7 @@ class EvolutionReflector(Protocol):
 
     def reflect(
         self,
-        turn: TurnEnvelope,
+        turn: TurnRecord,
         signals: EvolutionSignal | None = None,
     ) -> list[EvolutionInsight]: ...
 
@@ -39,7 +39,7 @@ class RuleBasedEvolutionReflector:
 
     def reflect(
         self,
-        turn: TurnEnvelope,
+        turn: TurnRecord,
         signals: EvolutionSignal | None = None,
     ) -> list[EvolutionInsight]:
         failures: list[str] = []

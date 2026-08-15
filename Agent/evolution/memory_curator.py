@@ -15,10 +15,10 @@ from collections import defaultdict
 from collections.abc import Sequence
 
 from ..memory import (
-    BuiltinMemoryMutation,
-    BuiltinMemoryReadRequest,
+    BuiltinMemoryRequest,
+    MemoryReadRequest,
     MemoryManager,
-    MemoryMutationResult,
+    BuiltinMemoryResult,
     MemoryProvenance,
     MemoryScope,
 )
@@ -36,7 +36,7 @@ def _normalize(content: str) -> str:
 
 
 class PlaybookCurator:
-    """ACE Curator：insight → delta mutation → Manager.apply。"""
+    """ACE Curator：insight → BuiltinMemoryRequest → Manager.apply。"""
 
     def __init__(
         self,
@@ -56,8 +56,8 @@ class PlaybookCurator:
 
     def apply_insights(
         self, insights: Sequence[EvolutionInsight],
-    ) -> list[MemoryMutationResult]:
-        results: list[MemoryMutationResult] = []
+    ) -> list[BuiltinMemoryResult]:
+        results: list[BuiltinMemoryResult] = []
         for insight in insights:
             result = self._apply_one(insight)
             if result is not None:
@@ -84,7 +84,7 @@ class PlaybookCurator:
             return False
 
         view = self._manager.read(
-            BuiltinMemoryReadRequest(scope=scope, target="memory")
+            MemoryReadRequest(scope=scope, target="memory")
         )
         for entry in view.entries:
             if tip_n not in _normalize(entry.content):
@@ -105,7 +105,7 @@ class PlaybookCurator:
             else:
                 new_content = f"{HARMFUL_MARK} {body.strip()}"
             result = self._manager.apply(
-                BuiltinMemoryMutation(
+                BuiltinMemoryRequest(
                     scope=scope,
                     target="memory",
                     action="replace",
@@ -122,7 +122,7 @@ class PlaybookCurator:
     def refine(self, scope: MemoryScope) -> int:
         """grow-and-refine 的 delta 面：删除 harmful 与近重复，返回删除条数。"""
         view = self._manager.read(
-            BuiltinMemoryReadRequest(scope=scope, target="memory")
+            MemoryReadRequest(scope=scope, target="memory")
         )
         removed = 0
         seen: set[str] = set()
@@ -139,7 +139,7 @@ class PlaybookCurator:
             if not drop:
                 continue
             result = self._manager.apply(
-                BuiltinMemoryMutation(
+                BuiltinMemoryRequest(
                     scope=scope,
                     target="memory",
                     action="remove",
@@ -151,9 +151,9 @@ class PlaybookCurator:
                 removed += 1
         return removed
 
-    def _apply_one(self, insight: EvolutionInsight) -> MemoryMutationResult | None:
+    def _apply_one(self, insight: EvolutionInsight) -> BuiltinMemoryResult | None:
         view = self._manager.read(
-            BuiltinMemoryReadRequest(scope=insight.scope, target="memory")
+            MemoryReadRequest(scope=insight.scope, target="memory")
         )
         existing = tuple(e.content for e in view.entries)
         current_chars = len(view.rendered or "")
@@ -177,7 +177,7 @@ class PlaybookCurator:
             turn_id=insight.turn_id,
         )
         if insight.op == "add":
-            mutation = BuiltinMemoryMutation(
+            request = BuiltinMemoryRequest(
                 scope=insight.scope,
                 target="memory",
                 action="add",
@@ -185,7 +185,7 @@ class PlaybookCurator:
                 provenance=provenance,
             )
         elif insight.op == "replace":
-            mutation = BuiltinMemoryMutation(
+            request = BuiltinMemoryRequest(
                 scope=insight.scope,
                 target="memory",
                 action="replace",
@@ -194,7 +194,7 @@ class PlaybookCurator:
                 provenance=provenance,
             )
         else:
-            mutation = BuiltinMemoryMutation(
+            request = BuiltinMemoryRequest(
                 scope=insight.scope,
                 target="memory",
                 action="remove",
@@ -202,7 +202,7 @@ class PlaybookCurator:
                 provenance=provenance,
             )
 
-        result = self._manager.apply(mutation)
+        result = self._manager.apply(request)
         if not result.ok:
             logger.warning(
                 "playbook apply 失败 error=%s turn_id=%s",

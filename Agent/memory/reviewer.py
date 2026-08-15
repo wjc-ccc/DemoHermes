@@ -1,11 +1,8 @@
-"""MemoryReviewer - 自动后台提炼（7.23 方案 §8.2）。
+"""TurnReviewer - 自动后台提炼。
 
-从 SessionStore outbox 原子 claim pending review job，调用注入的 MemoryExtractor
-产出 MemoryMutation，经 Manager.apply 落库；成功标 done，失败有界退避回 pending，
-超 max_attempts 标 failed。Reviewer 不直接写文件，只调 Manager（§8.2）。
-
-模型抽取器是外部 seam，测试用 FakeExtractor 返回固定 mutation；不 Fake Reviewer 本身。
-生产默认可用 RuleBasedExtractor；LLM 抽取后续替换同一 seam。
+从 SessionStore outbox 原子 claim pending review job，调用注入的 TurnExtractor
+产出 BuiltinMemoryRequest，经 Manager.apply 落库；成功标 done，失败有界退避回 pending，
+超 max_attempts 标 failed。Reviewer 不直接写文件，只调 Manager。
 """
 from __future__ import annotations
 
@@ -14,18 +11,18 @@ import threading
 import time
 from typing import Protocol
 
-from .types import MemoryMutation, TurnEnvelope
+from .types import BuiltinMemoryRequest, TurnRecord
 
 logger = logging.getLogger(__name__)
 
 
 class MemoryExtractor(Protocol):
-    """模型抽取 seam（§8.2）；输入不可变 TurnEnvelope，输出零个或多个 MemoryMutation。"""
+    """抽取 seam：TurnRecord → 零个或多个 BuiltinMemoryRequest。"""
 
-    def extract(self, turn: TurnEnvelope) -> list[MemoryMutation]: ...
+    def extract(self, turn: TurnRecord) -> list[BuiltinMemoryRequest]: ...
 
 
-class MemoryReviewer:
+class TurnReviewer:
     """后台 reviewer：消费 outbox，把 turn 提炼为长期记忆（经 Manager.apply）。"""
 
     def __init__(
@@ -65,11 +62,10 @@ class MemoryReviewer:
             count += 1
         return count
 
-    def _process(self, job, turn: TurnEnvelope) -> None:
+    def _process(self, job, turn: TurnRecord) -> None:
         try:
-            mutations = self._extractor.extract(turn)
-            for mutation in mutations:
-                self._manager.apply(mutation)
+            for request in self._extractor.extract(turn):
+                self._manager.apply(request)
             self._store.complete_review_job(job.turn_id)
         except Exception as exc:
             self._store.fail_review_job(
@@ -88,7 +84,7 @@ class ReviewerWorker:
 
     def __init__(
         self,
-        reviewer: MemoryReviewer,
+        reviewer: TurnReviewer,
         *,
         poll_interval: float = 0.5,
         shutdown_grace: float = 5.0,
@@ -105,10 +101,10 @@ class ReviewerWorker:
             return
         self._running = True
         self._thread = threading.Thread(
-            target=self._loop, name="memory-reviewer", daemon=True,
+            target=self._loop, name="turn-reviewer", daemon=True,
         )
         self._thread.start()
-        logger.info("MemoryReviewer worker 已启动")
+        logger.info("TurnReviewer worker 已启动")
 
     def notify(self, *_args, **_kwargs) -> None:
         """commit_turn / session_end 后唤醒；忽略多余参数便于当 hook 用。"""
@@ -126,7 +122,7 @@ class ReviewerWorker:
                 logger.info("shutdown 时额外处理了 %d 个 review job", n)
         except Exception:
             logger.exception("shutdown review drain 失败")
-        logger.info("MemoryReviewer worker 已停止")
+        logger.info("TurnReviewer worker 已停止")
 
     def _loop(self) -> None:
         while self._running:

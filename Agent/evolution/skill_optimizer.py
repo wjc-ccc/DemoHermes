@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from ..memory.types import TurnEnvelope
+from ..memory.types import TurnRecord
 from .types import EvolutionSignal
 
 logger = logging.getLogger(__name__)
@@ -44,7 +44,7 @@ class SkillOptimizer:
 
     def optimize(
         self,
-        turn: TurnEnvelope,
+        turn: TurnRecord,
         signals: EvolutionSignal | None,
     ) -> bool:
         if signals is None or not signals.skills_used or not signals.tool_failures:

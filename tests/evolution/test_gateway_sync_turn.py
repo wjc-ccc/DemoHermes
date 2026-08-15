@@ -20,7 +20,7 @@ from Agent.gateway import Gateway
 from Agent.memory import MemoryManager
 from Agent.memory.base import MemoryProvider
 from Agent.memory.episodic.store import SqliteSessionStore
-from Agent.memory.types import ProviderContribution, ProviderRecallRequest, TurnEnvelope
+from Agent.memory.types import ProviderContribution, ProviderRecallRequest, TurnRecord
 from Agent.model.baseStructure import ModelResponse
 
 
@@ -44,7 +44,7 @@ class _RecordingProvider(MemoryProvider):
     def recall(self, request: ProviderRecallRequest) -> ProviderContribution:
         return ProviderContribution(name=self.name, text="")
 
-    def sync_turn(self, turn: TurnEnvelope) -> None:
+    def sync_turn(self, turn: TurnRecord, session) -> None:
         self.synced.append(turn.turn_id)
 
 

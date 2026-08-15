@@ -12,13 +12,13 @@ from pathlib import Path
 from Agent.evolution.skill_creator import SkillCreator
 from Agent.evolution.skill_distiller import TrajectorySkillDistiller
 from Agent.evolution.types import EvolutionSignal, SkillProposal
-from Agent.memory.types import MemoryScope, TurnEnvelope
+from Agent.memory.types import MemoryScope, TurnRecord
 
 _SCOPE = MemoryScope(kind="personal", key="cli:user:dist1")
 
 
-def _turn(tid: str = "t1") -> TurnEnvelope:
-    return TurnEnvelope(
+def _turn(tid: str = "t1") -> TurnRecord:
+    return TurnRecord(
         turn_id=tid,
         session_id="s1",
         scope=_SCOPE,

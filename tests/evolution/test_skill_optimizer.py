@@ -10,14 +10,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from Agent.evolution.types import EvolutionSignal
-from Agent.memory.types import MemoryScope, TurnEnvelope
+from Agent.memory.types import MemoryScope, TurnRecord
 from Agent.skills import SkillRegistry
 
 _SCOPE = MemoryScope(kind="personal", key="cli:user:opt1")
 
 
-def _turn(turn_id: str = "t1") -> TurnEnvelope:
-    return TurnEnvelope(
+def _turn(turn_id: str = "t1") -> TurnRecord:
+    return TurnRecord(
         turn_id=turn_id,
         session_id="s1",
         scope=_SCOPE,

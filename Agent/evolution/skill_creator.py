@@ -9,7 +9,7 @@ import logging
 import re
 from pathlib import Path
 
-from ..memory.types import TurnEnvelope
+from ..memory.types import TurnRecord
 from .types import EvolutionSignal, SkillProposal
 
 logger = logging.getLogger(__name__)
@@ -95,7 +95,7 @@ class SkillCreator:
 
     def consider(
         self,
-        turn: TurnEnvelope,
+        turn: TurnRecord,
         signals: EvolutionSignal | None,
     ) -> Path | None:
         if not turn.completed or turn.error:

@@ -18,7 +18,7 @@ from Agent.core.loop import AgentLoop
 from Agent.core.types import InboundEvent, SessionSource
 from Agent.gateway import Gateway, build_session_key
 from Agent.memory import (
-    BuiltinMemoryMutation,
+    BuiltinMemoryRequest,
     MemoryManager,
     MemoryProvenance,
     MemorySearchRequest,
@@ -83,7 +83,7 @@ def test_gateway_turn_builds_memory_once_and_persists_session(tmp_path):
     manager = MemoryManager(root=tmp_path / "memory")
     scope = build_memory_scope(_event("你好").source)
     manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=scope, target="profile", action="add",
             content="用户偏好简洁", provenance=_PROVENANCE,
         )
@@ -96,7 +96,7 @@ def test_gateway_turn_builds_memory_once_and_persists_session(tmp_path):
         gw.stop()
 
     assert reply.text == "收到"
-    # 模型收到了 memory_context（含 profile 偏好与 memory 围栏）
+    # 模型收到了 memory_snapshot（含 profile 偏好与 memory 围栏）
     msgs = loop.model.calls[0]["messages"]
     assert any("<memory-context>" in str(m) for m in msgs)
     assert any("用户偏好简洁" in str(m) for m in msgs)
@@ -231,7 +231,7 @@ def test_memory_tool_never_exposes_absolute_storage_path(tmp_path):
     manager = MemoryManager(root=tmp_path / "memory")
     scope = build_memory_scope(_event("").source)
     manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=scope, target="profile", action="add",
             content="偏好简洁回答", provenance=_PROVENANCE,
         )

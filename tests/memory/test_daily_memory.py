@@ -1,7 +1,7 @@
 """Slice 6: Daily 是按日可读日志，不默认污染 Context（§3.4 / §4.1 / §4.2）。"""
 from Agent.memory import (
-    BuiltinMemoryMutation,
-    BuiltinMemoryReadRequest,
+    BuiltinMemoryRequest,
+    MemoryReadRequest,
     MemoryManager,
     MemoryProvenance,
     MemoryScope,
@@ -20,7 +20,7 @@ def test_daily_add_is_written_to_requested_date(tmp_path):
     root = tmp_path / "memory"
     manager = MemoryManager(root=root)
     result = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="daily", action="add",
             content="今天完成了 memory 方案评审", date="2026-07-23",
             provenance=_PROVENANCE,
@@ -36,7 +36,7 @@ def test_daily_add_is_written_to_requested_date(tmp_path):
     assert f"<!-- memory-entry:{result.entry_id} -->" in text
     # read seam 按日期读回同一条 entry
     view = manager.read(
-        BuiltinMemoryReadRequest(scope=_SCOPE, target="daily", date="2026-07-23")
+        MemoryReadRequest(scope=_SCOPE, target="daily", date="2026-07-23")
     )
     assert [e.entry_id for e in view.entries] == [result.entry_id]
     assert view.revision == result.revision
@@ -46,24 +46,24 @@ def test_daily_replace_does_not_change_other_date(tmp_path):
     root = tmp_path / "memory"
     manager = MemoryManager(root=root)
     first = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="daily", action="add",
             content="周三：方案评审", date="2026-07-23", provenance=_PROVENANCE,
         )
     )
     other = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="daily", action="add",
             content="周四：开始 TDD 开发", date="2026-07-24", provenance=_PROVENANCE,
         )
     )
     assert first.ok and other.ok
     before = manager.read(
-        BuiltinMemoryReadRequest(scope=_SCOPE, target="daily", date="2026-07-24")
+        MemoryReadRequest(scope=_SCOPE, target="daily", date="2026-07-24")
     )
 
     replaced = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="daily", action="replace",
             entry_id=first.entry_id, content="周三：方案评审通过",
             date="2026-07-23", provenance=_PROVENANCE,
@@ -72,12 +72,12 @@ def test_daily_replace_does_not_change_other_date(tmp_path):
 
     assert replaced.ok, replaced.message
     day_view = manager.read(
-        BuiltinMemoryReadRequest(scope=_SCOPE, target="daily", date="2026-07-23")
+        MemoryReadRequest(scope=_SCOPE, target="daily", date="2026-07-23")
     )
     assert [e.content for e in day_view.entries] == ["周三：方案评审通过"]
     # 另一日期的文档 revision 与内容完全不变
     after = manager.read(
-        BuiltinMemoryReadRequest(scope=_SCOPE, target="daily", date="2026-07-24")
+        MemoryReadRequest(scope=_SCOPE, target="daily", date="2026-07-24")
     )
     assert after.revision == before.revision
     assert [e.content for e in after.entries] == ["周四：开始 TDD 开发"]
@@ -87,7 +87,7 @@ def test_daily_is_absent_from_default_context(tmp_path):
     """§4.1 / ADR-4：Daily 默认不占每轮 prompt，需要时由 search/read 渐进调用。"""
     manager = MemoryManager(root=tmp_path / "memory")
     added = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="daily", action="add",
             content="今天评审了网关代码", date="2026-07-23", provenance=_PROVENANCE,
         )
@@ -107,7 +107,7 @@ def test_today_daily_can_be_explicitly_included(tmp_path):
     """§4.1：include_today_daily=True 时注入今日 Daily；今日由注入 Clock 决定。"""
     manager = MemoryManager(root=tmp_path / "memory", clock=lambda: _FIXED_NOON)
     added = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="daily", action="add",
             content="今天中午锁定了 Slice 6 顺序",  # 不带 date：由 Clock 决定落哪天
             provenance=_PROVENANCE,
@@ -116,7 +116,7 @@ def test_today_daily_can_be_explicitly_included(tmp_path):
     assert added.ok
     # Clock 固定在 2026-07-23 UTC，无 date 的 add 落在当天文件
     day_view = manager.read(
-        BuiltinMemoryReadRequest(scope=_SCOPE, target="daily", date="2026-07-23")
+        MemoryReadRequest(scope=_SCOPE, target="daily", date="2026-07-23")
     )
     assert [e.content for e in day_view.entries] == ["今天中午锁定了 Slice 6 顺序"]
 
@@ -136,19 +136,19 @@ def test_daily_search_returns_entry_and_date_reference(tmp_path):
     """§3.6：daily 搜索命中返回 typed ref（date + entry_id），不返回路径/SQL。"""
     manager = MemoryManager(root=tmp_path / "memory", id_factory=_sequential_ids())
     wed = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="daily", action="add",
             content="周三喝了手冲咖啡", date="2026-07-23", provenance=_PROVENANCE,
         )
     )
     thu = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="daily", action="add",
             content="周四咖啡配进度复盘", date="2026-07-24", provenance=_PROVENANCE,
         )
     )
     manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="daily", action="add",
             content="周四只写了文档", date="2026-07-24", provenance=_PROVENANCE,
         )
@@ -187,7 +187,7 @@ def test_daily_date_uses_configured_timezone_across_utc_midnight(tmp_path):
     )
     for mgr, content in ((shanghai, "跨午夜后的第一条"), (utc, "UTC 当天最后一条")):
         result = mgr.apply(
-            BuiltinMemoryMutation(
+            BuiltinMemoryRequest(
                 scope=_SCOPE, target="daily", action="add",
                 content=content, provenance=_PROVENANCE,  # 不带 date：Clock+时区决定
             )
@@ -195,8 +195,8 @@ def test_daily_date_uses_configured_timezone_across_utc_midnight(tmp_path):
         assert result.ok, result.message
 
     # 同一时刻落在两个不同自然日文件
-    day23 = utc.read(BuiltinMemoryReadRequest(scope=_SCOPE, target="daily", date="2026-07-23"))
-    day24 = utc.read(BuiltinMemoryReadRequest(scope=_SCOPE, target="daily", date="2026-07-24"))
+    day23 = utc.read(MemoryReadRequest(scope=_SCOPE, target="daily", date="2026-07-23"))
+    day24 = utc.read(MemoryReadRequest(scope=_SCOPE, target="daily", date="2026-07-24"))
     assert [e.content for e in day23.entries] == ["UTC 当天最后一条"]
     assert [e.content for e in day24.entries] == ["跨午夜后的第一条"]
     # Shanghai manager 的“今日”是 24 日

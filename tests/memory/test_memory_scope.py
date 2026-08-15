@@ -1,8 +1,8 @@
 """Slice 3: Personal/Group 隔离与路径安全——唯一 scope resolver + hash 目录。"""
 from Agent.core.types import SessionSource
 from Agent.memory import (
-    BuiltinMemoryMutation,
-    BuiltinMemoryReadRequest,
+    BuiltinMemoryRequest,
+    MemoryReadRequest,
     MemoryManager,
     MemoryProvenance,
     MemoryScope,
@@ -14,7 +14,7 @@ _PROVENANCE = MemoryProvenance(source="user_request")
 
 def _add(manager: MemoryManager, scope: MemoryScope, content: str):
     return manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=scope, target="profile", action="add",
             content=content, provenance=_PROVENANCE,
         )
@@ -31,7 +31,7 @@ def test_personal_memory_is_not_visible_in_group_scope(tmp_path):
     )
     _add(manager, personal, "个人偏好只给自己看")
 
-    view = manager.read(BuiltinMemoryReadRequest(scope=group, target="profile"))
+    view = manager.read(MemoryReadRequest(scope=group, target="profile"))
 
     assert "个人偏好只给自己看" not in view.rendered
     assert view.entries == ()
@@ -47,7 +47,7 @@ def test_two_channels_with_same_user_id_are_isolated(tmp_path):
     )
     _add(manager, cli, "只在 cli 记住我")
 
-    view = manager.read(BuiltinMemoryReadRequest(scope=feishu, target="profile"))
+    view = manager.read(MemoryReadRequest(scope=feishu, target="profile"))
 
     assert "只在 cli 记住我" not in view.rendered
     assert view.entries == ()
@@ -63,7 +63,7 @@ def test_group_memory_is_shared_by_members_of_same_group(tmp_path):
     )
     added = _add(manager, member_a, "群共识：周五前交付")
 
-    view = manager.read(BuiltinMemoryReadRequest(scope=member_b, target="profile"))
+    view = manager.read(MemoryReadRequest(scope=member_b, target="profile"))
 
     assert [e.entry_id for e in view.entries] == [added.entry_id]
     assert "群共识：周五前交付" in view.rendered

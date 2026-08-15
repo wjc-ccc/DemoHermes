@@ -22,9 +22,9 @@ from pathlib import Path
 from typing import NamedTuple
 
 from ...core.types import Message, Session, ToolCall
-from ..types import MemoryScope, ResetResult, TurnEnvelope
+from ..types import MemoryScope, SessionReset, TurnRecord
 from .db import connect
-from .migrations import migrate
+from .schema import ensure_tables
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +123,7 @@ class SqliteSessionStore:
         self._id_factory = id_factory
         conn = connect(self._db_path)
         try:
-            migrate(conn)
+            ensure_tables(conn)
             conn.commit()
         finally:
             conn.close()
@@ -202,7 +202,7 @@ class SqliteSessionStore:
 
     # ---- turn 持久化：事实与 review outbox 同事务（§6.3 / ADR-11）----
     def commit_turn(
-        self, session: Session, turn: TurnEnvelope, *, scope: MemoryScope
+        self, session: Session, turn: TurnRecord, *, scope: MemoryScope
     ) -> None:
         """单事务保存 Session 增量 + 本 turn 的 messages/tool_calls + review job（ADR-11）。
 
@@ -241,7 +241,7 @@ class SqliteSessionStore:
         scope: MemoryScope,
         channel: str = "",
         author_id: str = "",
-    ) -> ResetResult:
+    ) -> SessionReset:
         """一个事务内：落库旧 session（含未 commit 消息）并标 completed -> 建新 session -> 切换 slot（ADR-13）。
 
         传入的 `session` 是调用方持有的最新状态；事务成功后调用方才允许发 session_end hook，
@@ -261,7 +261,7 @@ class SqliteSessionStore:
                     (new_session.session_id, time.time(), session_key),
                 )
             logger.info("重开会话 key=%s 新 id=%s", session_key, new_session.session_id)
-            return ResetResult(closed_session=closed, new_session=new_session)
+            return SessionReset(closed_session=closed, new_session=new_session)
         finally:
             conn.close()
 
@@ -295,11 +295,11 @@ class SqliteSessionStore:
 
     def claim_review_job(
         self, *, worker_id: str, now: float, lease_seconds: float
-    ) -> "tuple[ReviewJob, TurnEnvelope] | None":
+    ) -> "tuple[ReviewJob, TurnRecord] | None":
         """§8.2：原子认领一个 pending job（status->running, attempts+1, lease_until）。
 
         也回收 lease 已过期的 running job--进程崩溃后其他 worker 据此接管（at-least-once）。
-        返回 (ReviewJob, TurnEnvelope) 或 None（无可领取任务）。
+        返回 (ReviewJob, TurnRecord) 或 None（无可领取任务）。
         """
         conn = connect(self._db_path)
         try:
@@ -327,7 +327,7 @@ class SqliteSessionStore:
                     status="running", attempts=row[5] + 1, available_at=row[6],
                     lease_until=lease_until, claimed_by=worker_id, last_error=row[9],
                 )
-                turn = TurnEnvelope.model_validate_json(row[10])
+                turn = TurnRecord.model_validate_json(row[10])
         finally:
             conn.close()
         return job, turn

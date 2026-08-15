@@ -2,8 +2,8 @@
 import pytest
 
 from Agent.memory import (
-    BuiltinMemoryMutation,
-    BuiltinMemoryReadRequest,
+    BuiltinMemoryRequest,
+    MemoryReadRequest,
     MemoryManager,
     MemoryProvenance,
     MemoryScope,
@@ -21,14 +21,14 @@ def test_profile_at_exact_limit_is_accepted(tmp_path):
     # 长度 = 6+2+30+1+1+31+1 + len(C) = 72 + len(C)；精确上限 → len(C) = 1303
     content = "好" * 1303
     result = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="profile", action="add",
             content=content, provenance=_PROVENANCE,
         )
     )
 
     assert result.ok, result.message
-    view = manager.read(BuiltinMemoryReadRequest(scope=_SCOPE, target="profile"))
+    view = manager.read(MemoryReadRequest(scope=_SCOPE, target="profile"))
     assert len(view.rendered) == PROFILE_MAX_CHARS
 
 
@@ -52,7 +52,7 @@ def test_oversized_candidate_is_backed_up_then_compacted(tmp_path):
         root=root, id_factory=_sequential_ids(), compactor=compactor
     )
     first = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="profile", action="add",
             content="长" * 1200, provenance=_PROVENANCE,
         )
@@ -60,7 +60,7 @@ def test_oversized_candidate_is_backed_up_then_compacted(tmp_path):
     assert first.ok  # 第一条文档 1284 字符，在 1375 内
 
     oversized = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="profile", action="add",
             content="顶过上限" * 30, provenance=_PROVENANCE,  # 候选 1482 字符，超限
         )
@@ -78,7 +78,7 @@ def test_oversized_candidate_is_backed_up_then_compacted(tmp_path):
     backup_text = backups[0].read_text(encoding="utf-8")
     assert "长" * 1200 in backup_text and "顶过上限" * 30 in backup_text
     # 正式文件是缩减后的合法文档
-    view = manager.read(BuiltinMemoryReadRequest(scope=_SCOPE, target="profile"))
+    view = manager.read(MemoryReadRequest(scope=_SCOPE, target="profile"))
     assert view.rendered == compacted_doc
     assert len(view.rendered) <= PROFILE_MAX_CHARS
 
@@ -99,7 +99,7 @@ def test_compaction_failure_keeps_previous_document_unchanged(tmp_path):
         root=root, id_factory=_sequential_ids(), compactor=_ExplodingCompactor()
     )
     first = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="profile", action="add",
             content="长" * 1200, provenance=_PROVENANCE,
         )
@@ -107,7 +107,7 @@ def test_compaction_failure_keeps_previous_document_unchanged(tmp_path):
     assert first.ok
 
     failed = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="profile", action="add",
             content="顶过上限" * 30, provenance=_PROVENANCE,
         )
@@ -116,7 +116,7 @@ def test_compaction_failure_keeps_previous_document_unchanged(tmp_path):
     assert not failed.ok
     assert failed.error_code == "budget_exceeded"
     assert failed.backup_id is not None  # 完整候选仍已备份，可人工恢复
-    view = manager.read(BuiltinMemoryReadRequest(scope=_SCOPE, target="profile"))
+    view = manager.read(MemoryReadRequest(scope=_SCOPE, target="profile"))
     assert view.revision == first.revision
     assert "顶过上限" not in view.rendered
     backups = list(root.rglob("backups/profile/*.md"))
@@ -140,7 +140,7 @@ def test_invalid_compactor_output_is_rejected(tmp_path, bad_output):
         compactor=_FixedCompactor(bad_output),
     )
     first = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="profile", action="add",
             content="长" * 1200, provenance=_PROVENANCE,
         )
@@ -148,7 +148,7 @@ def test_invalid_compactor_output_is_rejected(tmp_path, bad_output):
     assert first.ok
 
     rejected = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="profile", action="add",
             content="顶过上限" * 30, provenance=_PROVENANCE,
         )
@@ -156,7 +156,7 @@ def test_invalid_compactor_output_is_rejected(tmp_path, bad_output):
 
     assert not rejected.ok
     assert rejected.error_code == "budget_exceeded"
-    view = manager.read(BuiltinMemoryReadRequest(scope=_SCOPE, target="profile"))
+    view = manager.read(MemoryReadRequest(scope=_SCOPE, target="profile"))
     assert view.revision == first.revision
 
 
@@ -166,7 +166,7 @@ def test_backup_write_failure_keeps_previous_document_unchanged(tmp_path):
         root=root, id_factory=_sequential_ids(), compactor=_FixedCompactor("# USER\n")
     )
     first = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="profile", action="add",
             content="长" * 1200, provenance=_PROVENANCE,
         )
@@ -177,7 +177,7 @@ def test_backup_write_failure_keeps_previous_document_unchanged(tmp_path):
     (scope_dir / "backups").write_text("blocked", encoding="utf-8")
 
     failed = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="profile", action="add",
             content="顶过上限" * 30, provenance=_PROVENANCE,
         )
@@ -185,7 +185,7 @@ def test_backup_write_failure_keeps_previous_document_unchanged(tmp_path):
 
     assert not failed.ok
     assert failed.error_code == "backup_failed"
-    view = manager.read(BuiltinMemoryReadRequest(scope=_SCOPE, target="profile"))
+    view = manager.read(MemoryReadRequest(scope=_SCOPE, target="profile"))
     assert view.revision == first.revision
     assert "顶过上限" not in view.rendered
 
@@ -196,7 +196,7 @@ def test_externally_oversized_file_builds_bounded_context_with_diagnostic(tmp_pa
     root = tmp_path / "memory"
     manager = MemoryManager(root=root, id_factory=_sequential_ids())
     first = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="profile", action="add",
             content="甲" * 1000, provenance=_PROVENANCE,
         )

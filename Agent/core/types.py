@@ -3,9 +3,8 @@ Types - 核心数据结构
 
 定义 Agent 各模块共用的数据类型：
     - Message      : 单条对话消息（message_id,session_id,role, content, tool_calls）
-    - Tool     : 工具调用请求（name, arguments, id）
-    - MemoryItem   : 记忆条目（layer, content, metadata, timestamp）
-    - Session : 会话（id, messages, hot_snapshot, created_at）
+    - ToolCall     : 一次工具调用的执行记录
+    - Session : 会话（id, messages, tool_calls, created_at）
     - InboundEvent : 入站事件（text, source, content, channel_prompt, metadata）
     - OutboundReply : 出站回复（text, reply_to, metadata）
     - TurnResult : 一轮对话结果（final_text, session_id, completed, interrupted, error）
@@ -16,8 +15,6 @@ Types - 核心数据结构
 sessions 会话容器 「这次聊天」的元信息与生命周期
     -- messages 对话事实  发给 LLM / 展示给用户的消息流
     -- tool_calls 工具事实 一次工具调用的请求、执行、结果
-    -- memories 知识沉淀  从对话中提炼的可检索知识（L1/L2/L3）
-    -- trajectories 执行轨迹  Agent 怎么做的（可回放、可进化、可观测）
 
 """
 from random import choice
@@ -103,24 +100,13 @@ class ToolCall(BaseModel): ## 包含字段较为全面  7.13 ✅️
         return self.status == "success"
 
 
-#**** Memory ****
-class MemoryItem(BaseModel):
-    ## memory basic info
-    memory_id:str = Field(default_factory=lambda: str(uuid.uuid4()))
-
-
-    ## memory items
-    created_at:str = Field(default_factory=str,description="memory created time")
-    metadata:dict = Field(default_factory=dict,description="memory metadata")
-
 #**** Session ****
 class Session(BaseModel): ## 包含字段较为全面  7.13 ✅️  提供add message接口 7.14✅️
     """
     Session
     ├── SessionInfo
     ├── TimeInfo
-    ├── ToolCallInfo
-    └── MemoryInfo
+    └── ToolCallInfo
     """
     ## session basic info
     session_id:str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -141,8 +127,6 @@ class Session(BaseModel): ## 包含字段较为全面  7.13 ✅️  提供add me
     ## tool_call info
     tool_calls:list[ToolCall] = Field(default_factory=list)
 
-    ## memory info
-    memory:list[MemoryItem] = Field(default_factory=list) ## 记忆数据 用于针对session进行总结更新
     summary:str = Field(default_factory=str,description="session summary")## 会话摘要 用于后续的更新
 
     ## 运行期路由键（不进 LLM；由 Gateway 写入）

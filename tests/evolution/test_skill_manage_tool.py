@@ -1,6 +1,6 @@
 """Hermes 式 skill_manage 工具：Agent 可在会话中 create/patch Skill。
 
-公共 seam：SkillManageTool.execute({action, ...}) → ToolResult
+公共 seam：SkillManageTool.execute({action, ...}) → ToolCallResult
 """
 from __future__ import annotations
 

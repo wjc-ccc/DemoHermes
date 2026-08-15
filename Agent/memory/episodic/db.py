@@ -1,10 +1,10 @@
-"""episodic SQLite 连接工厂（7.23 方案 §6.1）。
+"""episodic SQLite 连接工厂。
 
 每个新连接执行三条 PRAGMA 并注册一个自定义 SQL 函数：
 - foreign_keys = ON   外键约束生效
 - journal_mode = WAL  写不阻塞读
 - busy_timeout = 5000 锁等待上限 5s
-- py_casefold(x)      Unicode casefold，大小写匹配不依赖 SQLite build collation（§6.4）
+- py_casefold(x)      Unicode casefold，大小写匹配不依赖 SQLite build collation
 
 约束：禁止跨线程共享 connection；多线程经本工厂各取连接；每次事务即用即关。
 """

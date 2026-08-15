@@ -7,11 +7,11 @@
 """
 from __future__ import annotations
 
-from .base import Tool, ToolResult
+from .base import Tool, ToolCallResult
 from ..memory import (
-    BuiltinMemoryMutation,
-    BuiltinMemoryReadRequest,
-    MemoryMutationResult,
+    BuiltinMemoryRequest,
+    MemoryReadRequest,
+    BuiltinMemoryResult,
     MemorySearchRequest,
 )
 from ..memory.types import MemoryScope
@@ -47,25 +47,25 @@ class MemoryReadTool(Tool):
     def __init__(self, manager) -> None:
         self._manager = manager
 
-    def execute(self, arguments: dict) -> ToolResult:
+    def execute(self, arguments: dict) -> ToolCallResult:
         scope = _scope_from(arguments)
         if scope is None:
-            return ToolResult(ok=False, error="scope 未由运行上下文注入")
+            return ToolCallResult(ok=False, error="scope 未由运行上下文注入")
         query = arguments.get("query")
         if query:
             hits = self._manager.search(
                 MemorySearchRequest(scope=scope, query=str(query))
             )
             lines = [f"[{h.source}] {h.snippet}" for h in hits]
-            return ToolResult(ok=True, result_text="\n".join(lines) or "无命中")
+            return ToolCallResult(ok=True, result_text="\n".join(lines) or "无命中")
         target = arguments.get("target", "profile")
         view = self._manager.read(
-            BuiltinMemoryReadRequest(
+            MemoryReadRequest(
                 scope=scope, target=target, date=arguments.get("date")
             )
         )
         lines = [f"[{e.entry_id}] {e.content}" for e in view.entries]
-        return ToolResult(ok=True, result_text="\n".join(lines))
+        return ToolCallResult(ok=True, result_text="\n".join(lines))
 
 
 class MemoryEditTool(Tool):
@@ -89,14 +89,14 @@ class MemoryEditTool(Tool):
         self._manager = manager
         self._provenance_factory = provenance_factory  # 注入 provenance（含 turn_id）
 
-    def execute(self, arguments: dict) -> ToolResult:
+    def execute(self, arguments: dict) -> ToolCallResult:
         scope = _scope_from(arguments)
         if scope is None:
-            return ToolResult(ok=False, error="scope 未由运行上下文注入")
+            return ToolCallResult(ok=False, error="scope 未由运行上下文注入")
         prov = self._provenance_factory() if self._provenance_factory else None
         if prov is None:
-            return ToolResult(ok=False, error="provenance 未注入")
-        mutation = BuiltinMemoryMutation(
+            return ToolCallResult(ok=False, error="provenance 未注入")
+        request = BuiltinMemoryRequest(
             scope=scope,
             target=arguments.get("target", "profile"),
             action=arguments.get("action", "add"),
@@ -105,7 +105,7 @@ class MemoryEditTool(Tool):
             date=arguments.get("date"),
             provenance=prov,
         )
-        result: MemoryMutationResult = self._manager.apply(mutation)
+        result: BuiltinMemoryResult = self._manager.apply(request)
         if not result.ok:
-            return ToolResult(ok=False, error=result.error_code or "memory_edit 失败")
-        return ToolResult(ok=True, result_text=f"ok entry_id={result.entry_id}")
+            return ToolCallResult(ok=False, error=result.error_code or "memory_edit 失败")
+        return ToolCallResult(ok=True, result_text=f"ok entry_id={result.entry_id}")

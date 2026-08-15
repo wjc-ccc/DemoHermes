@@ -1,6 +1,6 @@
 """Evolution 公共类型（8.04 Phase 1）。
 
-EvolutionInsight：Reflector 产出的增量策略建议（非 MemoryMutation）。
+EvolutionInsight：Reflector 产出的增量策略建议（非 BuiltinMemoryRequest）。
 GateDecision：CommitGate 是否接纳该 insight。
 """
 from __future__ import annotations
@@ -15,7 +15,7 @@ EvolutionOp = Literal["add", "replace", "remove"]
 
 
 class EvolutionInsight(BaseModel):
-    """一条可策展的策略建议；Curator 负责转成 MemoryMutation。"""
+    """一条可策展的策略建议；Curator 负责转成 BuiltinMemoryRequest。"""
 
     model_config = ConfigDict(frozen=True)
 

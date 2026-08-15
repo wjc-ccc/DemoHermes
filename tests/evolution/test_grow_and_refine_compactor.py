@@ -7,8 +7,8 @@
 from __future__ import annotations
 
 from Agent.memory import (
-    BuiltinMemoryMutation,
-    BuiltinMemoryReadRequest,
+    BuiltinMemoryRequest,
+    MemoryReadRequest,
     MemoryManager,
     MemoryProvenance,
     MemoryScope,
@@ -97,11 +97,11 @@ def test_manager_oversized_apply_succeeds_with_grow_and_refine(tmp_path):
     # 先塞满接近上限的条目
     chunk = "[playbook] 策略" + ("X" * 180)
     while True:
-        view = manager.read(BuiltinMemoryReadRequest(scope=_SCOPE, target="memory"))
+        view = manager.read(MemoryReadRequest(scope=_SCOPE, target="memory"))
         if len(view.rendered) + len(chunk) + 80 > MEMORY_MAX_CHARS:
             break
         r = manager.apply(
-            BuiltinMemoryMutation(
+            BuiltinMemoryRequest(
                 scope=_SCOPE, target="memory", action="add",
                 content=chunk + f"-{len(view.entries)}",
                 provenance=_PROVENANCE,
@@ -112,7 +112,7 @@ def test_manager_oversized_apply_succeeds_with_grow_and_refine(tmp_path):
     # 再加一条会导致超限；有 Compactor 时应 compacted 成功
     vital = "[playbook] 关键策略：提交前必须跑回归测试套件"
     result = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="memory", action="add",
             content=vital,
             provenance=_PROVENANCE,
@@ -120,7 +120,7 @@ def test_manager_oversized_apply_succeeds_with_grow_and_refine(tmp_path):
     )
     assert result.ok, result.message
     assert result.compacted is True
-    view = manager.read(BuiltinMemoryReadRequest(scope=_SCOPE, target="memory"))
+    view = manager.read(MemoryReadRequest(scope=_SCOPE, target="memory"))
     assert len(view.rendered) <= MEMORY_MAX_CHARS
     assert "提交前必须跑回归测试套件" in view.rendered
 

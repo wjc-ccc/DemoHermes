@@ -9,20 +9,20 @@
 from __future__ import annotations
 
 from Agent.memory import (
-    BuiltinMemoryMutation,
-    BuiltinMemoryReadRequest,
+    BuiltinMemoryRequest,
+    MemoryReadRequest,
     MemoryManager,
     MemoryProvenance,
     MemoryScope,
 )
 from Agent.memory.budget import MEMORY_MAX_CHARS
-from Agent.memory.types import TurnEnvelope
+from Agent.memory.types import TurnRecord
 
 _SCOPE = MemoryScope(kind="personal", key="cli:user:evo1")
 
 
-def _turn(turn_id: str = "t1") -> TurnEnvelope:
-    return TurnEnvelope(
+def _turn(turn_id: str = "t1") -> TurnRecord:
+    return TurnRecord(
         turn_id=turn_id,
         session_id="s1",
         scope=_SCOPE,
@@ -112,7 +112,7 @@ def test_curator_applies_admitted_playbook_via_manager(tmp_path):
 
     assert len(results) == 1
     assert results[0].ok is True
-    view = manager.read(BuiltinMemoryReadRequest(scope=_SCOPE, target="memory"))
+    view = manager.read(MemoryReadRequest(scope=_SCOPE, target="memory"))
     assert any(
         "[playbook] 工具超时时先重试一次再向用户报告" in e.content
         for e in view.entries
@@ -127,7 +127,7 @@ def test_curator_skips_rejected_insights(tmp_path):
     manager = MemoryManager(root=tmp_path / "memory")
     # 先写入一条，使后续近重复被拒
     manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE,
             target="memory",
             action="add",
@@ -147,7 +147,7 @@ def test_curator_skips_rejected_insights(tmp_path):
     results = curator.apply_insights([insight])
 
     assert results == []
-    view = manager.read(BuiltinMemoryReadRequest(scope=_SCOPE, target="memory"))
+    view = manager.read(MemoryReadRequest(scope=_SCOPE, target="memory"))
     assert len(view.entries) == 1
 
 

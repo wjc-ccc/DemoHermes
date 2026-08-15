@@ -15,7 +15,7 @@
 ```
 LLM: "我需要算 23*17" -> tool_calls=[{name:"calculator", args:{expression:"23*17"}}]
 Loop: ToolRegistry.dispatch("calculator", {expression:"23*17"})
-      -> ToolResult(ok=True, result_text="23*17 = 391")
+      -> ToolCallResult(ok=True, result_text="23*17 = 391")
 Loop: 把 "23*17 = 391" 作为 role=tool 消息回注给 LLM
 ```
 
@@ -40,7 +40,7 @@ LLM: 看到正文后，按其中步骤逐步执行（提取事项 -> 分类 -> �
 ### Tool 的职责
 1. **执行确定性操作**：计算、查数据库、调外部 API、读写文件
 2. **声明自己的能力**：通过 `name` / `description` / `parameters`（JSON Schema）让 LLM 理解"什么时候调、怎么调"
-3. **返回结构化结果**：`ToolResult(ok, result_text, data, error)`，result_text 回注 LLM，data 供前端展示
+3. **返回结构化结果**：`ToolCallResult(ok, result_text, data, error)`，result_text 回注 LLM，data 供前端展示
 4. **自我容错**：实现内部应捕获预期异常返回 `ok=False`，不让异常打断 Loop
 
 ### Skill 的职责
@@ -63,7 +63,7 @@ LLM: 看到正文后，按其中步骤逐步执行（提取事项 -> 分类 -> �
 | 组件 | 文件 | 能力 |
 |------|------|------|
 | `Tool`（抽象基类） | `tools/base.py` | 定义 name/description/parameters/execute 接口 |
-| `ToolResult` | `tools/base.py` | 统一结果模型（ok/result_text/data/error） |
+| `ToolCallResult` | `tools/base.py` | 统一结果模型（ok/result_text/data/error） |
 | `ToolRegistry` | `tools/registry.py` | 注册、schema 收集、容错分发 |
 | `CalculatorTool` | `tools/calculator_tools.py` | 安全的数学表达式求值（AST 白名单，不用 eval） |
 | `UseSkillTool` | `skills/skill_tool.py` | Skill 与 Tool 的桥梁，加载技能正文 |
@@ -72,7 +72,7 @@ LLM: 看到正文后，按其中步骤逐步执行（提取事项 -> 分类 -> �
 **ToolRegistry 核心能力：**
 - `register(tool)`：注册工具实例
 - `get_schemas()`：返回所有工具的 OpenAI function calling schema（随 chat 请求发给 LLM）
-- `dispatch(name, args)`：**容错分发**，任何异常兜底成 `ToolResult(ok=False)`，绝不抛给 Loop
+- `dispatch(name, args)`：**容错分发**，任何异常兜底成 `ToolCallResult(ok=False)`，绝不抛给 Loop
 
 ### 3.2 Skill 体系
 
@@ -173,7 +173,7 @@ act 阶段（模型要求调工具）:
 UseSkillTool.__init__(registry: SkillRegistry)
 UseSkillTool.execute({skill_name:"weekly_report"})
    -> registry.load_content("weekly_report")
-   -> ToolResult(result_text="已加载技能「weekly_report」，请按以下说明执行：\n\n...")
+   -> ToolCallResult(result_text="已加载技能「weekly_report」，请按以下说明执行：\n\n...")
 ```
 
 LLM 收到这段文本后，把它当作"操作手册"指导后续行动。
@@ -211,7 +211,7 @@ builder = ContextBuilder(session, skill_registry=self.skills, ephemeral_prompt=.
 #    -> CalculatorTool.execute
 #    -> _safe_eval(ast.parse("(3+5)*2 + sqrt(16)", mode="eval"))
 #    -> 20.0
-#    -> ToolResult(ok=True, result_text="(3+5)*2 + sqrt(16) = 20", data={"value":20})
+#    -> ToolCallResult(ok=True, result_text="(3+5)*2 + sqrt(16) = 20", data={"value":20})
 # 4. Loop 回注: session.add_message(Message(role="tool", content_text="...=20"))
 # 5. 下一轮 think: LLM 看到 20 -> 返回纯文本 "(3+5)*2+√16 = 20"
 ```
@@ -227,7 +227,7 @@ builder = ContextBuilder(session, skill_registry=self.skills, ephemeral_prompt=.
 # 3. ToolRegistry.dispatch("use_skill", {skill_name:"weekly_report"})
 #    -> UseSkillTool.execute
 #    -> registry.load_content("weekly_report")
-#    -> ToolResult(result_text="已加载技能「weekly_report」，请按以下说明执行：\n\n# 周报生成技能\n## 步骤...")
+#    -> ToolCallResult(result_text="已加载技能「weekly_report」，请按以下说明执行：\n\n# 周报生成技能\n## 步骤...")
 # 4. Loop 回注这段文本给 LLM
 # 5. 下一轮 think: LLM 按技能说明，把"修3个bug+做1个需求"组织成周报格式输出
 ```
@@ -237,7 +237,7 @@ builder = ContextBuilder(session, skill_registry=self.skills, ephemeral_prompt=.
 ```python
 # 模型调 calculator 传了 expression="23*17a"（非法字符）
 # dispatch -> CalculatorTool.execute -> _safe_eval 抛 ValueError
-# CalculatorTool 内部 catch -> ToolResult(ok=False, error="表达式无法计算: ...")
+# CalculatorTool 内部 catch -> ToolCallResult(ok=False, error="表达式无法计算: ...")
 # 回注给 LLM: "工具执行失败: 表达式无法计算: ..."
 # 下一轮: LLM 看到错误 -> 改成 expression="23*17" 重新调用 -> 成功
 ```

@@ -8,22 +8,22 @@ from pydantic import ValidationError
 
 from Agent.core.types import Message
 from Agent.memory import (
-    BuiltinMemoryMutation,
+    BuiltinMemoryRequest,
     MemoryManager,
     MemoryProvenance,
     MemoryScope,
     MemorySearchRequest,
 )
 from Agent.memory.episodic.store import SqliteSessionArchiveReader, SqliteSessionStore
-from Agent.memory.types import SessionMessageRef, TurnEnvelope
+from Agent.memory.types import SessionMessageRef, TurnRecord
 
 _SCOPE = MemoryScope(kind="personal", key="cli:user:u1")
 _OTHER_SCOPE = MemoryScope(kind="personal", key="cli:user:u2")
 _PROVENANCE = MemoryProvenance(source="reviewer", turn_id="t_001")
 
 
-def _turn(session, *, turn_id="t1", scope=_SCOPE) -> TurnEnvelope:
-    return TurnEnvelope(
+def _turn(session, *, turn_id="t1", scope=_SCOPE) -> TurnRecord:
+    return TurnRecord(
         turn_id=turn_id,
         session_id=session.session_id,
         scope=scope,
@@ -107,7 +107,7 @@ def test_search_all_merges_daily_and_session_hits(tmp_path):
         root=tmp_path / "memory", archive_reader=SqliteSessionArchiveReader(db)
     )
     manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="daily", action="add", date="2026-07-23",
             content="staging 环境出现告警", provenance=_PROVENANCE,
         )

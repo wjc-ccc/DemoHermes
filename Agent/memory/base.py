@@ -1,49 +1,29 @@
-"""MemoryProvider - 外部记忆系统唯一外部 seam（7.23 方案 §2 Seam D / §7）。
+"""MemoryProvider — 外部记忆系统唯一旁路 seam。
 
-同时最多一个，由 MemoryManager 构造注入（§7.1）。测试允许使用 Fake；
-不得 mock 自己的 HotStore/DailyStore/Manager。
+只暴露两个方法：
+    recall(request)     组装上下文时按 query 取回相关文本
+    sync_turn(turn, session)  完成 turn 后把完整对话交给外部（黑盒自存）
 
-recall/build_context 失败或超时由 Manager 降级为 diagnostic，不阻断主对话（§7.2）。
-capabilities（recall/read/add/replace/remove/search/sync_turn）在子类声明，
-Manager 路由前检查，不支持的能力返回 provider_capability_unsupported（后续 Slice 测试驱动）。
+不处理外部记忆的增删改查；主链路只认 builtin Hot/Daily。
+recall 失败/超时由 Manager 降级；sync_turn 不阻断回复。
 """
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from .types import (
-    ProviderContribution,
-    ProviderMutation,
-    ProviderMutationResult,
-    ProviderReadRequest,
-    ProviderRecallRequest,
-    TurnEnvelope,
-)
+from ..core.types import Session
+from .types import ProviderContribution, ProviderRecallRequest, TurnRecord
 
-
+### 输入完整TurnRecord和Session来同步  +  输入Provider的召回请求类 然后 得到召回响应类
 class MemoryProvider(ABC):
-    """外部记忆 Provider 抽象基类（§2 Seam D）。
-
-    capabilities 声明支持的能力子集
-    （recall/read/add/replace/remove/search/sync_turn），Manager 路由前检查，
-    不支持的能力返回 provider_capability_unsupported（§7.1）。
-    """
+    """外部记忆 Provider：旁路 recall + sync_turn，存取实现自管。"""
 
     name: str
-    capabilities: frozenset[str] = frozenset()
 
     @abstractmethod
     def recall(self, request: ProviderRecallRequest) -> ProviderContribution:
         """针对当前 query 返回相关上下文贡献；失败/超时由 Manager 捕获降级。"""
 
-    def apply(self, mutation: ProviderMutation) -> ProviderMutationResult:
-        """显式 add/replace/remove；默认未实现，子类按 capability 覆盖（§2 Seam D）。"""
-        raise NotImplementedError(f"{self.name} 未实现 apply")
-
-    def read(self, request: ProviderReadRequest):
-        """读取一条外部记忆；默认未实现，子类按 capability 覆盖。"""
-        raise NotImplementedError(f"{self.name} 未实现 read")
-
-    def sync_turn(self, turn: TurnEnvelope) -> None:
-        """可选；完成 turn 后同步，默认 no-op（§2 Seam D / §7.2）。"""
+    def sync_turn(self, turn: TurnRecord, session: Session) -> None:
+        """完成 turn 后接收完整对话（turn 信封 + Session.messages）；默认 no-op。"""
         return None

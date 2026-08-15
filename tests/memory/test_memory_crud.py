@@ -1,7 +1,7 @@
 """Slice 2: 用户可读与精确 CRUD——经 MemoryManager 公共 seam 逐个 Red→Green。"""
 from Agent.memory import (
-    BuiltinMemoryMutation,
-    BuiltinMemoryReadRequest,
+    BuiltinMemoryRequest,
+    MemoryReadRequest,
     MemoryManager,
     MemoryProvenance,
     MemoryScope,
@@ -13,7 +13,7 @@ _PROVENANCE = MemoryProvenance(source="user_request")
 
 def _add(manager: MemoryManager, content: str, scope: MemoryScope = _SCOPE):
     return manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=scope, target="profile", action="add",
             content=content, provenance=_PROVENANCE,
         )
@@ -26,7 +26,7 @@ def test_read_returns_added_entry_id_and_revision(tmp_path):
     assert added.ok
 
     view = manager.read(
-        BuiltinMemoryReadRequest(scope=_SCOPE, target="profile")
+        MemoryReadRequest(scope=_SCOPE, target="profile")
     )
 
     assert view.target == "profile"
@@ -42,7 +42,7 @@ def test_replace_changes_only_selected_entry(tmp_path):
     second = _add(manager, "先给结论")
 
     replaced = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="profile", action="replace",
             entry_id=first.entry_id, content="偏好详细背景说明",
             provenance=_PROVENANCE,
@@ -50,7 +50,7 @@ def test_replace_changes_only_selected_entry(tmp_path):
     )
     assert replaced.ok
 
-    view = manager.read(BuiltinMemoryReadRequest(scope=_SCOPE, target="profile"))
+    view = manager.read(MemoryReadRequest(scope=_SCOPE, target="profile"))
     by_id = {e.entry_id: e.content for e in view.entries}
     assert by_id == {first.entry_id: "偏好详细背景说明", second.entry_id: "先给结论"}
     assert view.revision == replaced.revision != first.revision
@@ -62,14 +62,14 @@ def test_remove_deletes_only_selected_entry(tmp_path):
     second = _add(manager, "先给结论")
 
     removed = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="profile", action="remove",
             entry_id=first.entry_id, provenance=_PROVENANCE,
         )
     )
     assert removed.ok
 
-    view = manager.read(BuiltinMemoryReadRequest(scope=_SCOPE, target="profile"))
+    view = manager.read(MemoryReadRequest(scope=_SCOPE, target="profile"))
     assert [e.entry_id for e in view.entries] == [second.entry_id]
     assert "偏好简洁" not in view.rendered
     assert "先给结论" in view.rendered
@@ -85,7 +85,7 @@ def test_duplicate_add_returns_existing_entry_without_duplication(tmp_path):
     assert second.ok
     assert second.entry_id == first.entry_id
     assert second.revision == first.revision
-    view = manager.read(BuiltinMemoryReadRequest(scope=_SCOPE, target="profile"))
+    view = manager.read(MemoryReadRequest(scope=_SCOPE, target="profile"))
     assert len(view.entries) == 1
 
 
@@ -97,7 +97,7 @@ def test_reserved_entry_marker_is_rejected(tmp_path):
 
     assert not rejected.ok
     assert rejected.error_code == "reserved_marker"
-    view = manager.read(BuiltinMemoryReadRequest(scope=_SCOPE, target="profile"))
+    view = manager.read(MemoryReadRequest(scope=_SCOPE, target="profile"))
     assert [e.entry_id for e in view.entries] == [before.entry_id]
     assert view.revision == before.revision
 
@@ -106,7 +106,7 @@ def test_stale_revision_returns_conflict_without_changing_document(tmp_path):
     manager = MemoryManager(root=tmp_path / "memory")
     added = _add(manager, "偏好简洁")
     replaced = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="profile", action="replace",
             entry_id=added.entry_id, content="偏好详细",
             expected_revision=added.revision, provenance=_PROVENANCE,
@@ -115,7 +115,7 @@ def test_stale_revision_returns_conflict_without_changing_document(tmp_path):
     assert replaced.ok
 
     stale = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="profile", action="replace",
             entry_id=added.entry_id, content="基于过期版本的改写",
             expected_revision=added.revision, provenance=_PROVENANCE,
@@ -125,6 +125,6 @@ def test_stale_revision_returns_conflict_without_changing_document(tmp_path):
     assert not stale.ok
     assert stale.conflict
     assert stale.error_code == "revision_conflict"
-    view = manager.read(BuiltinMemoryReadRequest(scope=_SCOPE, target="profile"))
+    view = manager.read(MemoryReadRequest(scope=_SCOPE, target="profile"))
     assert view.entries[0].content == "偏好详细"
     assert view.revision == replaced.revision

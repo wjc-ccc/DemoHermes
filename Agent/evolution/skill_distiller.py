@@ -10,14 +10,14 @@ import re
 from collections.abc import Callable
 from typing import Protocol
 
-from ..memory.types import TurnEnvelope
+from ..memory.types import TurnRecord
 from .types import EvolutionSignal, SkillProposal
 
 logger = logging.getLogger(__name__)
 
 _SKIP = frozenset({"use_skill"})
 
-DistillFn = Callable[[TurnEnvelope, EvolutionSignal, str], SkillProposal | None]
+DistillFn = Callable[[TurnRecord, EvolutionSignal, str], SkillProposal | None]
 
 
 def _slugify(text: str) -> str:
@@ -30,7 +30,7 @@ def _procedural(seq: tuple[str, ...]) -> tuple[str, ...]:
 
 
 def _default_render(
-    turn: TurnEnvelope,
+    turn: TurnRecord,
     signals: EvolutionSignal,
     user_text: str,
 ) -> SkillProposal:
@@ -99,7 +99,7 @@ class TrajectorySkillDistiller:
 
     def consider(
         self,
-        turn: TurnEnvelope,
+        turn: TurnRecord,
         signals: EvolutionSignal | None,
         *,
         user_text: str = "",

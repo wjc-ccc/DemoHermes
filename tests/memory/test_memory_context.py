@@ -4,13 +4,13 @@ import threading
 from Agent.core.loop import AgentLoop
 from Agent.core.types import Message, Session
 from Agent.memory import (
-    BuiltinMemoryMutation,
+    BuiltinMemoryRequest,
     MemoryManager,
     MemoryProvenance,
     MemoryScope,
 )
 from Agent.model.baseStructure import BaseModel, ModelResponse, ToolCallRequest
-from Agent.tools.base import Tool, ToolResult
+from Agent.tools.base import Tool, ToolCallResult
 from Agent.tools.registry import ToolRegistry
 
 _SCOPE = MemoryScope(kind="personal", key="cli:user:u1")
@@ -33,7 +33,7 @@ class _FakeModel(BaseModel):
 
 def _add_profile(manager: MemoryManager, content: str) -> None:
     result = manager.apply(
-        BuiltinMemoryMutation(
+        BuiltinMemoryRequest(
             scope=_SCOPE, target="profile", action="add",
             content=content, provenance=_PROVENANCE,
         )
@@ -53,7 +53,7 @@ def _memory_system_texts(messages: list[dict]) -> list[str]:
 
 
 def test_loop_without_memory_snapshot_keeps_existing_behavior(tmp_path):
-    """不传 memory_context 的 run_turn 行为与现状一致：无 memory 围栏，正常回复。"""
+    """不传 memory_snapshot 的 run_turn 行为与现状一致：无 memory 围栏，正常回复。"""
     model = _FakeModel([ModelResponse(text="你好呀")])
     loop = AgentLoop(model=model, event_bus=None)
     session = Session(session_id="s1")
@@ -90,9 +90,9 @@ class _UpdateMemoryTool(Tool):
     def __init__(self, manager: MemoryManager):
         self._manager = manager
 
-    def execute(self, arguments: dict) -> ToolResult:
+    def execute(self, arguments: dict) -> ToolCallResult:
         _add_profile(self._manager, "中途新增：周三改口要详细版")
-        return ToolResult(ok=True, result_text="已记录")
+        return ToolCallResult(ok=True, result_text="已记录")
 
 
 def test_all_model_iterations_in_one_turn_receive_same_snapshot(tmp_path):
@@ -114,7 +114,7 @@ def test_all_model_iterations_in_one_turn_receive_same_snapshot(tmp_path):
     loop = AgentLoop(model=model, tool_registry=tools)
     session = Session(session_id="s1")
 
-    result = loop.run_turn(session, _user_message("记一下"), memory_context=snapshot)
+    result = loop.run_turn(session, _user_message("记一下"), memory_snapshot=snapshot)
 
     assert result.completed
     assert len(model.calls) == 2  # 第一次要调工具，第二次纯文本
@@ -138,14 +138,14 @@ def test_next_turn_receives_new_snapshot(tmp_path):
     model1 = _FakeModel([ModelResponse(text="好")])
     AgentLoop(model=model1).run_turn(
         session, _user_message("第一句"),
-        memory_context=manager.build_context(scope=_SCOPE, query="一", session_id="s1"),
+        memory_snapshot=manager.build_context(scope=_SCOPE, query="一", session_id="s1"),
     )
     _add_profile(manager, "第二句前补的偏好")
 
     model2 = _FakeModel([ModelResponse(text="行")])
     AgentLoop(model=model2).run_turn(
         session, _user_message("第二句"),
-        memory_context=manager.build_context(scope=_SCOPE, query="二", session_id="s1"),
+        memory_snapshot=manager.build_context(scope=_SCOPE, query="二", session_id="s1"),
     )
 
     turn1_memory = _memory_system_texts(model1.calls[0])[0]
@@ -172,7 +172,7 @@ def test_two_concurrent_sessions_in_same_scope_do_not_share_turn_snapshot_state(
             barrier.wait(timeout=10)
             AgentLoop(model=models[idx]).run_turn(
                 Session(session_id=f"s{idx + 1}"), _user_message("你好"),
-                memory_context=snaps[idx],
+                memory_snapshot=snaps[idx],
             )
         except Exception as exc:  # pragma: no cover - 收进主线程断言
             errors.append(exc)

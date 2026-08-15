@@ -1,19 +1,11 @@
-"""SQLite schema migration（7.23 方案 §6.2）：PRAGMA user_version 管理版本，只前进不回退。
+"""episodic SQLite 表定义——直接 CREATE TABLE，不做版本迁移。
 
-v1 一次性创建 5 张表 + 5 个索引：
-- sessions / session_slots  会话与 active 槽位
-- messages / tool_calls      不可变审计事实
-- review_jobs                后台 review outbox
-
-每行存「可索引列 + 完整 payload_json」：索引列用于查询投影，payload_json 用
-model_dump_json() 存完整 Pydantic model，保证 ContentPart/metadata 等无损（ADR-6）。
-sessions.payload_json 排除 messages/tool_calls，恢复时只从子表按 seq 组装，避免两个事实源。
-
-后续演进（FTS5、environment_snapshots）以独立 migration 追加，禁止改旧版本。
+需要改表结构时再单独加迁移；日常启动只执行本文件的建表语句。
 """
 
-SCHEMA_V1 = """
-CREATE TABLE sessions (
+# 会话头：payload_json 不含 messages/tool_calls（子表为事实源）
+SQL_SESSIONS = """
+CREATE TABLE IF NOT EXISTS sessions (
   session_id      TEXT PRIMARY KEY,
   session_key     TEXT NOT NULL,
   scope_kind      TEXT NOT NULL CHECK(scope_kind IN ('personal', 'group')),
@@ -26,17 +18,21 @@ CREATE TABLE sessions (
   last_active_at  REAL NOT NULL,
   payload_json    TEXT NOT NULL,
   schema_version  INTEGER NOT NULL DEFAULT 1
-);
+)
+"""
 
-CREATE TABLE session_slots (
+SQL_SESSION_SLOTS = """
+CREATE TABLE IF NOT EXISTS session_slots (
   session_key       TEXT PRIMARY KEY,
   active_session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE RESTRICT,
   scope_kind        TEXT NOT NULL CHECK(scope_kind IN ('personal', 'group')),
   scope_key         TEXT NOT NULL,
   updated_at        REAL NOT NULL
-);
+)
+"""
 
-CREATE TABLE messages (
+SQL_MESSAGES = """
+CREATE TABLE IF NOT EXISTS messages (
   message_id      TEXT PRIMARY KEY,
   session_id      TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE RESTRICT,
   seq_id          INTEGER NOT NULL,
@@ -46,9 +42,11 @@ CREATE TABLE messages (
   payload_json    TEXT NOT NULL,
   schema_version  INTEGER NOT NULL DEFAULT 1,
   UNIQUE(session_id, seq_id)
-);
+)
+"""
 
-CREATE TABLE tool_calls (
+SQL_TOOL_CALLS = """
+CREATE TABLE IF NOT EXISTS tool_calls (
   tool_call_id    TEXT PRIMARY KEY,
   session_id      TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE RESTRICT,
   trajectory_id   TEXT NOT NULL,
@@ -57,9 +55,11 @@ CREATE TABLE tool_calls (
   created_at      REAL NOT NULL,
   payload_json    TEXT NOT NULL,
   schema_version  INTEGER NOT NULL DEFAULT 1
-);
+)
+"""
 
-CREATE TABLE review_jobs (
+SQL_REVIEW_JOBS = """
+CREATE TABLE IF NOT EXISTS review_jobs (
   turn_id          TEXT PRIMARY KEY,
   session_id       TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE RESTRICT,
   scope_kind       TEXT NOT NULL CHECK(scope_kind IN ('personal', 'group')),
@@ -71,22 +71,24 @@ CREATE TABLE review_jobs (
   claimed_by       TEXT,
   payload_json     TEXT NOT NULL,
   last_error       TEXT
-);
-
-CREATE INDEX idx_sessions_scope ON sessions(scope_kind, scope_key, updated_at);
-CREATE INDEX idx_messages_session ON messages(session_id, seq_id);
-CREATE INDEX idx_messages_created ON messages(created_at);
-CREATE INDEX idx_tool_calls_session ON tool_calls(session_id, created_at);
-CREATE INDEX idx_review_jobs_pending ON review_jobs(status, available_at);
+)
 """
 
-SCHEMA_VERSION = 1
+SQL_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_sessions_scope ON sessions(scope_kind, scope_key, updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, seq_id)",
+    "CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_review_jobs_pending ON review_jobs(status, available_at)",
+)
 
 
-def migrate(conn) -> None:
-    """把数据库迁移到最新版本；只前进，不回退。"""
-    (version,) = conn.execute("PRAGMA user_version").fetchone()
-    if version >= SCHEMA_VERSION:
-        return
-    conn.executescript(SCHEMA_V1)
-    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+def ensure_tables(conn) -> None:
+    """逐表建库；已存在则跳过。"""
+    conn.execute(SQL_SESSIONS)
+    conn.execute(SQL_SESSION_SLOTS)
+    conn.execute(SQL_MESSAGES)
+    conn.execute(SQL_TOOL_CALLS)
+    conn.execute(SQL_REVIEW_JOBS)
+    for stmt in SQL_INDEXES:
+        conn.execute(stmt)
