@@ -1,7 +1,8 @@
-"""EvalRunner — 固定 suite 回放 → Report（8.15 E1）。
+"""EvalRunner — 固定 suite 回放 → Report（8.15 E1/E3）。
 
-经真实 MemoryManager + Gateway 跑 turn；断言只打 snapshot 文本 / 回复 / completed。
-不 mock Manager/Gateway；模型由调用方注入（假或真）。
+经真实 MemoryManager + Gateway 跑 turn；断言只打公开面
+（snapshot / 回复 / completed / skill 摘要）。
+不 mock Manager/Gateway；模型与可选 SkillRegistry 由调用方注入。
 """
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ from ..channel.channel_cli import CliChannel
 from ..core.events import EventBus
 from ..core.loop import AgentLoop
 from ..core.types import InboundEvent, SessionSource
+from ..evolution.skill_selector import SkillSelector
 from ..gateway import Gateway
 from ..gateway.session_key import build_session_key
 from ..memory import (
@@ -40,23 +42,34 @@ class EvalRunner:
         memory_root: Path | str,
         db_path: Path | str,
         model,
+        skill_registry=None,
+        skill_selector=None,
         ask_timeout: float = 30.0,
     ) -> None:
         self._memory_root = Path(memory_root)
         self._db_path = Path(db_path)
         self._model = model
         self._ask_timeout = ask_timeout
+        self._skills = skill_registry
+        self._selector = skill_selector
+        if self._skills is not None and self._selector is None:
+            self._selector = SkillSelector()
         self._memory_root.mkdir(parents=True, exist_ok=True)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
 
         self._memory = MemoryManager(root=self._memory_root)
         self._store = SqliteSessionStore(self._db_path)
-        self._loop = AgentLoop(model=self._model, event_bus=EventBus())
+        self._loop = AgentLoop(
+            model=self._model,
+            skill_registry=self._skills,
+            event_bus=EventBus(),
+        )
         self._gateway = Gateway(
             loop=self._loop,
             store=self._store,
             memory=self._memory,
             workers=1,
+            skill_selector=self._selector,
         )
         self._gateway.register_channel(CliChannel(quiet=True))
 
@@ -106,6 +119,12 @@ class EvalRunner:
             enable_provider_recall=False,
         )
         snapshot_prompt = snapshot.prompt or ""
+        skill_summary = ""
+        if self._skills is not None:
+            skill_summary = self._skills.summaries_prompt(
+                query=case.user_text,
+                selector=self._selector,
+            ) or ""
 
         event = InboundEvent(text=case.user_text, source=source)
         reply = self._gateway.ask(event, timeout=self._ask_timeout)
@@ -118,6 +137,7 @@ class EvalRunner:
             snapshot_prompt=snapshot_prompt,
             reply_text=reply_text,
             completed=completed,
+            skill_summary=skill_summary,
         )
         return EvalCaseResult(
             name=case.name,
@@ -126,6 +146,8 @@ class EvalRunner:
             reply_text=reply_text,
             completed=completed,
             snapshot_prompt=snapshot_prompt,
+            skill_summary=skill_summary,
+            skill_summary_chars=len(skill_summary),
         )
 
     def _apply_seed(self, scope: MemoryScope, seed: EvalSeedMemory) -> None:
@@ -148,6 +170,7 @@ class EvalRunner:
         snapshot_prompt: str,
         reply_text: str,
         completed: bool,
+        skill_summary: str = "",
     ) -> list[str]:
         failures: list[str] = []
         for a in assertions:
@@ -164,6 +187,20 @@ class EvalRunner:
                 if completed is not expected:
                     failures.append(
                         f"completed:expected={expected} actual={completed}"
+                    )
+            elif a.kind == "skill_summary_contains":
+                needle = str(a.value)
+                if needle not in skill_summary:
+                    failures.append(f"skill_summary_contains:{needle!r}")
+            elif a.kind == "skill_summary_lacks":
+                needle = str(a.value)
+                if needle in skill_summary:
+                    failures.append(f"skill_summary_lacks:{needle!r}")
+            elif a.kind == "max_skill_summary_chars":
+                limit = int(a.value)
+                if len(skill_summary) > limit:
+                    failures.append(
+                        f"max_skill_summary_chars:limit={limit} actual={len(skill_summary)}"
                     )
             else:
                 failures.append(f"unknown_assertion:{a.kind}")

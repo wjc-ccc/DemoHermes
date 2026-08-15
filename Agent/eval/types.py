@@ -14,6 +14,9 @@ EvalAssertionKind = Literal[
     "snapshot_contains",
     "reply_contains",
     "completed",
+    "skill_summary_contains",
+    "skill_summary_lacks",
+    "max_skill_summary_chars",
 ]
 
 EvalSeedTarget = Literal["profile", "memory", "daily"]
@@ -34,7 +37,7 @@ class EvalAssertion(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     kind: EvalAssertionKind
-    value: str | bool
+    value: str | bool | int
 
 
 class EvalCase(BaseModel):
@@ -66,6 +69,8 @@ class EvalCaseResult(BaseModel):
     reply_text: str = ""
     completed: bool = False
     snapshot_prompt: str = ""
+    skill_summary: str = ""
+    skill_summary_chars: int = 0
 
 
 class EvalReport(BaseModel):
