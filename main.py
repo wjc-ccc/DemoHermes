@@ -8,7 +8,7 @@
 
 前端启动：python frontier/main.py
 """
-from Agent.main import main
+from agent.main import main
 
 if __name__ == "__main__":
     main()

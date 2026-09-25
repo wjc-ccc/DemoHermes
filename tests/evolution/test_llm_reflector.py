@@ -1,12 +1,13 @@
-"""LLM EvolutionReflector：Fake 模型 → playbook insight / skill proposal。"""
+"""LLM EvolutionReflector：Fake 模型 → skill proposal。"""
 from __future__ import annotations
 
-from Agent.evolution.llm_reflector import LlmEvolutionReflector
-from Agent.evolution.types import EvolutionSignal
-from Agent.memory.types import MemoryScope, TurnRecord
-from Agent.model.baseStructure import BaseModel, ModelResponse
+from agent.evolution.llm_reflector import LlmEvolutionReflector
+from agent.evolution.types import EvolutionSignal
+from agent.core.memory import MemoryScope
+from agent.core.memory.types import TurnRecord
+from agent.model.baseStructure import BaseModel, ModelResponse
 
-_SCOPE = MemoryScope(kind="personal", key="cli:user:llm1")
+_SCOPE = MemoryScope(tenant_id="cli", user_id="llm1")
 
 
 class _ScriptModel(BaseModel):
@@ -34,21 +35,6 @@ def _turn() -> TurnRecord:
         interrupted=False,
         error=None,
     )
-
-
-def test_llm_reflector_parses_playbook_json():
-    model = _ScriptModel(
-        '[{"content":"[playbook] 超时先重试一次","rationale":"timeout"}]'
-    )
-    reflector = LlmEvolutionReflector(model)
-    insights = reflector.reflect(
-        _turn(),
-        EvolutionSignal(turn_id="t1", tool_failures=("bash: timeout",)),
-        user_text="跑脚本",
-    )
-    assert len(insights) == 1
-    assert insights[0].content.startswith("[playbook]")
-    assert "超时" in insights[0].content
 
 
 def test_llm_reflector_parses_skill_proposal():

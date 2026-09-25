@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import pytest
 
-from Agent.channel.channel_wechat import (
+from agent.channel.channel_wechat import (
     EP_GET_UPDATES,
     EP_SEND_MESSAGE,
     WechatChannel,
 )
-from Agent.core.types import OutboundReply, SessionSource
+from agent.core.types import OutboundReply, SessionSource
 
 
 class CollectGateway:

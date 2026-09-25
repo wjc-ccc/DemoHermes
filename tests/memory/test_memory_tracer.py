@@ -1,38 +1,33 @@
-"""Slice 1: tracer bullet——精选偏好经 MemoryManager 落盘后进入下一轮 Context。"""
-from Agent.core.context_builder import ContextBuilder
-from Agent.core.types import Session
-from Agent.memory import (
-    BuiltinMemoryRequest,
-    MemoryManager,
-    MemoryProvenance,
+"""普通用户手册经冻结快照进入 Precision。"""
+
+from agent.core.memory import (
+    MarkdownBook,
+    MemoryContextLoader,
+    MemoryLayer,
     MemoryScope,
+    ensure_scope_dir,
 )
+from agent.core.precision import PrecisionBuilder
+from agent.core.types import Session
 
 
-def test_added_profile_memory_reaches_context_builder_system_messages(tmp_path):
-    # arrange：真实 tmp root，personal scope
-    manager = MemoryManager(root=tmp_path / "memory")
-    scope = MemoryScope(kind="personal", key="cli:user:u1")
+def test_user_book_reaches_precision_system_messages(tmp_path):
+    root = tmp_path / "memory"
+    scope = MemoryScope(tenant_id="cli", user_id="u1")
+    MarkdownBook(
+        ensure_scope_dir(root, scope) / "MEMORY.md",
+        layer=MemoryLayer.USER,
+        type="long_term_fact",
+        scope=scope,
+        writable=True,
+    ).replace("# 沟通偏好\n\n用户偏好先给结论。\n")
 
-    # act：apply add → build_context → snapshot 传给真实 ContextBuilder
-    result = manager.apply(
-        BuiltinMemoryRequest(
-            scope=scope,
-            target="profile",
-            action="add",
-            content="用户偏好先给结论",
-            provenance=MemoryProvenance(source="user_request"),
-        )
-    )
-    assert result.ok
-
-    snapshot = manager.build_context(scope, query="帮我写方案", session_id="s1")
-    messages = ContextBuilder(
+    snapshot = MemoryContextLoader(root).freeze(scope, session_id="s1")
+    messages = PrecisionBuilder().build(
         Session(session_id="s1"), memory_snapshot=snapshot
-    ).building_context()
+    ).messages
 
-    # assert：Builder 产出的一个 system message 含该字面量和 memory 围栏
-    system_texts = [m["content"] for m in messages if m["role"] == "system"]
+    system_texts = [message["content"] for message in messages if message["role"] == "system"]
     assert any(
         "用户偏好先给结论" in text and "<memory-context>" in text
         for text in system_texts

@@ -1,19 +1,19 @@
 """Slice 8: 整轮 ContextBudget——最终 messages 不超过输入预算，协议组不可拆（§4.3）。"""
-from Agent.core.context_budget import ContextBudget
-from Agent.core.loop import AgentLoop
-from Agent.core.types import Message, Session
-from Agent.evolution.assembly import AssemblyPolicy
-from Agent.memory import (
-    BuiltinMemoryRequest,
-    MemorySnapshot,
-    MemoryManager,
-    MemoryProvenance,
+from agent.core.context_budget import ContextBudget
+from agent.core.agent_loop import AgentLoop
+from agent.core.memory import (
+    MarkdownBook,
+    MemoryContextLoader,
+    MemoryLayer,
     MemoryScope,
+    MemorySnapshot,
+    ensure_scope_dir,
 )
-from Agent.model.baseStructure import BaseModel, ModelResponse
+from agent.core.types import Message, Session
+from agent.model.baseStructure import BaseModel, ModelResponse
+from tests.anchor_fakes import DeterministicAnchorBuilder
 
-_SCOPE = MemoryScope(kind="personal", key="cli:user:u1")
-_PROVENANCE = MemoryProvenance(source="user_request")
+_SCOPE = MemoryScope(tenant_id="cli", user_id="u1")
 
 
 class _FakeModel(BaseModel):
@@ -38,21 +38,29 @@ class _FixedCostEstimator:
         return self._per_message * len(messages)
 
 
-def _add_profile(manager: MemoryManager, content: str) -> None:
-    result = manager.apply(
-        BuiltinMemoryRequest(
-            scope=_SCOPE, target="profile", action="add",
-            content=content, provenance=_PROVENANCE,
-        )
-    )
-    assert result.ok, result.message
+def _snapshot(tmp_path, content: str = "偏好：先给结论") -> MemorySnapshot:
+    root = tmp_path / "memory"
+    MarkdownBook(
+        ensure_scope_dir(root, _SCOPE) / "MEMORY.md",
+        layer=MemoryLayer.USER,
+        type="long_term_fact",
+        scope=_SCOPE,
+        writable=True,
+    ).replace(content)
+    return MemoryContextLoader(root).freeze(_SCOPE, session_id="s1")
 
 
 def _history_session(turns: int) -> Session:
     session = Session(session_id="s1")
     for i in range(1, turns + 1):
-        session.add_message(Message(role="user", content_text=f"第{i}轮问题"))
-        session.add_message(Message(role="assistant", content_text=f"第{i}轮回答"))
+        session.add_message(Message(
+            message_id=f"s1-user-{i}", role="user", content_text=f"第{i}轮问题"
+        ))
+        session.add_message(Message(
+            message_id=f"s1-assistant-{i}",
+            role="assistant",
+            content_text=f"第{i}轮回答",
+        ))
     return session
 
 
@@ -60,17 +68,19 @@ def _contents(messages: list[dict]) -> str:
     return "\n".join(str(m.get("content")) for m in messages)
 
 
+def _user_contents(messages: list[dict]) -> list[str]:
+    return [str(m.get("content") or "") for m in messages if m.get("role") == "user"]
+
+
 def test_long_session_request_stays_within_input_budget(tmp_path):
-    """发给模型的最终 messages 必须 ≤ max_input_tokens；从最旧历史 turn 开始裁。"""
-    manager = MemoryManager(root=tmp_path / "memory")
-    _add_profile(manager, "偏好：先给结论")
-    snapshot = manager.build_context(scope=_SCOPE, query="q", session_id="s1")
-    # 9 条消息 ×100 = 900；预算 1000-300=700 → 裁掉最旧一轮（2 条）后恰好 700
-    budget = ContextBudget(model_context_tokens=1000, reserved_output_tokens=300)
+    """发给模型的最终 messages 必须 ≤ max_input_tokens；旧前缀由 Anchor 替代。"""
+    snapshot = _snapshot(tmp_path)
+    # 9 条消息 ×100 = 900；预算 1100-300=800 → Anchor + 最近两轮恰好 800
+    budget = ContextBudget(model_context_tokens=1100, reserved_output_tokens=300)
     estimator = _FixedCostEstimator(per_message=100)
 
     model = _FakeModel([ModelResponse(text="回答")])
-    loop = AgentLoop(model=model)
+    loop = AgentLoop(model=model, anchor_builder=DeterministicAnchorBuilder())
     session = _history_session(turns=3)
 
     result = loop.run_turn(
@@ -83,69 +93,75 @@ def test_long_session_request_stays_within_input_budget(tmp_path):
     sent = model.calls[0]
     assert estimator.estimate_messages(sent) <= budget.max_input_tokens
     text = _contents(sent)
-    assert "第1轮问题" not in text  # 最旧一轮被裁
-    assert "第2轮问题" in text and "第3轮问题" in text
+    users = _user_contents(sent)
+    assert "第1轮问题" not in users  # 最旧一轮不再作为原文 user
+    assert "第1轮问题" in text  # Intent 槽保住
+    assert "<context-anchor" in text
+    assert "第3轮问题" in users
     assert "偏好：先给结论" in text  # Hot 记忆永远保留
     assert "最新问题" in text
 
 
-def test_output_token_reservation_reduces_available_input_budget(tmp_path):
-    """max_input_tokens 只能派生：输出预留越大，可用输入预算越小，裁得越多。"""
-    manager = MemoryManager(root=tmp_path / "memory")
-    _add_profile(manager, "偏好：先给结论")
-    snapshot = manager.build_context(scope=_SCOPE, query="q", session_id="s1")
+def test_output_token_reservation_can_make_recent_window_impossible(tmp_path):
+    """输出预留挤压到硬保留窗口以下时必须明确失败。"""
+    snapshot = _snapshot(tmp_path)
     estimator = _FixedCostEstimator(per_message=100)
 
-    sent_sizes = {}
-    for reserved in (300, 500):
-        model = _FakeModel([ModelResponse(text="回答")])
-        session = _history_session(turns=3)  # 9 条 ×100 = 900
-        result = AgentLoop(model=model).run_turn(
-            session, Message(role="user", content_text="最新问题"),
-            memory_snapshot=snapshot,
-            context_budget=ContextBudget(
-                model_context_tokens=1000, reserved_output_tokens=reserved
-            ),
-            token_estimator=estimator,
-        )
-        assert result.completed, result.error
-        sent = model.calls[0]
-        assert estimator.estimate_messages(sent) <= 1000 - reserved
-        sent_sizes[reserved] = len(sent)
+    success_model = _FakeModel([ModelResponse(text="回答")])
+    success = AgentLoop(
+        model=success_model, anchor_builder=DeterministicAnchorBuilder()
+    ).run_turn(
+        _history_session(turns=3), Message(role="user", content_text="最新问题"),
+        memory_snapshot=snapshot,
+        context_budget=ContextBudget(
+            model_context_tokens=1100, reserved_output_tokens=300
+        ),
+        token_estimator=estimator,
+    )
+    assert success.completed
 
-    # 预留 500 时可用输入 500，比预留 300（可用 700）裁掉更多历史
-    assert sent_sizes[500] < sent_sizes[300]
+    failed_model = _FakeModel([ModelResponse(text="不应调用")])
+    failed = AgentLoop(
+        model=failed_model, anchor_builder=DeterministicAnchorBuilder()
+    ).run_turn(
+        _history_session(turns=3), Message(role="user", content_text="最新问题"),
+        memory_snapshot=snapshot,
+        context_budget=ContextBudget(
+            model_context_tokens=1100, reserved_output_tokens=400
+        ),
+        token_estimator=estimator,
+    )
+    assert failed.error == "context_budget_exceeded"
+    assert failed_model.calls == []
 
 
-def test_latest_user_message_is_never_trimmed(tmp_path):
-    """预算只够永远保留部分时：历史全部裁掉，最新 user message 与 Hot 记忆仍在。"""
-    manager = MemoryManager(root=tmp_path / "memory")
-    _add_profile(manager, "偏好：先给结论")
-    snapshot = manager.build_context(scope=_SCOPE, query="q", session_id="s1")
+def test_latest_user_and_recent_two_turns_are_never_trimmed(tmp_path):
+    """预算只够 P0 时也不能静默删除最近两个历史轮次。"""
+    snapshot = _snapshot(tmp_path)
     # 永远保留 = system + hot memory + 最新 user = 3 条 → 预算恰好 300
     estimator = _FixedCostEstimator(per_message=100)
 
     model = _FakeModel([ModelResponse(text="回答")])
     session = _history_session(turns=3)
-    result = AgentLoop(model=model).run_turn(
+    result = AgentLoop(
+        model=model, anchor_builder=DeterministicAnchorBuilder()
+    ).run_turn(
         session, Message(role="user", content_text="最新问题"),
         memory_snapshot=snapshot,
         context_budget=ContextBudget(model_context_tokens=1000, reserved_output_tokens=700),
         token_estimator=estimator,
     )
 
-    assert result.completed, result.error
-    text = _contents(model.calls[0])
-    assert "最新问题" in text
-    assert "偏好：先给结论" in text
-    assert "第1轮问题" not in text and "第3轮问题" not in text  # 历史全部裁掉
+    assert not result.completed
+    assert result.error == "context_budget_exceeded"
+    assert model.calls == []
 
 
 def _tool_turn_session() -> Session:
     """第1轮普通对话 + 第2轮带两次工具调用的完整协议组。"""
-    from Agent.core.messages import build_assistant_message, build_tool_message
-    from Agent.core.types import ToolCall
-    from Agent.model.baseStructure import ToolCallRequest
+    from agent.core.building_messages import build_assistant_message, build_tool_message
+    from agent.core.types import ToolCall
+    from agent.model.baseStructure import ToolCallRequest
 
     session = Session(session_id="s1")
     session.add_message(Message(role="user", content_text="第1轮问题"))
@@ -168,15 +184,15 @@ def _tool_turn_session() -> Session:
 
 
 def test_assistant_tool_call_and_tool_results_are_trimmed_as_one_group(tmp_path):
-    """§4.3：禁止单独删掉 tool result 或其 assistant tool-call——协议组同去同留。"""
-    manager = MemoryManager(root=tmp_path / "memory")
-    _add_profile(manager, "偏好：先给结论")
-    snapshot = manager.build_context(scope=_SCOPE, query="q", session_id="s1")
+    """禁止拆 tool 协议组；仅有两轮时预算不足就整体失败。"""
+    snapshot = _snapshot(tmp_path)
     estimator = _FixedCostEstimator(per_message=100)
 
-    def run(max_input: int) -> list[dict]:
+    def run(max_input: int):
         model = _FakeModel([ModelResponse(text="回答")])
-        result = AgentLoop(model=model).run_turn(
+        result = AgentLoop(
+            model=model, anchor_builder=DeterministicAnchorBuilder()
+        ).run_turn(
             _tool_turn_session(), Message(role="user", content_text="最新问题"),
             memory_snapshot=snapshot,
             context_budget=ContextBudget(
@@ -184,58 +200,22 @@ def test_assistant_tool_call_and_tool_results_are_trimmed_as_one_group(tmp_path)
             ),
             token_estimator=estimator,
         )
-        assert result.completed, result.error
-        return model.calls[0]
+        return result, model.calls
 
-    # 预算 900：只裁第1轮（2 条），工具协议组 5 条完整保留
-    sent = run(max_input=900)
+    # 预算 1000：两轮原文都能进入，工具协议完整保留。
+    result, calls = run(max_input=1000)
+    assert result.completed, result.error
+    sent = calls[0]
     tool_msgs = [m for m in sent if m["role"] == "tool"]
     asst_calls = [m for m in sent if m.get("tool_calls")]
     assert len(tool_msgs) == 2 and len(asst_calls) == 1
     assert "工具结果A" in _contents(sent) and "工具结果B" in _contents(sent)
-    assert "第1轮问题" not in _contents(sent)
+    assert "第1轮问题" in _user_contents(sent)
 
-    # 预算 700：工具协议组整组裁掉，不剩半个协议
-    sent = run(max_input=700)
-    assert [m for m in sent if m["role"] == "tool"] == []
-    assert [m for m in sent if m.get("tool_calls")] == []
-    assert "工具结果A" not in _contents(sent)
-    assert "最新问题" in _contents(sent)
-
-
-_FIXED_NOON = 1784808000.0  # 2026-07-23 12:00:00 UTC
-
-
-def test_optional_daily_is_removed_before_hot_memory(tmp_path):
-    """§4.3 裁剪顺序 1：可选 Daily 最先移除；Hot profile/MEMORY 与历史都不先动。"""
-    manager = MemoryManager(root=tmp_path / "memory", clock=lambda: _FIXED_NOON)
-    _add_profile(manager, "偏好：先给结论")
-    daily = manager.apply(
-        BuiltinMemoryRequest(
-            scope=_SCOPE, target="daily", action="add",
-            content="今日流水：开了三个会", provenance=_PROVENANCE,
-        )
-    )
-    assert daily.ok
-    snapshot = manager.build_context(
-        scope=_SCOPE, query="q", session_id="s1", include_today_daily=True
-    )
-    # 10 条 ×100 = 1000；预算 900 → 移除 daily（1 条）即达标，历史一条不裁
-    estimator = _FixedCostEstimator(per_message=100)
-
-    model = _FakeModel([ModelResponse(text="回答")])
-    result = AgentLoop(model=model).run_turn(
-        _history_session(turns=3), Message(role="user", content_text="最新问题"),
-        memory_snapshot=snapshot,
-        context_budget=ContextBudget(model_context_tokens=1200, reserved_output_tokens=300),
-        token_estimator=estimator,
-    )
-
-    assert result.completed, result.error
-    text = _contents(model.calls[0])
-    assert "今日流水：开了三个会" not in text  # 可选 Daily 最先被移除
-    assert "偏好：先给结论" in text            # Hot 记忆保留
-    assert "第1轮问题" in text and "第3轮问题" in text  # 历史尚未被裁
+    # 预算 900：硬保留窗口装不下时不拆协议，也不发送模型请求。
+    result, calls = run(max_input=900)
+    assert result.error == "context_budget_exceeded"
+    assert calls == []
 
 
 class _CharCostEstimator:
@@ -245,64 +225,48 @@ class _CharCostEstimator:
         return sum(len(str(m.get("content") or "")) for m in messages)
 
 
-def test_provider_recall_is_shortened_before_old_turns_when_configured(tmp_path):
-    """§4.3 裁剪顺序 2：配置了 provider 最小配额时，先缩短 recall 再动历史 turn。"""
+def test_provider_recall_is_deferred_as_p3_handle_not_preloaded(tmp_path):
+    """P3 永不预加载：provider 正文不进 messages，只暴露 handle；历史与 Hot 保留。"""
     provider_block = (
         '<provider-memory name="fake">\n' + "长" * 2000 + "\n</provider-memory>"
     )
     snapshot = MemorySnapshot(
         scope=_SCOPE, session_id="s1", prompt="HOT记忆块", built_at=0.0,
-        revisions=(), provider_prompt=provider_block,
+        revisions=(), hot_prompt="HOT记忆块", provider_prompt=provider_block,
     )
     estimator = _CharCostEstimator()
-    big_budget = ContextBudget(model_context_tokens=10**9, reserved_output_tokens=1)
-
-    # 先用超大预算量出结构化注入的完整成本（公开 seam：启用预算但未触发裁剪）
-    probe_model = _FakeModel([ModelResponse(text="探针")])
-    AgentLoop(model=probe_model).run_turn(
-        _history_session(turns=3), Message(role="user", content_text="最新问题"),
-        memory_snapshot=snapshot,
-        context_budget=big_budget, token_estimator=estimator,
-        assembly_policy=AssemblyPolicy(provider_min_recall_chars=50),
-    )
-    full_cost = estimator.estimate_messages(probe_model.calls[0])
-
-    # 只超 100 字符：缩短 provider（省 1950）即可达标；若先动历史，
-    # 3 轮历史总共约 30 字符，裁光也不够 → 必然 exceeded 或丢历史
     model = _FakeModel([ModelResponse(text="回答")])
-    result = AgentLoop(model=model).run_turn(
+    result = AgentLoop(
+        model=model, anchor_builder=DeterministicAnchorBuilder()
+    ).run_turn(
         _history_session(turns=3), Message(role="user", content_text="最新问题"),
         memory_snapshot=snapshot,
-        context_budget=ContextBudget(
-            model_context_tokens=full_cost - 100 + 300, reserved_output_tokens=300
-        ),
+        context_budget=ContextBudget(model_context_tokens=10**9, reserved_output_tokens=1),
         token_estimator=estimator,
-        assembly_policy=AssemblyPolicy(provider_min_recall_chars=50),
     )
 
     assert result.completed, result.error
     sent = model.calls[0]
-    provider_msgs = [m for m in sent if "<provider-memory" in str(m.get("content"))]
-    assert provider_msgs == [
-        {"role": "system", "content": '<provider-memory name="fake">\n' + "长" * 50 + "\n</provider-memory>"}
-    ]
     text = _contents(sent)
+    assert "<provider-memory" not in text
+    assert "长" * 50 not in text
+    assert "provider:fake" in text
     assert "第1轮问题" in text and "第2轮问题" in text and "第3轮问题" in text
     assert "HOT记忆块" in text
 
 
 def test_same_messages_and_budget_produce_same_trimmed_context(tmp_path):
     """§4.3：相同输入与预算必须得到确定性相同的裁剪结果。"""
-    manager = MemoryManager(root=tmp_path / "memory")
-    _add_profile(manager, "偏好：先给结论")
-    snapshot = manager.build_context(scope=_SCOPE, query="q", session_id="s1")
-    budget = ContextBudget(model_context_tokens=1000, reserved_output_tokens=300)
+    snapshot = _snapshot(tmp_path)
+    budget = ContextBudget(model_context_tokens=1100, reserved_output_tokens=300)
     estimator = _FixedCostEstimator(per_message=100)
 
     sent_runs = []
     for _ in range(2):
         model = _FakeModel([ModelResponse(text="回答")])
-        result = AgentLoop(model=model).run_turn(
+        result = AgentLoop(
+            model=model, anchor_builder=DeterministicAnchorBuilder()
+        ).run_turn(
             _history_session(turns=3), Message(role="user", content_text="最新问题"),
             memory_snapshot=snapshot,
             context_budget=budget, token_estimator=estimator,
@@ -315,14 +279,14 @@ def test_same_messages_and_budget_produce_same_trimmed_context(tmp_path):
 
 def test_impossible_required_context_returns_context_budget_exceeded_without_model_call(tmp_path):
     """§4.3 顺序 5：永远保留部分本身超限 → 明确失败，不发送已破坏协议的请求。"""
-    manager = MemoryManager(root=tmp_path / "memory")
-    _add_profile(manager, "偏好：先给结论")
-    snapshot = manager.build_context(scope=_SCOPE, query="q", session_id="s1")
+    snapshot = _snapshot(tmp_path)
     # 永远保留 = system + hot + 最新 user = 3 条 ×100 = 300；可用输入只给 200
     estimator = _FixedCostEstimator(per_message=100)
 
     model = _FakeModel([ModelResponse(text="不应被调用")])
-    result = AgentLoop(model=model).run_turn(
+    result = AgentLoop(
+        model=model, anchor_builder=DeterministicAnchorBuilder()
+    ).run_turn(
         _history_session(turns=3), Message(role="user", content_text="最新问题"),
         memory_snapshot=snapshot,
         context_budget=ContextBudget(model_context_tokens=500, reserved_output_tokens=300),

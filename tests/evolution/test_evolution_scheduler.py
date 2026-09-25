@@ -7,11 +7,11 @@ from __future__ import annotations
 
 import pytest
 
-from Agent.memory import MemoryScope
-from Agent.memory.types import TurnRecord
+from agent.core.memory import MemoryScope
+from agent.core.memory.types import TurnRecord
 
 
-_SCOPE = MemoryScope(kind="personal", key="cli:user:u1")
+_SCOPE = MemoryScope(tenant_id="cli", user_id="u1")
 
 
 def _turn(turn_id: str = "t1") -> TurnRecord:
@@ -32,7 +32,7 @@ def _turn(turn_id: str = "t1") -> TurnRecord:
 
 def test_scheduler_notify_fans_out_to_registered_handlers():
     """notify 把同一 TurnRecord 交给所有已注册 handler。"""
-    from Agent.evolution.scheduler import EvolutionScheduler
+    from agent.evolution.scheduler import EvolutionScheduler
 
     seen: list[str] = []
     sched = EvolutionScheduler()
@@ -46,7 +46,7 @@ def test_scheduler_notify_fans_out_to_registered_handlers():
 
 def test_scheduler_handler_failure_does_not_block_siblings():
     """单个 handler 抛错被吞掉，后续 handler 仍执行。"""
-    from Agent.evolution.scheduler import EvolutionScheduler
+    from agent.evolution.scheduler import EvolutionScheduler
 
     seen: list[str] = []
     sched = EvolutionScheduler()

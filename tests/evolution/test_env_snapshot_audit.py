@@ -9,8 +9,9 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from Agent.evolution.audit import EvolutionAuditEntry, EvolutionAuditLog
-from Agent.evolution.env_snapshot import EnvironmentSnapshotter
+from agent.storage.sqlite import RuntimeStorage
+from agent.evolution.audit import EvolutionAuditEntry
+from agent.evolution.env_snapshot import EnvironmentSnapshotter
 
 
 def test_env_snapshot_captures_runtime_hashes(tmp_path: Path):
@@ -18,7 +19,18 @@ def test_env_snapshot_captures_runtime_hashes(tmp_path: Path):
     prompt = tmp_path / "systemPrompt.md"
     prompt.write_text("hello agent", encoding="utf-8")
     store_path = tmp_path / "env.db"
-    snapper = EnvironmentSnapshotter(store_path)
+    from agent.core.memory import MemoryScope
+    from agent.core.types import Message
+    from agent.core.memory.types import TurnRecord
+    runtime = RuntimeStorage.open(store_path, id_factory=lambda: "s1")
+    scope = MemoryScope(user_id="u")
+    session = runtime.sessions.get_or_create("route",scope=scope)
+    message = session.add_message(Message(role="user",content_text="hello"))
+    runtime.sessions.commit_turn(session,TurnRecord(
+        turn_id="t1",session_id="s1",scope=scope,user_message_id=message.message_id,
+        assistant_message_ids=(),tool_call_ids=(),started_at=1,finished_at=2,
+        completed=True,interrupted=False,error=None),scope=scope)
+    snapper = EnvironmentSnapshotter(runtime.executions)
     snap = snapper.capture(
         session_id="s1",
         turn_id="t1",
@@ -44,9 +56,9 @@ def test_env_snapshot_captures_runtime_hashes(tmp_path: Path):
 
 def test_audit_log_records_evolution_deltas(tmp_path: Path):
     """审计表记录谁在何时对哪条 entry 做了何种 delta。"""
-    log = EvolutionAuditLog(tmp_path / "audit.db")
+    log = RuntimeStorage.open(tmp_path / "audit.db").audit
     entry = EvolutionAuditEntry(
-        actor="PlaybookCurator",
+        actor="SkillEvolution",
         op="add",
         target="memory",
         content_preview="[playbook] 超时先重试",
@@ -59,6 +71,6 @@ def test_audit_log_records_evolution_deltas(tmp_path: Path):
     recent = log.list_recent(10)
     assert len(recent) == 1
     assert recent[0].audit_id == aid
-    assert recent[0].actor == "PlaybookCurator"
+    assert recent[0].actor == "SkillEvolution"
     assert recent[0].admitted is True
     assert "超时" in recent[0].content_preview

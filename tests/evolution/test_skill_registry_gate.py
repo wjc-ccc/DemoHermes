@@ -9,13 +9,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from Agent.evolution.skill_creator import SkillCreator
-from Agent.evolution.types import EvolutionSignal
-from Agent.memory.types import MemoryScope, TurnRecord
-from Agent.skills import SkillRegistry
-from Agent.skills.base import Skill
+from agent.evolution.skill_creator import SkillCreator
+from agent.evolution.types import EvolutionSignal
+from agent.core.memory import MemoryScope
+from agent.core.memory.types import TurnRecord
+from agent.skills import SkillRegistry
+from agent.skills.base import Skill
 
-_SCOPE = MemoryScope(kind="personal", key="cli:user:skill2")
+_SCOPE = MemoryScope(tenant_id="cli", user_id="skill2")
 
 
 def _turn(turn_id: str) -> TurnRecord:
@@ -74,12 +75,15 @@ def test_draft_skill_excluded_from_l1_summaries(tmp_path: Path):
     prompt = registry.summaries_prompt()
     assert "active_flow" in prompt
     assert "draft_flow" not in prompt
-    assert registry.get("draft_flow") is not None  # 仍可 load_content
+    assert registry.get("draft_flow") is not None
+    assert registry.load_content("draft_flow") is None
 
 
 def test_promote_draft_then_appears_in_l1(tmp_path: Path):
-    """Gate promote 后 status=active，L1 出现。"""
-    from Agent.evolution.skill_gate import SkillLifecycleGate
+    """Gate 只有在 replay 通过后才把 status 写成 active，L1 随后出现。"""
+    from agent.evolution.skill_gate import SkillLifecycleGate
+    from agent.evolution.types import ReplayGateResult
+    from agent.skills.repository import SkillRepository
 
     root = tmp_path / "skills"
     skill_dir = root / "promo_flow"
@@ -90,11 +94,21 @@ def test_promote_draft_then_appears_in_l1(tmp_path: Path):
         encoding="utf-8",
     )
     registry = SkillRegistry(skill_dirs=[root])
+    repo = SkillRepository(root, registry=registry)
     assert "promo_flow" not in registry.summaries_prompt()
+    assert registry.load_content("promo_flow") is None
 
-    gate = SkillLifecycleGate(registry)
-    assert gate.record_success("promo_flow") is False  # 未达阈值
-    assert gate.record_success("promo_flow") is True   # 默认 M=2
+    gate = SkillLifecycleGate(registry, repository=repo)
+    assert gate.record_success("promo_flow") is False
+    denied = ReplayGateResult(admitted=False, reason="no_improvement")
+    assert gate.promote_after_replay("promo_flow", denied) is False
+    admitted = ReplayGateResult(
+        admitted=True,
+        reason="improved",
+        improved_case_ids=("origin_task",),
+    )
+    assert gate.promote_after_replay("promo_flow", admitted) is True
     assert Skill.from_file(skill_path).status == "active"
     registry.reload()
     assert "promo_flow" in registry.summaries_prompt()
+    assert registry.load_content("promo_flow") is not None

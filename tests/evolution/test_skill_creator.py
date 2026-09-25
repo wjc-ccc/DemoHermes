@@ -10,10 +10,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from Agent.memory.types import MemoryScope, TurnRecord
-from Agent.evolution.types import EvolutionSignal
+from agent.core.memory import MemoryScope
+from agent.core.memory.types import TurnRecord
+from agent.evolution.types import EvolutionSignal
 
-_SCOPE = MemoryScope(kind="personal", key="cli:user:skill1")
+_SCOPE = MemoryScope(tenant_id="cli", user_id="skill1")
 
 
 def _turn(turn_id: str = "t1", *, completed: bool = True) -> TurnRecord:
@@ -48,7 +49,7 @@ def _signals(
 
 def test_creator_writes_skill_after_frequency_threshold(tmp_path: Path):
     """同一工具序列成功出现达到阈值后，写出 draft SKILL.md。"""
-    from Agent.evolution.skill_creator import SkillCreator
+    from agent.evolution.skill_creator import SkillCreator
 
     root = tmp_path / "skills"
     creator = SkillCreator(skills_root=root, frequency_threshold=2)
@@ -69,7 +70,7 @@ def test_creator_writes_skill_after_frequency_threshold(tmp_path: Path):
 
 def test_creator_skips_when_failures_or_single_tool(tmp_path: Path):
     """有失败或单工具轨迹不创建 Skill。"""
-    from Agent.evolution.skill_creator import SkillCreator
+    from agent.evolution.skill_creator import SkillCreator
 
     creator = SkillCreator(skills_root=tmp_path / "skills", frequency_threshold=1)
     assert (
@@ -87,7 +88,7 @@ def test_creator_skips_when_failures_or_single_tool(tmp_path: Path):
 
 def test_creator_does_not_overwrite_existing(tmp_path: Path):
     """已存在同名 Skill 时不再写盘。"""
-    from Agent.evolution.skill_creator import SkillCreator
+    from agent.evolution.skill_creator import SkillCreator
 
     root = tmp_path / "skills"
     creator = SkillCreator(skills_root=root, frequency_threshold=1)

@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from Agent.evolution.skill_selector import SkillSelector
-from Agent.skills import SkillRegistry
-from Agent.skills.base import Skill
+from agent.evolution.skill_selector import SkillSelector
+from agent.skills import SkillRegistry
+from agent.skills.base import Skill
 
 
 def _write_skill(root: Path, name: str, description: str, *, status: str = "active") -> None:

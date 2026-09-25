@@ -15,14 +15,14 @@ import logging
 
 import pytest
 
-from Agent.channel.baseChannel import BaseChannel
-from Agent.channel.registry import (
+from agent.channel.baseChannel import BaseChannel
+from agent.channel.registry import (
     CHANNEL_ENTRIES,
     ChannelEntry,
     autostart_channels,
     resolve_channel_credentials,
 )
-from Agent.core.types import InboundEvent, OutboundReply
+from agent.core.types import InboundEvent, OutboundReply
 
 
 class FakeChannel(BaseChannel):

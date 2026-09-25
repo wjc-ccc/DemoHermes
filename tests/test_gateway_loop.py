@@ -7,7 +7,7 @@ Gateway / AgentLoop / Tool / Skill 全链路测试
     3. 消息构建函数（user / assistant+tool_calls / tool）
     4. calculator 工具（含安全拦截）
     5. SkillRegistry + use_skill 工具
-    6. ContextBuilder 的 OpenAI 协议映射
+    6. PrecisionBuilder 的 OpenAI 协议映射
     7. AgentLoop 多步工具循环（mock：先调工具再给文本）
     8. AgentLoop 容错（模型异常 → 重试 → error；超迭代 → 兜底）
     9. Gateway 总线回路（ask 同步问答、/new 短路、同 key 串行）
@@ -27,20 +27,20 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from Agent.core.events import EventBus
-from Agent.core.loop import AgentLoop
-from Agent.core.messages import (
+from agent.core.event_bus import EventBus
+from agent.core.agent_loop import AgentLoop
+from agent.core.building_messages import (
     build_assistant_message,
     build_tool_message,
     build_user_message,
 )
-from Agent.core.types import InboundEvent, Session, SessionSource, ToolCall
-from Agent.core.context_builder import ContextBuilder
-from Agent.gateway import DictSessionStore, Gateway, build_session_key
-from Agent.model.baseStructure import BaseModel, ModelResponse, ToolCallRequest
-from Agent.skills import SkillRegistry, UseSkillTool
-from Agent.tools.calculator_tools import CalculatorTool
-from Agent.tools.registry import ToolRegistry
+from agent.core.types import InboundEvent, Session, SessionSource, ToolCall
+from agent.core.precision import PrecisionBuilder
+from agent.gateway import DictSessionStore, Gateway, build_session_key
+from agent.model.baseStructure import BaseModel, ModelResponse, ToolCallRequest
+from agent.skills import SkillRegistry, UseSkillTool
+from agent.tools.calculator_tools import CalculatorTool
+from agent.tools.registry import ToolRegistry
 
 
 # ================= Mock 模型 =================
@@ -164,8 +164,8 @@ def test_use_skill_tool():
     assert not tool.execute({"skill_name": "不存在"}).ok
 
 
-# ================= 6. ContextBuilder 协议映射 =================
-def test_context_builder_maps_tool_messages():
+# ================= 6. PrecisionBuilder 协议映射 =================
+def test_precision_engine_maps_tool_messages():
     session = Session(session_key="k")
     session.add_message(build_user_message(make_event("算一下 1+1")))
     req = ToolCallRequest(id="call_1", name="calculator", arguments={"expression": "1+1"}, arguments_raw='{"expression": "1+1"}')
@@ -173,7 +173,7 @@ def test_context_builder_maps_tool_messages():
     record = ToolCall(tool_call_id="call_1", tool_name="calculator", status="success", result_text="1+1 = 2")
     session.add_message(build_tool_message(record))
 
-    messages = ContextBuilder(session).building_context()
+    messages = PrecisionBuilder().build(session).messages
     roles = [m["role"] for m in messages]
     assert roles == ["system", "user", "assistant", "tool"]
     assistant_msg = messages[2]
@@ -182,12 +182,15 @@ def test_context_builder_maps_tool_messages():
     assert messages[3]["tool_call_id"] == "call_1"
 
 
-def test_context_builder_injects_skill_summary_and_ephemeral():
+def test_precision_engine_injects_skill_summary_and_ephemeral():
     session = Session(session_key="k")
     session.add_message(build_user_message(make_event("hi")))
-    messages = ContextBuilder(
-        session, skill_registry=SkillRegistry(), ephemeral_prompt="你在测试环境"
-    ).building_context()
+    selection = SkillRegistry().select()
+    messages = PrecisionBuilder().build(
+        session,
+        skill_selection=selection,
+        ephemeral_prompt="你在测试环境",
+    ).messages
     systems = [m["content"] for m in messages if m["role"] == "system"]
     assert any("weekly_report" in s for s in systems)   # 技能摘要注入
     assert any("测试环境" in s for s in systems)          # ephemeral 注入
@@ -314,7 +317,7 @@ def test_loop_max_iterations_fallback():
 # ================= 9. Gateway 总线回路 =================
 def _make_gateway(script) -> Gateway:
     loop, _ = _make_loop(script)
-    from Agent.channel.channel_cli import CliChannel
+    from agent.channel.channel_cli import CliChannel
     gateway = Gateway(loop=loop, store=DictSessionStore())
     gateway.register_channel(CliChannel(quiet=True))
     gateway.start()
@@ -374,7 +377,7 @@ def test_gateway_same_session_key_serialized():
 
 
 # ================= 10. ClaudeModel 协议转换（纯本地，不发请求） =================
-from Agent.model.claude import ClaudeModel
+from agent.model.claude import ClaudeModel
 
 
 def test_claude_convert_messages_basic():

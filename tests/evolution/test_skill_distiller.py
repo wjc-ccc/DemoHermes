@@ -9,12 +9,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from Agent.evolution.skill_creator import SkillCreator
-from Agent.evolution.skill_distiller import TrajectorySkillDistiller
-from Agent.evolution.types import EvolutionSignal, SkillProposal
-from Agent.memory.types import MemoryScope, TurnRecord
+from agent.evolution.skill_creator import SkillCreator
+from agent.evolution.skill_distiller import TrajectorySkillDistiller
+from agent.evolution.types import EvolutionSignal, SkillProposal
+from agent.core.memory import MemoryScope
+from agent.core.memory.types import TurnRecord
 
-_SCOPE = MemoryScope(kind="personal", key="cli:user:dist1")
+_SCOPE = MemoryScope(tenant_id="cli", user_id="dist1")
 
 
 def _turn(tid: str = "t1") -> TurnRecord:

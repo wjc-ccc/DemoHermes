@@ -11,15 +11,16 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from Agent.channel.channel_cli import CliChannel
-from Agent.core.context_budget import ContextBudget
-from Agent.core.events import EventBus
-from Agent.core.loop import AgentLoop
-from Agent.core.types import InboundEvent, SessionSource
-from Agent.gateway import Gateway
-from Agent.memory import MemoryManager
-from Agent.memory.episodic.store import SqliteSessionStore
-from Agent.model.baseStructure import ModelResponse
+from agent.storage.sqlite import RuntimeStorage
+from agent.channel.channel_cli import CliChannel
+from agent.core.context_budget import ContextBudget
+from agent.core.event_bus import EventBus
+from agent.core.agent_loop import AgentLoop
+from agent.core.memory import MemoryContextLoader
+from agent.core.types import InboundEvent, SessionSource
+from agent.gateway import Gateway
+from agent.storage.sqlite import SqliteSessionStore
+from agent.model.baseStructure import ModelResponse
 
 
 class _MockModel:
@@ -49,15 +50,15 @@ def _event(text: str) -> InboundEvent:
 
 def test_gateway_passes_context_budget_and_surfaces_exceeded(tmp_path):
     """配置极小 budget 时 Gateway 路径返回 context_budget_exceeded，且不调模型。"""
-    manager = MemoryManager(root=tmp_path / "memory")
-    store = SqliteSessionStore(tmp_path / "memory.db")
+    memory_context = MemoryContextLoader(root=tmp_path / "memory")
+    store = RuntimeStorage.open(tmp_path / "memory.db").sessions
     model = _MockModel()
     loop = AgentLoop(model=model, event_bus=EventBus())
     budget = ContextBudget(model_context_tokens=20, reserved_output_tokens=10)
     gw = Gateway(
         loop=loop,
         store=store,
-        memory=manager,
+        memory_context=memory_context,
         workers=1,
         context_budget=budget,
         token_estimator=_HugeEstimator(),

@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import time
 
-from Agent.core.events import EventBus, LoopEvent
-from Agent.evolution.signals import EvolutionSignalCollector
+from agent.core.event_bus import EventBus, LoopEvent
+from agent.evolution.signals import EvolutionSignalCollector
 
 
 def test_signal_collector_records_tool_failure():

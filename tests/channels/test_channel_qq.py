@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import pytest
 
-from Agent.channel.channel_qq import (
+from agent.channel.channel_qq import (
     GATEWAY_URL,
     TOKEN_URL,
     QQChannel,
 )
-from Agent.core.types import OutboundReply, SessionSource
+from agent.core.types import OutboundReply, SessionSource
 
 
 class CollectGateway:

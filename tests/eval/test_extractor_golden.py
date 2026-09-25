@@ -1,51 +1,37 @@
-"""E2：记忆抽取 golden 集（8.15）——对 RuleBasedExtractor.extract 公开面回归。
-
-期望值为字面量 target 序列（含空 = 不写）。不 mock Store/Extractor。
-"""
+"""RuleBasedMemoryExtractor 的版本化分层与安全拒写 golden。"""
 from __future__ import annotations
 
-import sys
+import json
 from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+from agent.core.memory import MemoryScope, RuleBasedMemoryExtractor
+from agent.core.memory.types import TurnRecord
+from agent.core.types import Message, Session
+from agent.eval import ClassificationRequest, ClassificationSample, run_classification
 
-from Agent.core.types import Message
-from Agent.memory import MemoryScope
-from Agent.memory.episodic.store import SqliteSessionStore
-from Agent.memory.extractors import RuleBasedExtractor
-from Agent.memory.types import TurnRecord
-
-_SCOPE = MemoryScope(kind="personal", key="cli:user:eval-extract")
-
-# (id, user_text, expected_targets) — expected 为空元组表示不写任何层
-_GOLDENS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
-    ("greet_nihao", "你好", ()),
-    ("greet_hello", "hello", ()),
-    ("slash_help", "/help", ()),
-    ("oneoff_weather", "今天天气怎么样？", ()),
-    ("oneoff_short_q", "几点了？", ()),
-    ("pref_remember", "请记住我偏好先给结论", ("profile",)),
-    ("pref_like", "我喜欢用简体中文交流", ("profile",)),
-    ("agent_must", "你必须总是先列步骤再写代码", ("memory",)),
-    ("agent_always", "请始终用中文回答", ("memory",)),
-    ("daily_deploy", "今天把服务部署到了 staging 环境", ("daily",)),
-    ("daily_meeting", "下午三点和产品对齐了需求范围", ("daily",)),
-)
+_DATASET_PATH = Path(__file__).parent / "datasets" / "memory_extraction_rule_based.json"
+_CASES = tuple(json.loads(_DATASET_PATH.read_text(encoding="utf-8"))["cases"])
 
 
-def _commit_user(store: SqliteSessionStore, text: str, *, turn_id: str) -> TurnRecord:
-    session = store.get_or_create(f"k-{turn_id}", scope=_SCOPE)
-    msg = Message(role="user", content_text=text)
-    session.add_message(msg)
+def _inputs(case: dict) -> tuple[TurnRecord, Session]:
+    scope = MemoryScope(
+        tenant_id="cli",
+        user_id="eval-extract",
+        task_id="task-1" if case["task_scope"] else None,
+    )
+    message = Message(
+        message_id=f"message-{case['id']}",
+        role="user",
+        content_text=case["text"],
+    )
+    session = Session(session_id=f"session-{case['id']}", messages=[message])
     turn = TurnRecord(
-        turn_id=turn_id,
+        turn_id=f"turn-{case['id']}",
         session_id=session.session_id,
-        scope=_SCOPE,
-        user_message_id=msg.message_id,
+        scope=scope,
+        user_message_id=message.message_id,
         assistant_message_ids=(),
         tool_call_ids=(),
         started_at=1000.0,
@@ -54,21 +40,43 @@ def _commit_user(store: SqliteSessionStore, text: str, *, turn_id: str) -> TurnR
         interrupted=False,
         error=None,
     )
-    store.commit_turn(session, turn, scope=_SCOPE)
-    return turn
+    return turn, session
 
 
-@pytest.mark.parametrize(
-    "case_id,user_text,expected_targets",
-    _GOLDENS,
-    ids=[g[0] for g in _GOLDENS],
-)
-def test_rule_extractor_golden_targets(tmp_path, case_id, user_text, expected_targets):
-    store = SqliteSessionStore(tmp_path / f"{case_id}.db")
-    turn = _commit_user(store, user_text, turn_id=case_id)
-    extractor = RuleBasedExtractor(store)
+@pytest.mark.parametrize("case", _CASES, ids=[case["id"] for case in _CASES])
+def test_rule_extractor_golden(case):
+    turn, session = _inputs(case)
+    proposals = RuleBasedMemoryExtractor(id_factory=lambda: "proposal-1").extract(
+        turn, session
+    )
+    expected = case["expected_layer"]
 
-    reqs = extractor.extract(turn)
-    targets = tuple(r.target for r in reqs)
+    if expected == "none":
+        assert proposals == []
+        return
+    assert len(proposals) == 1
+    assert proposals[0].target_layer.value == expected
+    assert proposals[0].source_message_ids == (turn.user_message_id,)
 
-    assert targets == expected_targets
+
+def test_rule_extractor_dataset_scorecard():
+    samples = []
+    for case in _CASES:
+        turn, session = _inputs(case)
+        proposals = RuleBasedMemoryExtractor().extract(turn, session)
+        actual = proposals[0].target_layer.value if proposals else "none"
+        samples.append(
+            ClassificationSample(
+                case_id=case["id"],
+                expected_label=case["expected_layer"],
+                actual_label=actual,
+                tags=tuple(case["tags"]),
+            )
+        )
+
+    report = run_classification(
+        ClassificationRequest(samples=tuple(samples), labels=("user", "task", "none"))
+    )
+    assert report.accuracy == 1.0
+    assert report.macro_f1 == 1.0
+    assert report.errors == ()

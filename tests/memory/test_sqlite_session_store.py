@@ -5,16 +5,17 @@
 """
 import pytest
 
-from Agent.core.types import ContentPart, Message, Session, ToolCall
-from Agent.memory import MemoryScope
-from Agent.memory.episodic.store import (
+from agent.storage.sqlite import RuntimeStorage
+from agent.core.types import Anchor, AnchorFact, ContentPart, Message, Session, ToolCall
+from agent.core.memory import MemoryScope
+from agent.storage.sqlite import (
     AuditConflictError,
     SessionIntegrityError,
     SqliteSessionStore,
 )
-from Agent.memory.types import TurnRecord
+from agent.core.memory.types import TurnRecord
 
-_SCOPE = MemoryScope(kind="personal", key="cli:user:u1")
+_SCOPE = MemoryScope(tenant_id="cli", user_id="u1")
 
 
 def _turn(session: Session, *, turn_id: str = "t1") -> TurnRecord:
@@ -36,14 +37,14 @@ def _turn(session: Session, *, turn_id: str = "t1") -> TurnRecord:
 def test_saved_session_is_restored_by_new_store_instance(tmp_path):
     """commit_turn 落库后，新 Store 实例（=进程重启）能按 session_key 恢复 Session。"""
     db = tmp_path / "memory.db"
-    store1 = SqliteSessionStore(db)
+    store1 = RuntimeStorage.open(db).sessions
     session = store1.get_or_create(
         "cli:dm:u1", scope=_SCOPE, channel="cli", author_id="u1"
     )
     session.add_message(Message(role="user", content_text="你好，记住我"))
     store1.commit_turn(session, _turn(session), scope=_SCOPE)
 
-    store2 = SqliteSessionStore(db)  # 新实例，模拟重启
+    store2 = RuntimeStorage.open(db).sessions  # 新实例，模拟重启
     restored = store2.find("cli:dm:u1")
 
     assert restored is not None
@@ -56,10 +57,52 @@ def test_saved_session_is_restored_by_new_store_instance(tmp_path):
     assert restored.message_count == 1
 
 
+def test_structured_context_anchor_roundtrips_in_session_payload(tmp_path):
+    """context_anchor 随 Session payload 持久化，不需要新增数据库表。"""
+    db = tmp_path / "memory.db"
+    store = RuntimeStorage.open(db).sessions
+    session = store.get_or_create("anchor", scope=_SCOPE)
+    session.add_message(Message(role="user", content_text="问题"))
+    session.context_anchor = Anchor(
+        anchor_id="anchor-1",
+        session_id=session.session_id,
+        covered_start_seq=0,
+        covered_end_seq=0,
+        covered_start_message_id=session.messages[0].message_id,
+        covered_end_message_id=session.messages[0].message_id,
+        covered_turn_count=1,
+        source_digest="digest",
+        intent=(AnchorFact(
+            text="问题",
+            source_message_ids=(session.messages[0].message_id,),
+        ),),
+    )
+    store.commit_turn(session, _turn(session), scope=_SCOPE)
+
+    restored = RuntimeStorage.open(db).sessions.find("anchor")
+    assert restored is not None
+    assert restored.context_anchor == session.context_anchor
+    assert isinstance(restored.context_anchor, Anchor)
+
+
+def test_invalid_context_anchor_payload_does_not_block_session_restore(tmp_path):
+    """损坏旧 Anchor 保留为字典，由 Precision 恢复原始历史。"""
+    db = tmp_path / "memory.db"
+    store = RuntimeStorage.open(db).sessions
+    session = store.get_or_create("invalid-anchor", scope=_SCOPE)
+    session.add_message(Message(role="user", content_text="问题"))
+    session.context_anchor = {"version": 2, "anchor_id": "broken"}
+    store.commit_turn(session, _turn(session), scope=_SCOPE)
+
+    restored = RuntimeStorage.open(db).sessions.find("invalid-anchor")
+    assert restored is not None
+    assert restored.context_anchor == {"version": 2, "anchor_id": "broken"}
+
+
 def test_repeated_commit_turn_is_idempotent(tmp_path):
     """§6.3：相同 turn_id + 相同 payload 重复 commit 幂等成功，消息不翻倍。"""
     db = tmp_path / "memory.db"
-    store = SqliteSessionStore(db)
+    store = RuntimeStorage.open(db).sessions
     session = store.get_or_create("k", scope=_SCOPE)
     session.add_message(Message(role="user", content_text="问题"))
     turn = _turn(session)
@@ -67,7 +110,7 @@ def test_repeated_commit_turn_is_idempotent(tmp_path):
     store.commit_turn(session, turn, scope=_SCOPE)
     store.commit_turn(session, turn, scope=_SCOPE)  # 重复提交同一 turn
 
-    restored = SqliteSessionStore(db).find("k")
+    restored = RuntimeStorage.open(db).sessions.find("k")
     assert restored is not None
     assert [m.content_text for m in restored.messages] == ["问题"]
     assert restored.message_count == 1
@@ -75,7 +118,7 @@ def test_repeated_commit_turn_is_idempotent(tmp_path):
 
 def test_find_returns_none_for_unknown_session_key(tmp_path):
     """未知 session_key 不自动创建，返回 None。"""
-    store = SqliteSessionStore(tmp_path / "memory.db")
+    store = RuntimeStorage.open(tmp_path / "memory.db").sessions
     store.get_or_create("known", scope=_SCOPE)
 
     assert store.find("unknown") is None
@@ -84,7 +127,7 @@ def test_find_returns_none_for_unknown_session_key(tmp_path):
 
 def test_wal_and_foreign_keys_are_enabled(tmp_path):
     """§6.1：连接工厂产生的每个连接都满足 WAL / foreign_keys / busy_timeout 契约。"""
-    store = SqliteSessionStore(tmp_path / "memory.db")
+    store = RuntimeStorage.open(tmp_path / "memory.db").sessions
 
     info = store.diagnostics()
 
@@ -99,7 +142,7 @@ def test_wal_and_foreign_keys_are_enabled(tmp_path):
 def test_message_content_parts_and_metadata_roundtrip_losslessly(tmp_path):
     """§6.2/ADR-6：ContentPart 多模态字段与嵌套 metadata 经 model_dump_json 无损往返。"""
     db = tmp_path / "memory.db"
-    store = SqliteSessionStore(db)
+    store = RuntimeStorage.open(db).sessions
     session = store.get_or_create("k", scope=_SCOPE, channel="cli", author_id="u1")
     original = Message(
         role="user",
@@ -121,7 +164,7 @@ def test_message_content_parts_and_metadata_roundtrip_losslessly(tmp_path):
     session.add_message(original)
     store.commit_turn(session, _turn(session), scope=_SCOPE)
 
-    restored = SqliteSessionStore(db).find("k")
+    restored = RuntimeStorage.open(db).sessions.find("k")
     assert len(restored.messages) == 1
     assert restored.messages[0].model_dump(mode="json") == original.model_dump(mode="json")
 
@@ -129,7 +172,7 @@ def test_message_content_parts_and_metadata_roundtrip_losslessly(tmp_path):
 def test_tool_call_result_and_error_roundtrip_losslessly(tmp_path):
     """§6.2：ToolCall 的结构化结果、错误与 metadata 经 payload_json 无损往返。"""
     db = tmp_path / "memory.db"
-    store = SqliteSessionStore(db)
+    store = RuntimeStorage.open(db).sessions
     session = store.get_or_create("k", scope=_SCOPE)
     session.add_message(Message(role="user", content_text="算一下"))
     ok_call = ToolCall(
@@ -148,7 +191,7 @@ def test_tool_call_result_and_error_roundtrip_losslessly(tmp_path):
     session.tool_calls.extend([ok_call, err_call])
     store.commit_turn(session, _turn(session), scope=_SCOPE)
 
-    restored = SqliteSessionStore(db).find("k")
+    restored = RuntimeStorage.open(db).sessions.find("k")
     assert [tc.model_dump(mode="json") for tc in restored.tool_calls] == [
         ok_call.model_dump(mode="json"),
         err_call.model_dump(mode="json"),
@@ -158,7 +201,7 @@ def test_tool_call_result_and_error_roundtrip_losslessly(tmp_path):
 def test_completed_message_recommit_with_identical_payload_is_idempotent(tmp_path):
     """§6.3/ADR-12：后续 commit 携带未变的已完成消息 = 幂等成功，不重复、不报错。"""
     db = tmp_path / "memory.db"
-    store = SqliteSessionStore(db)
+    store = RuntimeStorage.open(db).sessions
     session = store.get_or_create("k", scope=_SCOPE)
     session.add_message(Message(role="user", content_text="第一问"))
     store.commit_turn(session, _turn(session, turn_id="t1"), scope=_SCOPE)
@@ -167,14 +210,14 @@ def test_completed_message_recommit_with_identical_payload_is_idempotent(tmp_pat
     turn2 = _turn(session, turn_id="t2")
     store.commit_turn(session, turn2, scope=_SCOPE)  # t1 消息原样再次提交
 
-    restored = SqliteSessionStore(db).find("k")
+    restored = RuntimeStorage.open(db).sessions.find("k")
     assert [m.content_text for m in restored.messages] == ["第一问", "第一答"]
 
 
 def test_completed_message_recommit_with_changed_payload_raises_audit_conflict(tmp_path):
     """§6.3/ADR-12：相同 message_id 不同 payload 重提必须暴露冲突，禁止静默覆盖。"""
     db = tmp_path / "memory.db"
-    store = SqliteSessionStore(db)
+    store = RuntimeStorage.open(db).sessions
     session = store.get_or_create("k", scope=_SCOPE)
     original = Message(role="user", content_text="原始内容")
     session.add_message(original)
@@ -185,14 +228,14 @@ def test_completed_message_recommit_with_changed_payload_raises_audit_conflict(t
     with pytest.raises(AuditConflictError):
         store.commit_turn(session, _turn(session, turn_id="t2"), scope=_SCOPE)
 
-    restored = SqliteSessionStore(db).find("k")
+    restored = RuntimeStorage.open(db).sessions.find("k")
     assert [m.content_text for m in restored.messages] == ["原始内容"]  # 未被覆盖
 
 
 def test_close_and_reset_atomically_switches_active_session_and_preserves_old_session(tmp_path):
     """§6.3：一个事务内关闭旧 session + 创建新 session + 切换 slot；旧数据保留。"""
     db = tmp_path / "memory.db"
-    store = SqliteSessionStore(db)
+    store = RuntimeStorage.open(db).sessions
     session = store.get_or_create("k", scope=_SCOPE, channel="cli", author_id="u1")
     session.add_message(Message(role="user", content_text="旧会话消息"))
     store.commit_turn(session, _turn(session), scope=_SCOPE)
@@ -209,7 +252,7 @@ def test_close_and_reset_atomically_switches_active_session_and_preserves_old_se
     assert result.new_session.messages == []
     assert result.new_session.session_key == "k"
 
-    active = SqliteSessionStore(db).find("k")  # 新实例验证切换已落库
+    active = RuntimeStorage.open(db).sessions.find("k")  # 新实例验证切换已落库
     assert active is not None
     assert active.session_id == result.new_session.session_id
     assert active.messages == []
@@ -218,7 +261,7 @@ def test_close_and_reset_atomically_switches_active_session_and_preserves_old_se
 def test_close_and_reset_persists_unsaved_old_messages_before_switch(tmp_path):
     """§6.3-2/ADR-13：切换前必须把调用方最新状态（含未 commit 消息）落库。"""
     db = tmp_path / "memory.db"
-    store = SqliteSessionStore(db)
+    store = RuntimeStorage.open(db).sessions
     session = store.get_or_create("k", scope=_SCOPE)
     session.add_message(Message(role="user", content_text="已提交"))
     store.commit_turn(session, _turn(session, turn_id="t1"), scope=_SCOPE)
@@ -234,7 +277,7 @@ def test_close_and_reset_persists_unsaved_old_messages_before_switch(tmp_path):
     tampered = result.closed_session.model_copy(deep=True)
     tampered.messages[1].content_text = "篡改"
     with pytest.raises(AuditConflictError):
-        SqliteSessionStore(db).commit_turn(
+        RuntimeStorage.open(db).sessions.commit_turn(
             tampered, _turn(tampered, turn_id="t2"), scope=_SCOPE
         )
 
@@ -246,16 +289,16 @@ def _explode_id() -> str:
 def test_failed_close_and_reset_does_not_fire_session_end_hook(tmp_path):
     """§3.3：事务失败整体回滚——无 SessionReset（Gateway 无从发 hook），旧 active 不变。"""
     db = tmp_path / "memory.db"
-    store = SqliteSessionStore(db)
+    store = RuntimeStorage.open(db).sessions
     session = store.get_or_create("k", scope=_SCOPE)
     session.add_message(Message(role="user", content_text="旧消息"))
     store.commit_turn(session, _turn(session), scope=_SCOPE)
 
-    exploding = SqliteSessionStore(db, id_factory=_explode_id)
+    exploding = RuntimeStorage.open(db, id_factory=_explode_id).sessions
     with pytest.raises(RuntimeError, match="boom"):
         exploding.close_and_reset("k", session, scope=_SCOPE)
 
-    active = SqliteSessionStore(db).find("k")
+    active = RuntimeStorage.open(db).sessions.find("k")
     assert active is not None
     assert active.session_id == session.session_id  # slot 未切换
     assert active.status == "active"                # 旧 session 未被标记 completed
@@ -265,10 +308,10 @@ def test_failed_close_and_reset_does_not_fire_session_end_hook(tmp_path):
 def test_slot_scope_mismatch_is_rejected_as_integrity_error(tmp_path):
     """§6.3：get_or_create 传入 scope 与 slot 记录不一致 → 完整性错误，不跨 scope 恢复。"""
     db = tmp_path / "memory.db"
-    store = SqliteSessionStore(db)
+    store = RuntimeStorage.open(db).sessions
     store.get_or_create("k", scope=_SCOPE)
 
-    other = MemoryScope(kind="group", key="cli:chat:c1")
+    other = MemoryScope(tenant_id="cli:chat:c1")
     with pytest.raises(SessionIntegrityError):
         store.get_or_create("k", scope=other)
 

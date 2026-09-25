@@ -20,8 +20,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from Agent.channel.channel_feishu import FeishuChannel
-from Agent.core.types import OutboundReply, SessionSource
+from agent.channel.channel_feishu import FeishuChannel
+from agent.core.types import OutboundReply, SessionSource
 
 
 def _raw(**over) -> dict:
