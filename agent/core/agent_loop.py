@@ -211,7 +211,8 @@ class AgentLoop:
             action_context = action_context.with_skills(skill_selection)
 
         ## 当前对话开始 循环迭代
-        for iteration in range(1, self.max_iterations + 1):
+        iteration_limit = action_context.max_iterations if action_context is not None and action_context.max_iterations else self.max_iterations
+        for iteration in range(1, iteration_limit + 1):
             if self._interrupt:
                 logger.info("turn 被打断 turn_id=%s", turn_id)
                 return TurnResult(
@@ -330,7 +331,7 @@ class AgentLoop:
             )
 
         fallback = "（抱歉，这个问题需要的推理步骤超出了我的上限，请换个问法或拆小一点再试。）"
-        logger.warning("turn 超过最大迭代 turn_id=%s max=%d", turn_id, self.max_iterations)
+        logger.warning("turn 超过最大迭代 turn_id=%s max=%d", turn_id, iteration_limit)
         session.add_message(build_assistant_message(fallback))
         self._emit("turn_error", turn_id, session, session_key, error="max_iterations")
         return TurnResult(

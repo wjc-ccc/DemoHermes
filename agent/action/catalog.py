@@ -1,5 +1,6 @@
 """可信工具注册与启动检验；MCP 声明本身不授予执行权限。"""
 from copy import deepcopy
+from types import CodeType
 from jsonschema import Draft202012Validator
 from .ledger import digest
 from .policy import RISK_ORDER
@@ -27,13 +28,14 @@ class ActionToolCatalog:
     def __init__(self):
         self._entries = {}
 
-    def register(self, tool, policy, adapter, *, operation_policies=None, output_schema=None, post_guards=()):
+    def register(self, tool, policy, adapter, *, operation_policies=None, output_schema=None, pre_guards=(), post_guards=()):
         if tool.name in self._entries:
             raise ValueError(f"重复注册 action 工具: {tool.name}")
         self._entries[tool.name] = {
             "tool": tool, "policy": policy, "adapter": adapter,
             "operations": operation_policies or {}, "output_schema": output_schema,
             "post_guards": tuple(post_guards),
+            "pre_guards": tuple(pre_guards),
         }
         strict_schema(tool.parameters)
         if output_schema is not None:
@@ -56,7 +58,25 @@ class ActionToolCatalog:
             "parameters": strict_schema(entry["tool"].parameters),
             "output_schema": entry["output_schema"], "policy": entry["policy"].model_dump(mode="json"),
             "operations": {key: policy.model_dump(mode="json") for key, policy in entry["operations"].items()},
+            "implementation_hash": self._code_hash(entry["tool"].execute),
+            "pre_guards": [{"version": getattr(guard, "version", "1"), "code_hash": self._code_hash(guard)}
+                           for guard in entry["pre_guards"]],
+            "post_guards": [{"version": getattr(guard, "version", "1"), "code_hash": self._code_hash(guard)}
+                            for guard in entry["post_guards"]],
         }
+
+    @staticmethod
+    def _code_hash(function):
+        code = getattr(function, "__code__", None)
+        def constant(value):
+            if isinstance(value, CodeType):
+                return {"bytecode": value.co_code.hex(), "names": value.co_names,
+                        "constants": tuple(constant(item) for item in value.co_consts)}
+            if isinstance(value, (tuple, frozenset)):
+                values = [constant(item) for item in value]
+                return sorted(values, key=repr) if isinstance(value, frozenset) else values
+            return repr(value)
+        return digest(constant(code)) if code else None
 
     def contract_hash(self, name):
         return digest(self.contract(name))

@@ -105,3 +105,40 @@ def test_contract_drift_and_call_budget(bank_runtime):
     calls = runtime.execute_batch((payment(), payment(obligation_id="E0012")), ctx)
     assert calls[0].ok and "call_budget_exhausted" in calls[1].error
 
+
+def test_replay_applies_new_post_policy_without_new_side_effect(bank_runtime):
+    bank, _, runtime = bank_runtime
+    assert runtime.execute_batch((payment(),), context(runtime))[0].ok
+    def redact(raw, ctx):
+        output = raw.model_dump(mode="json")
+        output["data"] = {"amount": raw.data["amount"]}
+        output["result_text"] = "已付款，回执已遮蔽"
+        return GateDecision(verdict="accept", layer="post", effective_value=output)
+    runtime.catalog.get("fake_pay")["post_guards"] = (redact,)
+    replay = runtime.execute_batch((payment(),), context(runtime))[0]
+    item = runtime.ledger.get(replay.metadata["action"]["ledger_entry_id"])
+    assert replay.ok and "external_ref" not in replay.tool_call_result
+    assert "external_ref" in item.raw_output["data"] and item.publish_state == "redacted" and bank.calls == 1
+
+
+def test_not_found_does_not_authorize_a_retry(bank_runtime):
+    bank, _, runtime = bank_runtime
+    bank.lose_response = True
+    call = runtime.execute_batch((payment(),), context(runtime))[0]
+    item = runtime.ledger.get(call.metadata["action"]["ledger_entry_id"])
+    runtime.ledger.update(item, changes={"lease_expires_at": 0}, event_type="crashed")
+    bank.receipts.clear()
+    assert runtime.recover()[0].effect_state == "unknown"
+    assert not runtime.execute_batch((payment(),), context(runtime))[0].ok and bank.calls == 1
+
+
+def test_pre_records_requested_and_effective_arguments_separately(bank_runtime):
+    bank, _, runtime = bank_runtime
+    def normalize(values, ctx):
+        return GateDecision(verdict="accept", layer="pre", effective_value={**values, "amount": min(values["amount"], 100)})
+    runtime.catalog.get("fake_pay")["pre_guards"] = (normalize,)
+    call = runtime.execute_batch((payment(amount=105),), context(runtime))[0]
+    item = runtime.ledger.get(call.metadata["action"]["ledger_entry_id"])
+    assert call.ok and item.requested_args["amount"] == 105 and item.effective_args["amount"] == 100
+    assert next(iter(bank.receipts.values()))["amount"] == 100
+

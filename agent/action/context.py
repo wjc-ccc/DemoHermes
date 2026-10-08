@@ -18,9 +18,15 @@ class ToolContext(BaseModel):
     contract_hashes: dict[str, str] = Field(default_factory=dict)
     contracts: dict[str, dict] = Field(default_factory=dict)
     memory_identity: dict = Field(default_factory=dict)
+    plan_source_verified: bool = False
+    compensates_entry_id: str | None = None
     plan_id: str | None = None
     step_id: str | None = None
     segment_id: str | None = None
+    step_lease_token: str | None = None
+    target_ref: str | None = None
+    target_version: str | None = None
+    max_iterations: int | None = None
     memory_scope: Any = Field(default=None, exclude=True)
     skills: Any = Field(default=None, exclude=True)
 

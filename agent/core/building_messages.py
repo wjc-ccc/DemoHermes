@@ -71,5 +71,7 @@ def build_tool_message(record: ToolCall) -> Message:
         content_text=text or "",
         content=[ContentPart(type="text", text=text)] if text else [],
         tool_call_ids=[record.tool_call_id],
-        metadata={"tool_call_id": record.tool_call_id, "tool_name": record.tool_name},
+        # ACTION-HOOK-11：action 的事实 ID 每次尝试唯一；模型回注保留 provider ID。
+        # 关闭模块的记录没有此 metadata，继续使用原 tool_call_id。
+        metadata={"tool_call_id": record.metadata.get("provider_tool_call_id", record.tool_call_id), "tool_name": record.tool_name},
     )

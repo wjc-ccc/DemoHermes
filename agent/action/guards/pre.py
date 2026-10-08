@@ -28,6 +28,8 @@ class PreGuard:
             return blocked("permission_denied")
         if policy.permission == "admin" and context.role != "admin":
             return blocked("permission_denied")
+        if policy.permission == "owner" and context.role not in {"owner", "admin"}:
+            return blocked("permission_denied")
         if any(str(key).startswith("_") for key in arguments):
             return blocked("internal_argument_forbidden")
         errors = list(Draft202012Validator(self.catalog.contract(name)["parameters"]).iter_errors(arguments))
@@ -37,6 +39,16 @@ class PreGuard:
             return blocked("contract_drift")
         adapter = self.catalog.get(name)["adapter"]
         values = adapter.effective_args(arguments)
+        for guard in self.catalog.get(name)["pre_guards"]:
+            decision = guard(values, context)
+            if not isinstance(decision, GateDecision):
+                return blocked("invalid_pre_decision")
+            if decision.verdict != "accept":
+                return decision
+            if decision.effective_value is not None:
+                values = decision.effective_value
+        if not isinstance(values, dict) or list(Draft202012Validator(self.catalog.contract(name)["parameters"]).iter_errors(values)):
+            return blocked("invalid_effective_arguments")
         if preliminary:
             return GateDecision(verdict="accept", layer="pre", effective_value=values)
         if not replay:
@@ -45,6 +57,11 @@ class PreGuard:
             if reason:
                 return blocked(reason)
         resource_ref, actual_version = adapter.resource(values, context)
+        if policy.effect != "read" and context.target_ref:
+            if resource_ref != context.target_ref:
+                return blocked("outside_step_target")
+            if not replay and context.target_version is not None and actual_version != context.target_version:
+                return blocked("frozen_target_stale")
         if policy.precondition_field and not replay:
             expected = values.get(policy.precondition_field)
             if expected is None or str(expected) != actual_version or not self.ledger.has_observation(context, resource_ref, expected):

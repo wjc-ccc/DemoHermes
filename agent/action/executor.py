@@ -21,6 +21,7 @@ class ToolExecutor:
         self._pool = ThreadPoolExecutor(max_workers=config.max_read_workers, thread_name_prefix="action-tool")
         self._active = set()
         self._lock = threading.Lock()
+        self.plan_guard = None
 
     def action_key(self, name, arguments, context, policy, call_id):
         if policy.effect == "read":
@@ -62,6 +63,8 @@ class ToolExecutor:
                 existing = self.ledger.get_by_key(key) if policy.effect != "read" else None
                 decision = self.pre.check(request.name, request.arguments, context,
                                           replay=bool(existing and existing.effect_state == "succeeded"))
+                if decision.verdict == "accept" and decision.effective_value != effective:
+                    decision = GateDecision(verdict="block", layer="pre", reasons=("effective_arguments_changed",))
         except (ValueError, TypeError) as exc:
             decision = GateDecision(verdict="block", layer="syntax", reasons=(str(exc),))
         if decision.verdict != "accept":
@@ -73,13 +76,15 @@ class ToolExecutor:
             item, owner = self.ledger.reserve(candidate, attempt,
                 max_calls=context.toolset.max_calls.get(request.name, policy.max_calls_per_turn),
                 max_attempts=1 if policy.idempotency == "non_idempotent" else policy.max_attempts,
-                lease_ms=max(self.config.lease_ms, int(policy.timeout_s * 1000)))
+                lease_ms=max(self.config.lease_ms, int(policy.timeout_s * 1000)),
+                validate_context=(lambda conn: self.plan_guard(conn, context)) if self.plan_guard else None)
         except ActionConflictError as exc:
             item = self.ledger.block(candidate, attempt, str(exc))
             return ToolCallResult(ok=False, error=str(exc)), item, attempt, False
         if not owner:
             if item.effect_state == "succeeded":
-                return self.replay(item), item, attempt, True
+                result, item = self.revalidate_publication(item, context, policy)
+                return result, item, attempt, True
             if item.phase == "prepared" and item.context.get("turn_id") == context.turn_id:
                 return ToolCallResult(ok=True, result_text="修改已暂存，等待本轮提交。"), item, attempt, True
             return ToolCallResult(ok=False, error="unknown" if item.effect_state == "unknown" else "in_flight"), item, attempt, True
@@ -119,7 +124,9 @@ class ToolExecutor:
 
     def settle(self, item, raw, context, effective, policy):
         if not isinstance(raw, ToolCallResult):
-            raise TypeError("工具必须返回 ToolCallResult")
+            item = self.ledger.update(item, changes={"effect_state": "failed" if policy.effect == "read" else "unknown"},
+                                      event_type="invalid_tool_result")
+            return ToolCallResult(ok=False, error="invalid_tool_result"), item
         deferred = policy.deferred_commit and raw.ok
         state = "started" if deferred else ("succeeded" if raw.ok else (
             "unknown" if policy.effect == "external" and not (raw.data or {}).get("confirmed_no_effect") else "failed"))
@@ -152,11 +159,26 @@ class ToolExecutor:
         if item.publish_state == "blocked" or item.publishable_output is None:
             return ToolCallResult(ok=False, error="blocked_post")
         result = ToolCallResult.model_validate(item.publishable_output)
+        if item.compensation_state == "succeeded":
+            result = result.model_copy(update={"result_text": "原动作已成功执行，之后已完成补偿。"})
         if result.data and "memory_mutation" in result.data:
             # 成功动作的回放不得再次交出可提交的修改指令。
             result = result.model_copy(update={"data": {key: value for key, value in result.data.items() if key != "memory_mutation"},
                                               "result_text": "该卡片修改已经提交。"})
         return result
+
+    def revalidate_publication(self, item, context, policy):
+        raw = ToolCallResult.model_validate(item.raw_output)
+        try:
+            decision = self.post.check(item.tool_name, raw, context)
+            published = ToolCallResult.model_validate(decision.effective_value) if decision.verdict == "accept" else None
+        except Exception as exc:
+            decision = GateDecision(verdict="block", layer="post", reasons=("post_guard_error",), detail=str(exc))
+            published = None
+        item = self.ledger.update(item, changes={"post_decision": decision.model_dump(mode="json"),
+            "publish_state": "blocked" if published is None else ("accepted" if published == raw else "redacted"),
+            "publishable_output": self._stored(published, policy) if published else None}, event_type="publication_revalidated")
+        return self.replay(item), item
 
     def _late(self, future, entry_id, token, attempt, context, effective, policy):
         try:

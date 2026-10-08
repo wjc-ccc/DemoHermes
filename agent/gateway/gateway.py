@@ -67,7 +67,7 @@ class Gateway:
         action_runtime=None,
     ):
         self.agent_id = agent_id
-        self.loop = loop or AgentLoop()          # 对话核心
+        self.loop = loop or AgentLoop(action_runtime=action_runtime)  # 对话核心
         self.store = store or DictSessionStore()  # session_key → Session（dict）
         self.bus = bus or MessageBus()            # 入站/出站双队列
         self.events = event_bus or default_event_bus 
@@ -82,7 +82,9 @@ class Gateway:
         self._assembly_recorder = assembly_recorder  # 可选；记录每 turn 装配选择
         self._skill_selector = skill_selector  # 可选；Hermes 式按 query 选 L1 Skill
         self.observe_databases = observe_databases or {}
-        self._action = action_runtime
+        self._action = action_runtime if action_runtime is not None else getattr(self.loop, "action", None)
+        if self._action is not None and getattr(self.loop, "action", None) is not self._action:
+            raise ValueError("ActionRuntime 必须同时注入 Gateway 与 Loop")
         self._channels: dict[str, BaseChannel] = {} # channel 注册与管理
         # 同 session_key 串行：每 key 一把锁
         self._session_locks: dict[str, threading.Lock] = {} # 同 session_key 串行：每 key 一把锁
@@ -219,6 +221,31 @@ class Gateway:
             if event is None:  # 结束信号
                 break
             self._executor.submit(self._process_inbound, event)
+
+    # ACTION-HOOK-10：显式计划入口在 Loop 外调度；每段复用正常持久化 turn。
+    # 关闭 action 或 Memory 时拒绝计划任务，不隐式改变普通对话模式。
+    def create_plan(self, plan, source):
+        if self._action is None or self._memory_context is None:
+            raise ValueError("计划执行需要 action 和持久化会话")
+        scope = build_memory_scope(source)
+        return self._action.create_plan(plan, scope_key=scope.storage_key,
+                                        actor_id=scope.user_id or "", agent_id=self.agent_id)
+
+    def run_plan(self, plan_id: str, source):
+        if self._action is None or self._memory_context is None:
+            raise ValueError("计划执行需要 action 和持久化会话")
+        key = build_session_key(source, agent_id=self.agent_id)
+        scope = build_memory_scope(source)
+
+        def run_step(step, segment, prompt, policy):
+            event = InboundEvent(text=prompt, source=source)
+            with self._lock_for(key):
+                message = self.build_message(event)
+                message.metadata.update({"source_type": "system_injected", "origin": "action_plan"})
+                return self._run_turn_locked(key, event, message, {}, assembly_policy=policy)
+
+        return self._action.run_plan(plan_id, run_step, scope_key=scope.storage_key,
+                                     actor_id=scope.user_id or "", agent_id=self.agent_id)
 
     # ================= 核心：获取锁 ================= ✅️
     def _lock_for(self, session_key: str) -> threading.Lock:

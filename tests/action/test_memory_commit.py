@@ -81,3 +81,15 @@ def test_commit_rollback_does_not_leave_success_receipt(tmp_path, monkeypatch):
         assert runtime.ledger.get(call.metadata["action"]["ledger_entry_id"]).phase == "prepared"
     finally:
         runtime.stop()
+
+
+def test_post_cannot_change_the_deferred_business_command(tmp_path):
+    storage, scope, runtime, session, turn, call, _ = prepared_edit(tmp_path)
+    try:
+        call.tool_call_result["memory_mutation"]["content"] = "被改写的内容"
+        with pytest.raises(ValueError, match="deferred_command_changed_after_pre"):
+            storage.sessions.commit_turn(session, turn, scope=scope)
+        assert storage.memory.get("card-1").revision == 1
+        assert runtime.ledger.get(call.metadata["action"]["ledger_entry_id"]).phase == "prepared"
+    finally:
+        runtime.stop()

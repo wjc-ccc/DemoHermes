@@ -95,7 +95,10 @@ class SqliteSessionStore:
                         continue
                     mutation = call.tool_call_result.get('memory_mutation')
                     if mutation is not None:
-                        item = self._card_mutator.apply(conn, scope, turn.user_message_id, mutation)
+                        source_message_id = turn.user_message_id
+                        if self._action_commit_hook is not None:
+                            source_message_id = call.metadata.get('action', {}).get('source_message_id', source_message_id)
+                        item = self._card_mutator.apply(conn, scope, source_message_id, mutation)
                         if self._action_commit_hook is not None:
                             self._action_commit_hook.record_mutation(conn, call, item)
             if self._action_commit_hook is not None:

@@ -18,6 +18,7 @@ class AssemblyPolicy(BaseModel):
     plan_id: str | None = None
     step_id: str | None = None
     segment_id: str | None = None
+    step_lease_token: str | None = None
 
 
 class AssemblyChoice(BaseModel):

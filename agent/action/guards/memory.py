@@ -4,7 +4,9 @@ from ..adapters.resources import card_in_scope
 
 def check_memory(arguments, context, adapter):
     operation = arguments.get("operation")
-    if not context.memory_scope or not context.actor_id:
+    if context.plan_id and operation != "manual_get" and not context.plan_source_verified:
+        return "plan_requires_user_source"
+    if not context.memory_scope or not context.memory_scope.user_id or not context.actor_id:
         return "missing_memory_scope"
     if operation in {"card_update", "card_delete"}:
         item = card_in_scope(adapter.cards, context, arguments.get("item_id", ""))

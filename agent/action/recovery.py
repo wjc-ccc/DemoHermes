@@ -52,6 +52,7 @@ class ActionRecovery:
             if context.memory_identity:
                 context = context.model_copy(update={"memory_scope": MemoryScope.model_validate(context.memory_identity)})
             context = context.model_copy(update={"turn_id": "recovery:" + uuid.uuid4().hex,
+                "plan_id": None, "step_id": None, "step_lease_token": None, "target_ref": None, "target_version": None,
                 "contract_hashes": {name: runtime.catalog.contract_hash(name) for name in context.toolset.tools
                                     if runtime.catalog.get(name)}})
             properties = runtime.catalog.contract(policy.recovery_tool)["parameters"].get("properties", {})
@@ -75,18 +76,41 @@ class ActionRecovery:
                     "lease_expires_at": None}, event_type="confirmed_no_effect", evidence=data)
                 runtime.ledger.release(current)
             recovered.append(current)
+        for source in runtime.ledger.list(scope_key=scope_key):
+            if source.compensation_state not in {"started", "unknown"}:
+                continue
+            compensations = [item for item in runtime.ledger.list(scope_key=source.scope_key)
+                             if item.context.get("compensates_entry_id") == source.entry_id]
+            if compensations:
+                latest = compensations[-1]
+                state = latest.effect_state if latest.effect_state in {"succeeded", "failed"} else "unknown"
+                runtime.ledger.update(source, changes={"compensation_state": state}, event_type="compensation_reconciled",
+                                      evidence={"compensation_entry_id": latest.entry_id})
         return tuple(recovered)
 
     def compensate(self, entry_id, context, arguments):
         item = self.runtime.ledger.get(entry_id)
         if not item or item.scope_key != context.scope_key or item.effect_state != "succeeded":
             raise ValueError("补偿需要同 scope 已确认成功的原动作")
+        if item.compensation_state == "succeeded":
+            return item
+        if item.compensation_state in {"started", "unknown"}:
+            raise ValueError("补偿尚未对账")
         policy = self.runtime.catalog.policy_for(item.tool_name, item.effective_args)
         if not policy.compensation_tool:
             raise ValueError("工具未声明 compensation_tool")
+        properties = self.runtime.catalog.contract(policy.compensation_tool)["parameters"].get("properties", {})
+        reference_name = "external_ref" if "external_ref" in properties else ("idempotency_key" if "idempotency_key" in properties else None)
+        if reference_name is None:
+            raise ValueError("补偿契约必须明确引用原动作的 external_ref/idempotency_key")
+        reference = item.external_ref if reference_name == "external_ref" else item.idempotency_key
+        if not reference or arguments.get(reference_name, reference) != reference:
+            raise ValueError("补偿引用不匹配")
+        arguments = {**arguments, reference_name: reference}
         item = self.runtime.ledger.update(item, changes={"compensation_state": "started"}, event_type="compensation_requested")
         call = self.runtime.execute_batch((ToolCallRequest(id=uuid.uuid4().hex,
-            name=policy.compensation_tool, arguments=arguments),), context)[0]
+            name=policy.compensation_tool, arguments=arguments),),
+            context.model_copy(update={"compensates_entry_id": entry_id}))[0]
         compensation = self.runtime.ledger.get(call.metadata["action"]["ledger_entry_id"])
         state = "succeeded" if compensation.effect_state == "succeeded" else (
             "failed" if compensation.effect_state == "failed" else "unknown")

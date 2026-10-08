@@ -8,6 +8,8 @@ class PostGuard:
 
     def check(self, name, result, context):
         entry = self.catalog.get(name)
+        if self.catalog.contract_hash(name) != context.contract_hashes.get(name):
+            return GateDecision(verdict="block", layer="post", reasons=("contract_drift",))
         output = result.model_dump(mode="json")
         schema = entry["output_schema"]
         if result.ok and schema is not None:
