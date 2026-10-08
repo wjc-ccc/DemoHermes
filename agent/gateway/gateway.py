@@ -64,6 +64,7 @@ class Gateway:
         assembly_recorder=None,
         skill_selector=None,
         observe_databases: dict[str, Path] | None = None,
+        action_runtime=None,
     ):
         self.agent_id = agent_id
         self.loop = loop or AgentLoop()          # 对话核心
@@ -81,6 +82,7 @@ class Gateway:
         self._assembly_recorder = assembly_recorder  # 可选；记录每 turn 装配选择
         self._skill_selector = skill_selector  # 可选；Hermes 式按 query 选 L1 Skill
         self.observe_databases = observe_databases or {}
+        self._action = action_runtime
         self._channels: dict[str, BaseChannel] = {} # channel 注册与管理
         # 同 session_key 串行：每 key 一把锁
         self._session_locks: dict[str, threading.Lock] = {} # 同 session_key 串行：每 key 一把锁
@@ -113,6 +115,9 @@ class Gateway:
     def start(self) -> None:
         if self._running:
             return
+        # ACTION-HOOK-09：先查证遗留动作再接收请求；关闭模块时无此生命周期。
+        if self._action is not None:
+            self._action.recover()
         self._running = True
         self._threads = [
             threading.Thread(target=self._inbound_dispatch_loop, name="gw-in-dispatch", daemon=True),
@@ -147,6 +152,8 @@ class Gateway:
             self._reviewer_worker.stop()
         if self._signal_collector is not None:
             self._signal_collector.stop()
+        if self._action is not None:
+            self._action.stop()
         logger.info("gateway 已停止")
 
     # ================= 消息构建 =================  ✅️
@@ -328,10 +335,12 @@ class Gateway:
     # 本质首先解析text 然后判断是否为斜杠命令 不是的话根据key获取session上下文 然后把session 和message加入进去 然后交给loop去跑一轮
     def _run_turn_locked(
         self, session_key: str, event: InboundEvent, user_msg: Message, failure_state: dict,
+        *, assembly_policy=None,
     ) -> OutboundReply:
         corr = event.metadata.get("correlation_id")
         if self._memory_context is not None:
-            return self._run_turn_persistent(session_key, event, user_msg, corr, failure_state)
+            return self._run_turn_persistent(session_key, event, user_msg, corr, failure_state,
+                                             assembly_policy=assembly_policy)
 
         # ---- 斜杠命令：Gateway 短路，不进 Loop ----
         text = (event.text or "").strip()
@@ -368,6 +377,9 @@ class Gateway:
             user_msg,
             ephemeral_prompt=event.channel_prompt,
             session_key=session_key,
+            memory_scope=build_memory_scope(event.source) if self._action is not None else None,
+            assembly_policy=assembly_policy or self._assembly_policy,
+            agent_id=self.agent_id,
         )
         text_out = result.final_text if result.completed else (result.error or "处理失败")
         if not result.completed:
@@ -389,6 +401,7 @@ class Gateway:
     def _run_turn_persistent(
         self, session_key: str, event: InboundEvent, user_msg: Message, corr,
         failure_state: dict,
+        *, assembly_policy=None,
     ) -> OutboundReply:
         """持久化路径：解析 scope、冻结 Memory、执行 Turn、原子提交事实。"""
         base_scope = build_memory_scope(event.source)
@@ -443,6 +456,8 @@ class Gateway:
             token_estimator=self._token_estimator,
             skill_query=event.text or "",
             skill_selector=self._skill_selector,
+            assembly_policy=assembly_policy or self._assembly_policy,
+            agent_id=self.agent_id,
         )
         if self._assembly_recorder is not None:
             from ..evolution.assembly import AssemblyChoice

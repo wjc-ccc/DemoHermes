@@ -13,6 +13,11 @@ class AssemblyPolicy(BaseModel):
 
     # ContextBudget 步骤 4：缩短 Skill 摘要的最小字符配额；None=不启用该步
     skill_summary_min_chars: int | None = 120
+    # Action 策略随完整 AssemblyPolicy 传入 Loop，不拆为零散策略 kwargs。
+    toolset: str | None = None
+    plan_id: str | None = None
+    step_id: str | None = None
+    segment_id: str | None = None
 
 
 class AssemblyChoice(BaseModel):

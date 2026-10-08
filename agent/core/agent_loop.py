@@ -52,6 +52,7 @@ class AgentLoop:
         precision_trace: PrecisionTrace | None = None,
         anchor_builder=None,
         anchor_model=None,
+        action_runtime=None,
     ):
         """注入模型、工具、技能、事件和 Anchor Adapter 等依赖。"""
         if model is not None:
@@ -63,6 +64,7 @@ class AgentLoop:
                 registry = ModelRegistry.default()
             self.model = registry.get(model_name)
         self.tools = tool_registry
+        self.action = action_runtime  # 可选执行模块；None 保持原工具路径。
         self.skills = skill_registry
         self.events = event_bus or default_event_bus
         self.max_iterations = max_iterations
@@ -98,14 +100,16 @@ class AgentLoop:
         )
 
     ## retry适合网络波动  对于有error的 一部分是阻止二次尝试 + 工具出错的熔断工具并返回工具错误信息 + 参数错误的传出工具提示的错误信息
-    def _chat_with_retry(self, messages: list[dict]):
+    def _chat_with_retry(self, messages: list[dict], *, tool_schemas=None):
         """仅针对主模型瞬时异常执行有限次数重试。"""
         from ..model.media_messages import prepare_model_messages
 
         messages = prepare_model_messages(
             messages, supports_images=bool(getattr(self.model, "supports_images", False))
         )
-        tools = self.tools.get_schemas() if self.tools else None
+        # ACTION-HOOK-03：think 前使用当前 turn 筛选 schema；[] 不回退成全部工具。
+        # 未启用 action 时 tool_schemas=None，仍使用原注册表。
+        tools = tool_schemas if tool_schemas is not None else (self.tools.get_schemas() if self.tools else None)
         last_error: Exception | None = None
         for attempt in range(self.model_retries + 1):
             try:
@@ -138,6 +142,8 @@ class AgentLoop:
         token_estimator=None,
         skill_query: str | None = None,
         skill_selector=None,
+        assembly_policy: AssemblyPolicy | None = None,
+        agent_id: str = "main",
     ) -> TurnResult:
         """初始化 turn 身份与作用域，并执行一次完整对话 turn。"""
         self._interrupt = False
@@ -155,6 +161,8 @@ class AgentLoop:
             token_estimator=token_estimator,
             skill_query=skill_query,
             skill_selector=skill_selector,
+            assembly_policy=assembly_policy,
+            agent_id=agent_id,
         )
 
     def _run_turn_body(
@@ -171,6 +179,8 @@ class AgentLoop:
         token_estimator,
         skill_query: str | None,
         skill_selector,
+        assembly_policy,
+        agent_id,
     ) -> TurnResult:
         """执行上下文构建、主模型调用、工具回注和完成判定。"""
 
@@ -183,12 +193,22 @@ class AgentLoop:
         )
         logger.info("turn 开始 turn_id=%s session=%s", turn_id, session.session_id)
 
+        # ACTION-HOOK-01：创建 turn 身份后、冻结技能前建立局部执行上下文。
+        # 未启用时不调用模块；不能把上下文放到共享 Loop.current_context。
+        action_context = self.action.begin_turn(
+            session, user_message, turn_id=turn_id, session_key=session_key,
+            memory_scope=memory_scope, assembly_policy=assembly_policy, agent_id=agent_id,
+        ) if self.action is not None else None
+
         ## 冻结skill快照
         skill_selection = self._freeze_skills(
             skill_query=skill_query,
             skill_selector=skill_selector,
             memory_scope=memory_scope,
+            available_tools=action_context.toolset.tools if action_context is not None else None,
         )
+        if action_context is not None:
+            action_context = action_context.with_skills(skill_selection)
 
         ## 当前对话开始 循环迭代
         for iteration in range(1, self.max_iterations + 1):
@@ -248,7 +268,9 @@ class AgentLoop:
             )
             try:
                 ## TODO：针对于不同的错误信息应该使用不同的 retry方法 
-                response = self._chat_with_retry(messages)
+                response = self._chat_with_retry(messages, tool_schemas=(
+                    self.action.get_schemas(action_context) if action_context is not None else None
+                ))
 
             except Exception as e:
                 logger.exception("模型调用最终失败 turn_id=%s", turn_id)
@@ -273,12 +295,22 @@ class AgentLoop:
             ## TODO：后续的工具调用部分需要单独管理
             if response.has_tool_calls:
                 session.add_message(build_assistant_message(response.text, response.tool_calls))
-                for req in response.tool_calls:
-                    record = self._execute_tool(
-                        req, session, turn_id, session_key, skills=skill_selection,
-                        memory_scope=memory_scope, source_message_id=user_message.message_id,
-                    )
-                    session.add_message(build_tool_message(record))
+                # ACTION-HOOK-04：模型请求工具后，action 负责受控执行，Loop 只回注。
+                # 未启用时保留 _execute_tool；模块异常不回退重执行。见 action/docs/INTEGRATION.md。
+                if action_context is not None:
+                    records = self.action.execute_batch(response.tool_calls, action_context)
+                    for record in records:
+                        session.tool_calls.append(record)
+                        if record.tool_name == "memory_read" and record.ok:
+                            self.precision_trace.record_memory_read(turn_id, record.arguments)
+                        session.add_message(build_tool_message(record))
+                else:
+                    for req in response.tool_calls:
+                        record = self._execute_tool(
+                            req, session, turn_id, session_key, skills=skill_selection,
+                            memory_scope=memory_scope, source_message_id=user_message.message_id,
+                        )
+                        session.add_message(build_tool_message(record))
                 continue
             
             ## 记录当前结果messages
@@ -309,11 +341,13 @@ class AgentLoop:
             error="max_iterations",
         )
 
-    def _freeze_skills(self, *, skill_query, skill_selector, memory_scope):
+    def _freeze_skills(self, *, skill_query, skill_selector, memory_scope, available_tools=None):
         """本 turn 只选一次技能，后续迭代与 use_skill 都看这份快照。"""
         if self.skills is None:
             return None
-        available = self.tools.list_tools() if self.tools is not None else None
+        # ACTION-HOOK-02：冻结技能时 required_tools 只能来自当前允许工具集。
+        # 未启用模块才使用原注册表；显式空集合仍然为空。
+        available = available_tools if available_tools is not None else (self.tools.list_tools() if self.tools is not None else None)
         scope_key = getattr(memory_scope, "storage_key", None)
         return self.skills.select(
             query=skill_query,

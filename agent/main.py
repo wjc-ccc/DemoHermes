@@ -50,7 +50,8 @@ def _memory_paths(root: Path | None = None) -> tuple[Path, Path]:
 
 def build_gateway(*, workers: int = 2, use_memory: bool = True,
                   data_root: Path | None = None,
-                  model_registry: ModelRegistry | None = None) -> Gateway:
+                  model_registry: ModelRegistry | None = None,
+                  use_action: bool = False, action_config=None) -> Gateway:
     """组装后端：注册表 → Loop → Gateway → Channel。
 
     use_memory=True 时：
@@ -86,6 +87,19 @@ def build_gateway(*, workers: int = 2, use_memory: bool = True,
     assembly_recorder = None
     skill_selector = None
     observe_databases = None
+    storage = None
+    action_runtime = None
+    # ACTION-HOOK-08：可选模块在启动装配处注入；关闭时不导入 action。
+    # action-only 仍持久记账，但会话/Memory 保持原关闭行为。
+    if use_memory or use_action:
+        from .storage.sqlite import RuntimeStorage
+        memory_root, db_path = _memory_paths(Path(data_root)) if data_root is not None else _memory_paths()
+        extra_schema_dirs = ()
+        if use_action:
+            from .action.storage.migrations import schema_directory
+            extra_schema_dirs = (schema_directory(),)
+        storage = RuntimeStorage.open(db_path, extra_schema_dirs=extra_schema_dirs)
+        observe_databases = {"agent": db_path}
     if use_memory:
         from .evolution.scheduler import EvolutionScheduler
         from .evolution.signals import EvolutionSignalCollector
@@ -110,10 +124,6 @@ def build_gateway(*, workers: int = 2, use_memory: bool = True,
         memory_root.mkdir(parents=True, exist_ok=True)
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        storage = RuntimeStorage.open(
-            db_path,
-            extractor_version=MemoryExtractor.version,
-        )
         store = storage.sessions
         try:
             memory_model = model_registry.get()
@@ -251,12 +261,18 @@ def build_gateway(*, workers: int = 2, use_memory: bool = True,
             memory_root, db_path, extractor.version,
         )
 
+    if use_action:
+        from .action import build_action_runtime
+        action_runtime = build_action_runtime(storage, tool_registry, config=action_config,
+            event_bus=default_event_bus, skill_repository=skill_repository)
+
     # ---- 对话核心 ----
     loop = AgentLoop(
         model_registry=model_registry,
         tool_registry=tool_registry,
         skill_registry=skill_registry,
         event_bus=default_event_bus,
+        action_runtime=action_runtime,
     )
 
     # ---- 消息枢纽 ----
@@ -280,6 +296,7 @@ def build_gateway(*, workers: int = 2, use_memory: bool = True,
         assembly_recorder=assembly_recorder,
         skill_selector=skill_selector,
         observe_databases=observe_databases,
+        action_runtime=action_runtime,
     )
     gateway.register_channel(FrontierChannel())
     return gateway
@@ -298,9 +315,9 @@ def _print_memory_banner(use_memory: bool) -> None:
     print("[memory] MEMORY.md 有界常驻；经验关键词最多召回 3 张；其余内容按工具检索")
 
 
-def _run_http(port: int, *, use_memory: bool, enable_memory_debug: bool) -> None:
+def _run_http(port: int, *, use_memory: bool, enable_memory_debug: bool, use_action: bool = False) -> None:
     """HTTP 模式：Gateway + FrontierHttpServer，供 frontier 前端调用。"""
-    gateway = build_gateway(use_memory=use_memory)
+    gateway = build_gateway(use_memory=use_memory, use_action=use_action)
     gateway.start()
     autostart_channels(gateway)
     for ch in (gateway.get_channel("frontier"),):
@@ -323,7 +340,7 @@ def _run_http(port: int, *, use_memory: bool, enable_memory_debug: bool) -> None
         print("[backend] 已停止")
 
 
-def _run_cli(*, use_memory: bool) -> None:
+def _run_cli(*, use_memory: bool, use_action: bool = False) -> None:
     """终端模式：注册 CliChannel，同步一问一答。"""
     # 管道输入（echo ... | python main.py --cli）按 UTF-8 解码；
     # 交互式终端保持系统编码不动（Windows 中文控制台是 GBK）
@@ -333,7 +350,7 @@ def _run_cli(*, use_memory: bool) -> None:
     if not sys.stdout.isatty():
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-    gateway = build_gateway(use_memory=use_memory)
+    gateway = build_gateway(use_memory=use_memory, use_action=use_action)
     # quiet=True：出站投递不打印 —— CLI 模式用 ask() 的同步返回值自己打印，
     # 否则 Gateway 出站分发 + 手动打印会重复输出
     cli = CliChannel(quiet=True)
@@ -387,15 +404,18 @@ def main() -> None:
         default=False,
         help="开启只读 Memory Debug HTTP（/api/debug/memory/*；默认关）",
     )
+    parser.add_argument("--use-action", action=argparse.BooleanOptionalAction, default=False,
+                        help="启用 action 执行账本、工具集与 PRE/POST（默认关闭）")
     args = parser.parse_args()
 
     if args.cli:
-        _run_cli(use_memory=args.use_memory)
+        _run_cli(use_memory=args.use_memory, use_action=args.use_action)
     else:
         _run_http(
             args.port,
             use_memory=args.use_memory,
             enable_memory_debug=args.enable_memory_debug,
+            use_action=args.use_action,
         )
 
 
