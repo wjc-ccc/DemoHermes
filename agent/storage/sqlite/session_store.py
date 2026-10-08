@@ -42,6 +42,11 @@ class SqliteSessionStore:
         self._extractor_version = extractor_version
         self._review_scheduler = review_scheduler
         self._card_mutator = card_mutator
+        self._action_commit_hook = None
+
+    def attach_action_commit_hook(self, hook):
+        """启动时注入可选事务 hook；本 Store 不导入 action 模块。"""
+        self._action_commit_hook = hook
 
     def _new_session(self, session_key, channel, author_id):
         return Session(session_id=self._id_factory() if self._id_factory else str(uuid.uuid4()),
@@ -79,6 +84,10 @@ class SqliteSessionStore:
             self._upsert_session(conn,session,scope)
             sequence = insert_turn(conn,turn)
             insert_session_facts(conn,session,turn)
+            # ACTION-HOOK-06：提交暂存卡片前核验 action 领取凭证；未启用时无 hook。
+            # 事务回执与业务修改同时提交，详见 action/docs/INTEGRATION.md。
+            if self._action_commit_hook is not None:
+                self._action_commit_hook.before_commit(conn, session, turn)
             if self._card_mutator is not None and turn.completed and not turn.interrupted:
                 for call in session.tool_calls:
                     if (call.trajectory_id != turn.turn_id or call.tool_name != 'memory_edit'
@@ -87,6 +96,10 @@ class SqliteSessionStore:
                     mutation = call.tool_call_result.get('memory_mutation')
                     if mutation is not None:
                         item = self._card_mutator.apply(conn, scope, turn.user_message_id, mutation)
+                        if self._action_commit_hook is not None:
+                            self._action_commit_hook.record_mutation(conn, call, item)
+            if self._action_commit_hook is not None:
+                self._action_commit_hook.finish_turn(conn, session, turn)
             if self._review_scheduler is not None:
                 self._review_scheduler.record_turn(conn, turn)
             else:

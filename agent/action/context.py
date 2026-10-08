@@ -16,6 +16,8 @@ class ToolContext(BaseModel):
     source_message_id: str
     toolset: Toolset
     contract_hashes: dict[str, str] = Field(default_factory=dict)
+    contracts: dict[str, dict] = Field(default_factory=dict)
+    memory_identity: dict = Field(default_factory=dict)
     plan_id: str | None = None
     step_id: str | None = None
     segment_id: str | None = None

@@ -49,6 +49,9 @@ class SkillManageTool(Tool):
             },
             "old_string": {"type": "string", "description": "patch：要替换的原文"},
             "new_string": {"type": "string", "description": "patch：替换后的文本"},
+            # ACTION-HOOK-07：action PRE 检查读版本，Repository 在写入处再次比较。
+            # 关闭 action 时仍可显式使用这一业务前置条件。
+            "expected_revision": {"type": "integer", "minimum": 1},
         },
         "required": ["action", "name"],
     }
@@ -78,6 +81,7 @@ class SkillManageTool(Tool):
                 name=name,
                 old_string=str(arguments.get("old_string", "")),
                 new_string=str(arguments.get("new_string", "")),
+                expected_revision=arguments.get("expected_revision"),
                 actor="model",
                 reason="skill_manage patch",
             )
