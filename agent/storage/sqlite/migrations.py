@@ -5,7 +5,7 @@ from .codec import milliseconds
 
 _SCHEMA_DIR = Path(__file__).with_name('schema')
 
-def migrate(conn):
+def migrate(conn, *, extra_schema_dirs=()):
     existing = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     if existing - {'schema_migrations', 'sqlite_sequence'}:
         if 'schema_migrations' not in existing or not conn.execute(
@@ -15,7 +15,13 @@ def migrate(conn):
     conn.execute('CREATE TABLE IF NOT EXISTS schema_migrations ('
                  'version TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at INTEGER NOT NULL)')
     conn.commit()
-    for path in sorted(_SCHEMA_DIR.glob('*.sql')):
+    # ACTION-HOOK-05：RuntimeStorage 传入可选模块迁移目录；关闭时仅加载原 schema。
+    paths = list(_SCHEMA_DIR.glob('*.sql'))
+    for directory in extra_schema_dirs:
+        paths.extend(Path(directory).glob('*.sql'))
+    if len({path.stem for path in paths}) != len(paths):
+        raise ValueError('migration 编号/名称冲突')
+    for path in sorted(paths, key=lambda path: path.stem):
         sql = path.read_text(encoding='utf-8')
         checksum = hashlib.sha256(sql.encode()).hexdigest()
         row = conn.execute('SELECT checksum FROM schema_migrations WHERE version=?', (path.stem,)).fetchone()

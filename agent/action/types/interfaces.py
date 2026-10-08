@@ -1,0 +1,26 @@
+from typing import Protocol
+from ..context import ToolContext
+from ..decision import GateDecision
+from ..ledger import ActionItem
+from ...tools.base import ToolCallResult
+
+
+class ToolAdapter(Protocol):
+    def invoke(self, arguments: dict, context: ToolContext, *, idempotency_key: str) -> ToolCallResult: ...
+    def resource(self, arguments: dict, context: ToolContext) -> tuple[str | None, str | None]: ...
+
+
+class ToolGuard(Protocol):
+    def check(self, arguments: dict, context: ToolContext) -> GateDecision: ...
+
+
+class ActionStore(Protocol):
+    def get(self, entry_id: str) -> ActionItem | None: ...
+    def get_by_key(self, key: str) -> ActionItem | None: ...
+
+
+class TurnCommitHook(Protocol):
+    def before_commit(self, conn, session, turn): ...
+    def record_mutation(self, conn, call, item): ...
+    def finish_turn(self, conn, session, turn): ...
+

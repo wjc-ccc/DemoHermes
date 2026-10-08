@@ -18,12 +18,12 @@ from ...core.memory.memory_extractor import MemoryExtractor
 
 class RuntimeStorage:
     @classmethod
-    def open(cls, db_path, *, id_factory=None, extractor_version=None):
+    def open(cls, db_path, *, id_factory=None, extractor_version=None, extra_schema_dirs=()):
         extractor_version = extractor_version or MemoryExtractor.version
         database=Database(db_path)
         conn=connect(database.path)
         try:
-            migrate(conn)
+            migrate(conn, extra_schema_dirs=extra_schema_dirs)
         finally:
             conn.close()
         return cls(database,id_factory=id_factory,extractor_version=extractor_version)
