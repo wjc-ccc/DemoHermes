@@ -54,6 +54,8 @@ class FrontierChannel(BaseChannel):
     def start(self) -> None:
         self.status["enable"] = True
         self.status["start"] = True
+        self.status["connected"] = True
 
     def stop(self) -> None:
         self.status["start"] = False
+        self.status["connected"] = False

@@ -29,6 +29,9 @@ class ContentPart(BaseModel):  ## 包含字段较为全面  7.13 ✅️
     text:str = Field(default_factory=str,description="content text")
     ## file
     path:str|None = Field(default=None,description="file path")
+    file_name:str|None = Field(default=None,description="attachment file name")
+    mime_type:str|None = Field(default=None,description="attachment MIME type")
+    size_bytes:int|None = Field(default=None,description="attachment size")
     ## image
     url:str|None = Field(default=None,description="image audio or video path")
     ## other arguments
@@ -200,6 +203,7 @@ class SessionSource(BaseModel):
 class InboundEvent(BaseModel):
     """Channel → Gateway 唯一入站。平台字段已在 Channel 内映射完成。"""
     text: str = Field(default_factory=str)
+    content: list[ContentPart] = Field(default_factory=list)
     source: SessionSource = Field(default_factory=SessionSource)
     channel_prompt: str | None = Field(
         default=None,

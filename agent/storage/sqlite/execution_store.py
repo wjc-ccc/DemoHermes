@@ -34,8 +34,13 @@ def insert_session_facts(conn, session, turn):
     for message in session.messages:
         if message.session_id != session.session_id:
             raise IntegrityError('message 属于其他会话')
-        source_type = {'user':'user_authored','assistant':'assistant_authored',
-                       'tool':'tool_observed','system':'system_injected'}.get(message.role,'system_injected')
+        if message.metadata.get('origin') == 'gateway_error':
+            source_type = 'gateway_generated'
+        elif message.metadata.get('origin') == 'failed_turn':
+            source_type = 'failed_turn_partial'
+        else:
+            source_type = {'user':'user_authored','assistant':'assistant_authored',
+                           'tool':'tool_observed','system':'system_injected'}.get(message.role,'system_injected')
         linked = bool(turn and (message.message_id in turn_ids or set(message.tool_call_ids) & tool_ids))
         payload = message.model_dump_json()
         insert_immutable(conn,'messages','message_id',message.message_id,payload,

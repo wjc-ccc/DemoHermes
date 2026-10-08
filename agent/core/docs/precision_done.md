@@ -1,6 +1,7 @@
-# Precision 当前实现
+# Percision done
 
-飞书对照：[percision设计](https://tcnff4lwpccj.feishu.cn/wiki/QhoywPVkwiNuUZk9ii4cYuGAn6g) 的 **Percision done** 节。
+正文见 [precision_done.md](precision_done.md)。飞书对照：[percision设计](https://tcnff4lwpccj.feishu.cn/wiki/QhoywPVkwiNuUZk9ii4cYuGAn6g) 的 Percision done 节。
+
 
 ## 1. 模块边界
 
@@ -46,7 +47,7 @@ Gateway/Store
              │
              ▼
 Load
-  ├─ 系统 / Hot / Daily / Provider / Skill / ephemeral 转成 ContextItem
+  ├─ 系统 / Markdown Memory / 经验召回 / Skill / ephemeral 转成 ContextItem
   ├─ Session.messages 按 user 切成完整轮次，name 为 history:seq:{seq_id}
   ├─ 校验 Session.context_anchor（session、覆盖边界、digest、事实来源）
   └─ 有效 Anchor 立即转为 P2-A ContextItem，seq 在全部历史之前
@@ -71,11 +72,11 @@ PrecisionResult → Trace → AgentLoop 写回 context_anchor → Gateway 持久
 
 ## 4. 优先级
 
-1. P0：system、Hot memory、Skill 摘要、ephemeral、当前 user。
-2. P1：当前 ReAct 产生的 assistant/tool。
+1. P0：system、Policy/Project/User Markdown 快照、Skill 摘要、ephemeral、当前 user。
+2. P1：关键词命中的经验卡片、当前 ReAct 产生的 assistant/tool。
 3. P2-A：已验证的 Anchor。
 4. P2-B：未覆盖的历史原文。
-5. P3：Daily/Provider handle。
+5. P3：预留的按需读取 handle；当前生产 Memory 路径不生成旧 Daily/Provider handle。
 
 优先级决定选择，`ContextItem.seq` 决定最终发送顺序。P2 工具失败不再强制保送原文；被覆盖时必须进入 Anchor `decisions`，且 `status=failed`。P0/P1 的工具失败仍算受保护错误，丢失会计入 `protected_error_missing_count`。
 

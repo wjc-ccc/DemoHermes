@@ -1,15 +1,20 @@
-# docs — 开发进度文档
+# 文档目录
 
-记录项目开发过程中的目标、进度与里程碑。
+文档按用途阅读，判断当前行为时以代码和“当前架构”文档为准。
 
-## 文件说明
+## 当前架构
 
-aiDocs：ai生成的计划文件所在目录，务必包含时间和简要标题，并且只能放在aiDocs目录下，禁止乱放污染源代码
+1. [模块架构总览](模块架构总览.md)：感知、推理、执行、反思、记忆、治理、协作的运行链路、代码落点和现状。
+2. [架构认知索引](recognitionDocs/README.md)：types、channel、gateway、agent loop、tool/skill、memory 的详细接口与职责。
+3. [SQLite 与 Memory 存储](sqlite-memory-storage.md)：数据库结构与升级规则。具体运行路径以 [Memory 运行链路](recognitionDocs/memory.md) 为准。
 
-errorDocs：demo hermes构建期间遇到的语法错误积累
+## 历史与过程记录
 
-timeDocs：该项目每日计划与进度情况
+| 目录 | 用途 |
+| --- | --- |
+| `aiDocs/` | 带日期的设计方案、实施总结与演进计划；可能含未实现或已替换的方案 |
+| `timeDocs/` | 每日计划和进度 |
+| `errorDocs/` | 开发中遇到的问题和排查日志 |
+| `testDocs/` | 各阶段测试记录 |
 
-testDocs：该项目每个开发阶段已经通过的测试
-
-recognitionDocs：架构认知文档（types / channel / gateway / agent loop / tool&skill&plugin / memory 各自是什么、边界在哪），入口为该目录 README
+修改功能时先核对 `agent/main.py:build_gateway` 的实际装配、相应模块的 Interface 和测试，再更新“当前架构”。新增 AI 方案应带日期和简要标题，只放在 `aiDocs/`；不要把历史方案直接写成生产行为。

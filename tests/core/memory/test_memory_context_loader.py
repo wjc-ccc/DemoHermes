@@ -33,9 +33,8 @@ def test_freeze_loads_plain_books_in_authority_order(tmp_path) -> None:
     snapshot = loader.freeze(scope, session_id="session-1")
 
     assert snapshot.built_at == 10.0
-    assert snapshot.hot_prompt == snapshot.prompt
-    assert snapshot.daily_prompt is None
-    assert snapshot.provider_prompt is None
+    assert snapshot.prompt.startswith("<memory-context>")
+    assert snapshot.experience_prompt is None
     assert snapshot.prompt.index('layer="policy"') < snapshot.prompt.index(
         'layer="project"'
     ) < snapshot.prompt.index('layer="user"')

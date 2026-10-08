@@ -42,7 +42,11 @@ def test_turn_facts_and_review_job_commit_atomically(tmp_path) -> None:
     restored = store.find("slot-1")
     assert restored is not None
     assert [message.message_id for message in restored.messages] == ["message-u", "message-a"]
-    assert store.jobs.get("turn-1").status == "pending"
+    with store.db.read() as conn:
+        job_id = conn.execute(
+            "SELECT batch_job_id FROM memory_review_turns WHERE turn_id='turn-1'"
+        ).fetchone()[0]
+    assert store.jobs.get(job_id).status == "pending"
 
     conn = connect(db_path)
     try:

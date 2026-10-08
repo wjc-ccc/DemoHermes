@@ -153,21 +153,9 @@ class PrecisionTrace:
 
 
 def _memory_read_hits(arguments: dict, exposed: set[str]) -> set[str]:
-    """判断一次 memory_read 参数实际命中了哪些已暴露 P3 handle。"""
-    hits: set[str] = set()
-    target = arguments.get("target")
-    date = arguments.get("date")
-    query = str(arguments.get("query") or "")
-    for ref in exposed:
-        if ref.startswith("daily:"):
-            ref_date = ref.split(":", 1)[1]
-            if target == "daily" and (not date or date == ref_date):
-                hits.add(ref)
-        elif ref.startswith("provider:") and query:
-            provider_name = ref.split(":", 1)[1]
-            if provider_name in query:
-                hits.add(ref)
-    return hits
+    """Only an explicitly read reference that was exposed lazily counts as a hit."""
+    reference = arguments.get("reference")
+    return {reference} if isinstance(reference, str) and reference in exposed else set()
 
 
 def _percentile(values: list[float], q: float) -> float:

@@ -1,4 +1,7 @@
 """Memory 五层定义、权威顺序和合法类型。"""
+# 职责：给文档和临时原子提供归属层级；Task 枚举仅保留历史 Trace 含义。
+# 边界：权威排序是声明性规则，未在这里执行跨层冲突裁决；卡片类别见 card_types.py。
+# 关联：MarkdownBook、MemoryItem 和 Validator 使用这些枚举与类型检查。
 from __future__ import annotations
 
 from enum import Enum
@@ -53,18 +56,7 @@ _ITEM_TYPES = {
             "reusable_experience",
         }
     ),
-    MemoryLayer.TASK: frozenset(
-        {
-            "goal",
-            "milestone",
-            "progress",
-            "checkpoint",
-            "decision",
-            "blocker",
-            "next_step",
-            "rejected_option",
-        }
-    ),
+    MemoryLayer.TASK: frozenset(),
     MemoryLayer.SCRATCHPAD: frozenset(
         {
             "tool_observation",
@@ -89,12 +81,3 @@ def item_types_for(layer: MemoryLayer) -> frozenset[str]:
 def validate_item_type(layer: MemoryLayer, item_type: str) -> None:
     if item_type not in _ITEM_TYPES[layer]:
         raise ValueError(f"{item_type!r} 不是 {layer.value} 层允许的 type")
-
-## 层级记忆提权限制
-def automatic_promotion_allowed(source: MemoryLayer, target: MemoryLayer) -> bool:
-    """第一版只允许 scratchpad→task 与 task→user 的受控晋升。"""
-
-    return (source, target) in {
-        (MemoryLayer.SCRATCHPAD, MemoryLayer.TASK),
-        (MemoryLayer.TASK, MemoryLayer.USER),
-    }

@@ -1,4 +1,7 @@
 """MemoryTrace：记录提取、校验、持久化、召回与加载决定。"""
+# 职责：区分模型自报字段和运行时核验字段，记录每张候选卡的处理决定。
+# 边界：只定义审计结构，不产生提案，也不负责写入 traces 表。
+# 关联：Reviewer/Committer 生成与补全 Trace，SQLite trace_store.py 保存。
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -7,7 +10,7 @@ from enum import Enum
 from pydantic import BaseModel, ConfigDict, Field
 
 from .memory_layer import MemoryLayer
-from .memory_item import UserMemoryKind
+from .types.card_types import UserCardKind
 
 
 def trace_now() -> datetime:
@@ -37,11 +40,10 @@ class MemoryAiTraceFields(BaseModel):
 
     proposed_layer: MemoryLayer | None = None
     proposed_type: str | None = None
-    proposed_memory_kind: UserMemoryKind | None = None
+    proposed_kind: UserCardKind | None = None
     proposed_keywords: tuple[str, ...] = ()
     self_reported_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     evidence_refs: tuple[str, ...] = ()
-    proposed_mutation: str | None = None
     reason_code: str | None = None
 
 

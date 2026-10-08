@@ -80,7 +80,6 @@ class AgentLoop:
             anchor_builder=resolved_anchor_builder,
         )
         self._interrupt = False
-        self._turn_memory_scope = None
 
     def request_interrupt(self) -> None:
         """外部（Channel/Gateway）请求打断；Loop 每轮 think 前检查。"""
@@ -101,6 +100,11 @@ class AgentLoop:
     ## retry适合网络波动  对于有error的 一部分是阻止二次尝试 + 工具出错的熔断工具并返回工具错误信息 + 参数错误的传出工具提示的错误信息
     def _chat_with_retry(self, messages: list[dict]):
         """仅针对主模型瞬时异常执行有限次数重试。"""
+        from ..model.media_messages import prepare_model_messages
+
+        messages = prepare_model_messages(
+            messages, supports_images=bool(getattr(self.model, "supports_images", False))
+        )
         tools = self.tools.get_schemas() if self.tools else None
         last_error: Exception | None = None
         for attempt in range(self.model_retries + 1):
@@ -138,22 +142,20 @@ class AgentLoop:
         """初始化 turn 身份与作用域，并执行一次完整对话 turn。"""
         self._interrupt = False
         turn_id = uuid.uuid4().hex[:12]
-        self._turn_memory_scope = memory_scope
-        try:
-            return self._run_turn_body(
-                session,
-                user_message,
-                turn_id=turn_id,
-                ephemeral_prompt=ephemeral_prompt,
-                session_key=session_key,
-                memory_snapshot=memory_snapshot,
-                context_budget=context_budget,
-                token_estimator=token_estimator,
-                skill_query=skill_query,
-                skill_selector=skill_selector,
-            )
-        finally:
-            self._turn_memory_scope = None
+        user_message.trajectory_id = turn_id
+        return self._run_turn_body(
+            session,
+            user_message,
+            turn_id=turn_id,
+            ephemeral_prompt=ephemeral_prompt,
+            session_key=session_key,
+            memory_snapshot=memory_snapshot,
+            memory_scope=memory_scope,
+            context_budget=context_budget,
+            token_estimator=token_estimator,
+            skill_query=skill_query,
+            skill_selector=skill_selector,
+        )
 
     def _run_turn_body(
         self,
@@ -164,6 +166,7 @@ class AgentLoop:
         ephemeral_prompt: str | None,
         session_key: str,
         memory_snapshot,
+        memory_scope,
         context_budget,
         token_estimator,
         skill_query: str | None,
@@ -184,7 +187,7 @@ class AgentLoop:
         skill_selection = self._freeze_skills(
             skill_query=skill_query,
             skill_selector=skill_selector,
-            memory_scope=getattr(self, "_turn_memory_scope", None),
+            memory_scope=memory_scope,
         )
 
         ## 当前对话开始 循环迭代
@@ -273,6 +276,7 @@ class AgentLoop:
                 for req in response.tool_calls:
                     record = self._execute_tool(
                         req, session, turn_id, session_key, skills=skill_selection,
+                        memory_scope=memory_scope, source_message_id=user_message.message_id,
                     )
                     session.add_message(build_tool_message(record))
                 continue
@@ -322,6 +326,7 @@ class AgentLoop:
     ## TODO：这里应该切换为一个工具执行handler
     def _execute_tool(
         self, req, session: Session, turn_id: str, session_key: str, *, skills=None,
+        memory_scope=None, source_message_id: str | None = None,
     ) -> ToolCall:
         """执行一次工具请求，记录统一 ToolCall 并更新 P3 命中 Trace。"""
         record = ToolCall(
@@ -343,11 +348,10 @@ class AgentLoop:
             result = ToolCallResult(ok=False, error="当前 Agent 未配置任何工具")
         else:
             arguments = dict(req.arguments or {})
-            if (
-                self._turn_memory_scope is not None
-                and req.name in {"memory_read", "memory_edit"}
-            ):
-                arguments["_scope"] = self._turn_memory_scope
+            if req.name in {"memory_search", "memory_read", "memory_edit"}:
+                arguments["_scope"] = memory_scope
+            if req.name == "memory_edit":
+                arguments["_source_message_id"] = source_message_id
             if req.name == "use_skill" and skills is not None:
                 arguments["_skills"] = skills
             result = self.tools.dispatch(req.name, arguments)

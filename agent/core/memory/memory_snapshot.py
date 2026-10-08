@@ -1,4 +1,7 @@
 """单个 Turn 使用的不可变 Memory 快照。"""
+# 职责：携带文档正文、经验召回、来源版本和非致命诊断。
+# 边界：纯数据结构，不读取文件或决定上下文优先级。
+# 关联：MemoryContextLoader 创建快照，PrecisionBuilder 消费快照。
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict
@@ -38,6 +41,4 @@ class MemorySnapshot(BaseModel):
     built_at: float
     revisions: tuple[DocumentRevision, ...]
     diagnostics: tuple[MemoryDiagnostic, ...] = ()
-    hot_prompt: str | None = None
-    daily_prompt: str | None = None
-    provider_prompt: str | None = None
+    experience_prompt: str | None = None

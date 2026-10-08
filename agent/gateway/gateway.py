@@ -22,13 +22,14 @@ import logging
 import queue
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from ..channel.baseChannel import BaseChannel
 from ..core.event_bus import EventBus, LoopEvent, default_event_bus
 from ..core.agent_loop import AgentLoop
-from ..core.building_messages import build_user_message
+from ..core.building_messages import build_assistant_message, build_user_message
 from ..core.types import InboundEvent, Message, OutboundReply
 from ..core.memory import MemoryContextLoader, build_memory_scope
 from ..core.memory.types import TurnRecord
@@ -98,6 +99,11 @@ class Gateway:
         channel.bind_gateway(self)
         logger.info("注册 channel=%s", channel.name)
 
+    def unregister_channel(self, name: str) -> None:
+        channel = self._channels.pop(name, None)
+        if channel is not None:
+            channel.unbind_gateway()
+
     def get_channel(self, name: str) -> BaseChannel | None:
         return self._channels.get(name)
 
@@ -127,7 +133,15 @@ class Gateway:
     # 首先设置监督flag _running为false 然后关闭message bus 最后通过shutdown函数关闭线程池
     def stop(self) -> None:
         self._running = False
+        for name, channel in list(self._channels.items()):
+            try:
+                channel.stop()
+            except Exception:
+                logger.exception("停止 channel=%s 失败", name)
         self.bus.close()
+        for thread in self._threads:
+            if thread is not threading.current_thread():
+                thread.join(timeout=2)
         self._executor.shutdown(wait=False, cancel_futures=True)
         if self._reviewer_worker is not None:
             self._reviewer_worker.stop()
@@ -213,27 +227,111 @@ class Gateway:
         key = build_session_key(event.source, agent_id=self.agent_id)
         # 2) 同 key 加锁串行，保证同一会话不被并发打断
         with self._lock_for(key):
+            started = time.time()
+            user_msg = None
+            failure_state = {}
             try:
-                reply = self._run_turn_locked(key, event)
+                user_msg = self.build_message(event)
+                reply = self._run_turn_locked(key, event, user_msg, failure_state)
             except Exception as e:
                 logger.exception("处理入站事件失败 key=%s", key)
-                reply = OutboundReply(
-                    text="",
-                    source=event.source,
-                    reply_to=event.source.reply_to_message_id,
-                    metadata={
-                        "correlation_id": event.metadata.get("correlation_id"),
-                        "error": str(e),
-                    },
+                reply = self._record_unhandled_failure(
+                    key, event, user_msg, e, started, failure_state,
                 )
         self.bus.publish_outbound(reply)
 
+    @staticmethod
+    def _append_gateway_error(session, text: str) -> Message:
+        message = build_assistant_message(text)
+        message.status = "failed"
+        message.metadata["origin"] = "gateway_error"
+        return session.add_message(message)
+
+    @staticmethod
+    def _mark_failed_turn_messages(session, user_msg: Message) -> None:
+        for message in session.messages:
+            if message.seq_id > user_msg.seq_id:
+                message.status = "failed"
+                message.metadata["origin"] = "failed_turn"
+
+    def _record_unhandled_failure(
+        self, session_key: str, event: InboundEvent, user_msg: Message | None,
+        error: Exception, started: float, failure_state: dict,
+    ) -> OutboundReply:
+        text_out = "处理失败，请稍后重试。"
+        metadata = {
+            "correlation_id": event.metadata.get("correlation_id"),
+            "session_key": session_key,
+            "error": str(error),
+        }
+        try:
+            channel = event.source.channel
+            author_id = event.source.user_id or ""
+            session = failure_state.get("session")
+            scope = failure_state.get("scope")
+            if self._memory_context is not None:
+                if session is None or scope is None:
+                    base_scope = build_memory_scope(event.source)
+                    if session is None:
+                        session = self.store.get_or_create(
+                            session_key, scope=base_scope, channel=channel, author_id=author_id,
+                        )
+                    scope = base_scope.model_copy(
+                        update={"session_id": session.session_id, "task_id": session.session_id}
+                    )
+            elif session is None:
+                session = self.store.get_or_create(
+                    session_key, channel=channel, author_id=author_id,
+                )
+            if user_msg is None:
+                user_msg = Message(role="user", content_text=event.text or "", author_id=author_id)
+            if not any(message.message_id == user_msg.message_id for message in session.messages):
+                session.add_message(user_msg)
+            self._mark_failed_turn_messages(session, user_msg)
+            failure_message = self._append_gateway_error(session, text_out)
+            turn_id = user_msg.trajectory_id or uuid.uuid4().hex[:12]
+            metadata.update({"turn_id": turn_id, "session_id": session.session_id})
+            if scope is not None:
+                turn = TurnRecord(
+                    turn_id=turn_id,
+                    session_id=session.session_id,
+                    scope=scope.model_copy(update={"turn_id": turn_id}),
+                    user_message_id=user_msg.message_id,
+                    assistant_message_ids=tuple(
+                        message.message_id for message in session.messages
+                        if message.role == "assistant" and message.seq_id > user_msg.seq_id
+                    ),
+                    tool_call_ids=tuple(
+                        call.tool_call_id for call in session.tool_calls
+                        if call.trajectory_id == turn_id
+                    ),
+                    started_at=started,
+                    finished_at=time.time(),
+                    completed=False,
+                    interrupted=False,
+                    error=str(error),
+                )
+                self.store.commit_turn(session, turn, scope=scope)
+            else:
+                self.store.save(session)
+        except Exception as persistence_error:
+            logger.exception("异常轮次落库失败 key=%s", session_key)
+            metadata["persistence_error"] = str(persistence_error)
+        return OutboundReply(
+            text=text_out,
+            source=event.source,
+            reply_to=event.source.reply_to_message_id,
+            metadata=metadata,
+        )
+
     # ================= 核心：处理入站事件 =================  ✅️
     # 本质首先解析text 然后判断是否为斜杠命令 不是的话根据key获取session上下文 然后把session 和message加入进去 然后交给loop去跑一轮
-    def _run_turn_locked(self, session_key: str, event: InboundEvent) -> OutboundReply:
+    def _run_turn_locked(
+        self, session_key: str, event: InboundEvent, user_msg: Message, failure_state: dict,
+    ) -> OutboundReply:
         corr = event.metadata.get("correlation_id")
         if self._memory_context is not None:
-            return self._run_turn_persistent(session_key, event, corr)
+            return self._run_turn_persistent(session_key, event, user_msg, corr, failure_state)
 
         # ---- 斜杠命令：Gateway 短路，不进 Loop ----
         text = (event.text or "").strip()
@@ -263,17 +361,19 @@ class Gateway:
             channel=event.source.channel,
             author_id=event.source.user_id or "",
         )
+        failure_state["session"] = session
         # ---- 消息构建 → 交给 Loop 跑一轮 ----
-        user_msg = self.build_message(event)
         result = self.loop.run_turn(
             session,
             user_msg,
             ephemeral_prompt=event.channel_prompt,
             session_key=session_key,
         )
-        self.store.save(session)
-
         text_out = result.final_text if result.completed else (result.error or "处理失败")
+        if not result.completed:
+            self._mark_failed_turn_messages(session, user_msg)
+            self._append_gateway_error(session, text_out)
+        self.store.save(session)
         return OutboundReply(
             text=text_out or "",
             source=event.source,
@@ -286,7 +386,10 @@ class Gateway:
             },
         )
 
-    def _run_turn_persistent(self, session_key: str, event: InboundEvent, corr) -> OutboundReply:
+    def _run_turn_persistent(
+        self, session_key: str, event: InboundEvent, user_msg: Message, corr,
+        failure_state: dict,
+    ) -> OutboundReply:
         """持久化路径：解析 scope、冻结 Memory、执行 Turn、原子提交事实。"""
         base_scope = build_memory_scope(event.source)
         text = (event.text or "").strip()
@@ -321,11 +424,14 @@ class Gateway:
         session = self.store.get_or_create(
             session_key, scope=base_scope, channel=channel, author_id=author_id,
         )
+        failure_state["session"] = session
         scope = base_scope.model_copy(
             update={"session_id": session.session_id, "task_id": session.session_id}
         )
-        snapshot = self._memory_context.freeze(scope, session_id=session.session_id)
-        user_msg = self.build_message(event)
+        failure_state["scope"] = scope
+        snapshot = self._memory_context.freeze(
+            scope, session_id=session.session_id, query=event.text or ""
+        )
         started = time.time()
         result = self.loop.run_turn(
             session, user_msg,
@@ -367,6 +473,10 @@ class Gateway:
             if precision_trace is not None
             else None
         )
+        text_out = result.final_text if result.completed else (result.error or "处理失败")
+        if not result.completed:
+            self._mark_failed_turn_messages(session, user_msg)
+            self._append_gateway_error(session, text_out)
         turn = TurnRecord(
             turn_id=result.turn_id,
             session_id=session.session_id,
@@ -407,6 +517,15 @@ class Gateway:
         except Exception as exc:
             logger.exception("commit_turn 失败 turn_id=%s", result.turn_id)
             metadata["persistence_error"] = str(exc)
+            if any(
+                call.trajectory_id == result.turn_id
+                and call.tool_name == "memory_edit"
+                and isinstance(call.tool_call_result, dict)
+                and call.tool_call_result.get("memory_mutation") is not None
+                for call in session.tool_calls
+            ):
+                metadata["error"] = "memory_write_failed"
+                text_out = "记忆写入失败，本轮修改未保存。请重试。"
         else:
             # 事实落库成功后才唤醒 reviewer（§8.1：提交失败则不启后台提炼）
             if self._on_turn_committed is not None:
@@ -414,7 +533,6 @@ class Gateway:
                     self._on_turn_committed(turn)
                 except Exception:
                     logger.exception("on_turn_committed hook 失败 turn_id=%s", result.turn_id)
-        text_out = result.final_text if result.completed else (result.error or "处理失败")
         return OutboundReply(
             text=text_out or "", source=event.source,
             reply_to=event.source.reply_to_message_id,
@@ -464,6 +582,7 @@ class Gateway:
                     )
                 )
             except Exception:
+                ch.status["error_count"] += 1
                 logger.exception("出站投递失败 channel=%s", reply.source.channel)
 
     # ================= 观测 =================

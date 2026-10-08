@@ -2,11 +2,12 @@
 一键启动前端进程
 
 用法：
-    python frontier/main.py            # 启动静态服务（:5173）并自动打开浏览器
+    python frontier/main.py            # 托管 dist/（需先 npm run build）
     python frontier/main.py --port 5174 --no-open
 
-前端是纯静态页面（index.html + style.css + app.js），
-通过 HTTP/SSE 连接后端（默认 http://127.0.0.1:8000，请先运行根目录 main.py）。
+开发请用：
+    cd frontier && npm run dev
+    （Vite 从 src/config.js 读取后端端口做 /api proxy）
 """
 from __future__ import annotations
 
@@ -16,8 +17,8 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-# 无论从哪里启动，都服务 frontier/ 目录本身
 FRONTIER_DIR = Path(__file__).resolve().parent
+DIST_DIR = FRONTIER_DIR / "dist"
 
 
 class _QuietHandler(SimpleHTTPRequestHandler):
@@ -33,10 +34,15 @@ def main() -> None:
     parser.add_argument("--no-open", action="store_true", help="不自动打开浏览器")
     args = parser.parse_args()
 
-    handler = partial(_QuietHandler, directory=str(FRONTIER_DIR))
+    root = DIST_DIR if DIST_DIR.is_dir() else FRONTIER_DIR
+    if root is FRONTIER_DIR:
+        print("[frontier] 未找到 dist/，请先: cd frontier && npm run build")
+        print("[frontier] 开发请用: cd frontier && npm run dev")
+
+    handler = partial(_QuietHandler, directory=str(root))
     server = ThreadingHTTPServer(("127.0.0.1", args.port), handler)
     url = f"http://127.0.0.1:{args.port}"
-    print(f"[frontier] 前端已启动: {url}")
+    print(f"[frontier] 前端已启动: {url} (root={root.name})")
     print("[frontier] 请确保后端已运行: python main.py")
     if not args.no_open:
         webbrowser.open(url)

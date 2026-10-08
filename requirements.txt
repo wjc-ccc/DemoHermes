@@ -6,3 +6,5 @@ tzdata>=2024.1
 lark-oapi>=1.4
 httpx>=0.27
 websockets>=12
+cryptography>=42
+qrcode[pil]>=8

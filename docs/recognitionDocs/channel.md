@@ -1,5 +1,7 @@
 # Channel - 平台入口与出口
 
+> 当前架构中的“感知”入口；跨模块位置见 [模块架构总览](../模块架构总览.md)。本页保留渠道协议与媒体处理细节。
+
 > 对应代码：`agent/channel/baseChannel.py`、`agent/channel/channel_cli.py`、`agent/channel/channel_frontier.py`、`agent/channel/channel_wechat.py`
 > 地位：Agent 与外部世界的**唯一接触面**。所有平台差异在这里归一化，进来后全是统一 DTO。
 
@@ -17,7 +19,7 @@ Channel 是**平台适配器**：把不同平台（CLI、飞书、微信、HTTP 
 OutboundReply（统一出站）<──deliver_to_OutboundEvent── 平台回写
 ```
 
-每个平台一个 Channel 子类，继承 `BaseChannel`，实现两个抽象方法即可。
+每个平台一个 Channel 子类，继承 `BaseChannel`，实现 `start`、`stop`、`parse_to_InboundEvent`、`deliver_to_OutboundEvent` 四个抽象方法。
 
 ---
 
@@ -32,7 +34,7 @@ OutboundReply（统一出站）<──deliver_to_OutboundEvent── 平台回�
    - 拿到统一 `OutboundReply`，按平台方式发回去（print / 调 API / 推 webhook）
 
 3. **生命周期管理**：`start()` / `stop()`
-   - 读配置、连平台（飞书需建 websocket 长连、微信需挂 webhook 服务）
+   - 使用注册表注入的配置连接平台（飞书和 QQ 建 websocket 长连，微信 iLink 使用长轮询）
    - 无平台可连的（CLI）置 `start=True` 即可
 
 4. **平台侧杂务**：busy 队列、typing 状态、鉴权、防重放、素材下载
@@ -51,7 +53,7 @@ OutboundReply（统一出站）<──deliver_to_OutboundEvent── 平台回�
 | 绑定 Gateway | `bind_gateway(gateway)` | register_channel 时回调，绑定后才能 send_gateway |
 | 发送事件 | `send_gateway(event)` | 把 InboundEvent 塞进 Gateway 的入站队列，自动累加计数 |
 | 状态查询 | `get_status()` | 返回 message_count / inbound_event_count / error_count |
-| 配置加载 | `__init__` 读 `CHANNEL_CONFIG` | 从 JSON 配置文件读各渠道密钥/开关 |
+| 配置加载 | `registry.autostart_channels` | 一次读取 JSON 非敏感项与 `.env` 凭据，再注入 Channel |
 
 ### 3.2 子类必须实现的抽象方法
 
@@ -70,20 +72,28 @@ OutboundReply（统一出站）<──deliver_to_OutboundEvent── 平台回�
 | `FrontierChannel` | `channel_frontier.py` | ✅ HTTP | 供前端 HTTP API 调用，走 Gateway.ask 同步等回复 |
 | `FeishuChannel` | `channel_feishu.py` | ✅ 完整 | lark-oapi ws 长连（SDK 自动重连）+ REST 投递；群聊 require_mention + TTL 去重 |
 | `QQChannel` | `channel_qq.py` | ✅ 完整 | 官方 bot wss 网关（Hello→Identify→心跳→断线退避重连）+ REST 投递 |
-| `WechatChannel` | `channel_wechat.py` | ✅ 完整（文本版） | 腾讯 iLink Bot API 长轮询 + sendmessage；context_token 随 source.metadata 回流 |
+| `WechatChannel` | `channel_wechat.py` | ✅ 文字回复、图片/文件入站 | 腾讯 iLink Bot API 长轮询 + sendmessage；context_token 随 source.metadata 回流 |
 
 ### 3.4 配置即连（Hermes 式自动启用）
 
-平台 channel 不需要写代码接线：`Agent/main.py` 的 `build_gateway()` 末尾调
+平台 channel 不需要写代码接线：`agent/main.py` 先启动 Gateway，再调
 `autostart_channels(gateway)`（`channel/registry.py`），按以下规则自动启用：
 
-1. `Agent/channel/registry.json`（入库）该渠道节 `"enable": false` → 永不启动
-2. 凭据填齐（registry.json 同名 key，或 .env 对应变量）且未显式关闭 → 自动 register + start
-3. `"enable": true` 但凭据缺失 → 启动时 warn 跳过；单 channel 启动失败不拖垮其他
+1. `agent/channel/registry.json`（入库）该渠道节 `"enable": false` → 永不启动
+2. `.env` 凭据填齐且未显式关闭 → 自动 register + start
+3. `"enable": true` 但凭据缺失 → 启动时 warn 跳过；单 channel 启动失败后注销，不拖垮其他
 
 凭据分工：密钥只放 `.env`（FEISHU_APP_ID/FEISHU_APP_SECRET、QQ_APP_ID/QQ_CLIENT_SECRET、
 WEIXIN_TOKEN/WEIXIN_ACCOUNT_ID），registry.json 只放开关与非敏感配置（domain、require_mention 等）。
 新平台接入：写一个 BaseChannel 子类 + 在 `CHANNEL_ENTRIES` 加一条 ChannelEntry 即可。
+
+启动前可复制 `.env.example` 为 `.env` 并填写对应值；飞书需 App ID/Secret，QQ 需 App ID/Client Secret。个人微信 iLink Bot 可运行 `python scripts/wechat_qr_login.py`：在微信扫码并确认后，工具把 Token、Account ID 和区域接口地址写入本地 `.env`。二维码保存在 `data/channel/wechat_login_qr.png`，登录确认后删除。`/api/status` 同时显示 `start`（连接线程已启动）和 `connected`（已观测到平台通信）。飞书与 QQ 验证私聊和群聊；iLink Bot 通常只验证私聊，普通微信群事件受平台能力限制。
+
+入站 `InboundEvent.content` 使用统一的 `ContentPart`：图片和文件保存于 `data/channel/media/`，上限 20 MiB；文件正文不解析。官方 Anthropic 端点默认启用视觉；其他 Anthropic 兼容端点确认支持图片后可在 `.env` 设置 `MODEL_SUPPORTS_IMAGES=true`。文字模型只收到附件名称等说明。附件下载失败会进入事件文本，供 Agent 明确回复。出站统一为文字，媒体出站、语音和视频留待后续版本。
+
+媒体字段与命名：每个附件是一个 `ContentPart(type, path, file_name, mime_type, size_bytes)`；`path` 是本地绝对路径，落盘名为随机 UUID 加净化后的文件名，重名也不会覆盖。`file_name` 优先取平台原名，去掉路径、危险字符并截断到 100 字符；微信无文件名的图片按消息内顺序命名 `image-1.jpg`、`image-2.jpg`，QQ 无文件名附件按顺序命名 `attachment-1.<扩展名>`。微信 `item_list` 和 QQ `attachments` 中的多项按顺序进入同一个事件；飞书当前一个 `image/file` 事件只处理一个资源，连续发送的图片成为多个事件。项目未设每条消息的固定图片张数上限，但每个附件最多 20 MiB；平台和模型本身的请求体、图片数量、发送频率限制另算。
+
+模型输入：`Message.content` 持久化附件路径和元数据，`Message.content_text` 放入可读的附件说明。视觉模型请求时，图片才从本地读取并转为 base64 图像块；文件仍仅提供元数据。当前火山 Ark 的 `deepseek-v4-flash` 配置是文字模型，单独设置 `MODEL_SUPPORTS_IMAGES=true` 不能让它具备视觉能力。切到确实支持图像的模型（例如 Ark 的 `deepseek-v4.1-flash`）后，再设置 `MODEL_SUPPORTS_IMAGES=true` 并重启后端。该开关只控制是否发送图片，实际 API 套餐与模型能力仍以提供方为准。
 
 ---
 
@@ -196,18 +206,15 @@ event = feishu_channel.parse_to_InboundEvent(raw)
 
 ---
 
-## 七、往往需要优化哪些问题
+## 七、当前限制与可选演进
 
-| 问题 | 现状 | 优化方向 |
-|------|------|---------|
-| **平台字段硬编码** | 解析逻辑写死在 parse 函数里 | 抽成 `FieldMapper` 配置，新平台改配置不改代码 |
-| **无防重放** | 同一条 webhook 重复推送会重复处理 | 加 `message_id` 去重缓存（Channel 内做） |
-| **无 typing 状态** | 长任务时用户不知道 Agent 在干活 | Channel 内启动 typing 心跳，Loop 完成后停 |
-| **媒体下载阻塞** | 图片/语音同步下载会卡住入站 | 异步下载，先发文本事件，媒体就绪后补发 |
-| **错误未上报** | deliver 失败只 log，平台侧无重试 | 加 Channel 内重试 + 指数退避，失败进死信队列 |
-| **配置热更新** | 密钥变更需重启 | 支持 reload_config()，运行期切换 |
-| **多账号/多实例** | 一个 Channel 只能连一个账号 | Channel 工厂化，按 account_id 多实例 |
-| **骨架已实现** ✅ | wechat/feishu/qq 已接入真实平台（2026-08-12） | 后续：媒体消息、typing 状态、配置热更新 |
+| 主题 | 当前代码 | 后续可考虑 |
+|------|----------|------------|
+| 重复消息 | 飞书、QQ、微信各用 `TTLDedup` 判断消息 ID | 多进程或重启后的持久去重 |
+| 媒体 | 图片/文件入站保存并限制为单件 20 MiB；出站统一为文字 | 语音、视频语义处理与媒体出站 |
+| 入站工作 | `BaseChannel.submit_inbound_work` 提供有界槽位和工作线程；槽位满时同步处理 | 根据平台实测负载调整队列与背压 |
+| 状态提示 | `status` 能区分启动与连接状态 | 按平台增加 typing 等长任务反馈 |
+| 配置 | 启动时从 registry 与环境变量解析 | 如确有需求再做运行时热更新 |
 
 ---
 

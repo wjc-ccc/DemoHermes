@@ -97,7 +97,8 @@ def test_table_catalog_lists_sessions_and_side_database(memory_stack, tmp_path):
         )
         assert any(column["name"] == "session_id" and column["pk"] for column in session_columns)
         assert "audit_events" in {table["name"] for table in by_name["agent"]["tables"]}
-        assert len(by_name["agent"]["tables"]) == 17
+        assert {"memory_cards", "memory_experiences", "memory_evidence",
+                "memory_terms", "memory_card_versions", "memory_conflicts"} <= session_tables
 
         status, page = _get(
             port, "/api/debug/tables/rows?database=agent&table=sessions&limit=1&offset=0"
@@ -106,6 +107,14 @@ def test_table_catalog_lists_sessions_and_side_database(memory_stack, tmp_path):
         assert page["total"] >= 1
         assert len(page["rows"]) == 1
         assert page["rows"][0]["session_id"] == memory_stack["session"].session_id
+
+        status, filtered = _get(
+            port, '/api/debug/tables/rows?database=agent&table=sessions&filters=%7B%22channel%22%3A%22frontier%22%7D'
+        )
+        assert status == 200
+        assert filtered["total"] >= 1
+        assert filtered["filter_options"]["channel"] == ["frontier"]
+        assert all(row["channel"] == "frontier" for row in filtered["rows"])
 
         status, rejected = _get(
             port, "/api/debug/tables/rows?database=agent&table=not_a_table"
@@ -198,30 +207,15 @@ def test_trace_modules_read_precision_note_and_memory_rows(memory_stack):
         assert memory["rows"][0]["operation"] == "validate"
         assert "preference" in memory["rows"][0]["items"]
 
+        assert memory["filter_options"]["operation"] == ["validate"]
+        status, filtered = _get(
+            port, '/api/debug/traces?module=memory&filters=%7B%22operation%22%3A%22validate%22%7D'
+        )
+        assert status == 200 and filtered["total"] == 1
+        assert filtered["rows"][0]["operation"] == "validate"
+
         status, rejected = _get(port, "/api/debug/traces?module=skill")
         assert status == 400
         assert rejected["error"] == "unknown module"
-    finally:
-        _stop_server(server)
-
-def test_three_state_endpoint_is_readonly_and_flag_guarded(memory_stack):
-    gateway = _gateway(memory_stack, {"agent":memory_stack["db"]})
-    sid = memory_stack["session"].session_id
-    server,port = _start_server(gateway,enable_memory_debug=True)
-    try:
-        with gateway.store.db.read() as conn:
-            before=tuple(conn.iterdump())
-        status,payload=_get(port,"/api/debug/memory/states?session_id="+sid)
-        assert status==200 and payload["session_id"]==sid
-        assert payload["workspace"] is None
-        assert payload["state"]["items"]==[]
-        with gateway.store.db.read() as conn:
-            assert tuple(conn.iterdump())==before
-        assert _get(port,"/api/debug/memory/states?session_id=missing")[0]==404
-    finally:
-        _stop_server(server)
-    server,port=_start_server(gateway,enable_memory_debug=False)
-    try:
-        assert _get(port,"/api/debug/memory/states?session_id="+sid)[0]==404
     finally:
         _stop_server(server)

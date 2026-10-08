@@ -225,14 +225,12 @@ class _CharCostEstimator:
         return sum(len(str(m.get("content") or "")) for m in messages)
 
 
-def test_provider_recall_is_deferred_as_p3_handle_not_preloaded(tmp_path):
-    """P3 永不预加载：provider 正文不进 messages，只暴露 handle；历史与 Hot 保留。"""
-    provider_block = (
-        '<provider-memory name="fake">\n' + "长" * 2000 + "\n</provider-memory>"
-    )
+def test_experience_recall_is_present_in_context_with_history(tmp_path):
+    """本轮冻结的经验与手册、历史一同进入模型输入。"""
+    experience_block = "<memory-experiences>\n经验：先运行项目测试\n</memory-experiences>"
     snapshot = MemorySnapshot(
         scope=_SCOPE, session_id="s1", prompt="HOT记忆块", built_at=0.0,
-        revisions=(), hot_prompt="HOT记忆块", provider_prompt=provider_block,
+        revisions=(), experience_prompt=experience_block,
     )
     estimator = _CharCostEstimator()
     model = _FakeModel([ModelResponse(text="回答")])
@@ -248,9 +246,7 @@ def test_provider_recall_is_deferred_as_p3_handle_not_preloaded(tmp_path):
     assert result.completed, result.error
     sent = model.calls[0]
     text = _contents(sent)
-    assert "<provider-memory" not in text
-    assert "长" * 50 not in text
-    assert "provider:fake" in text
+    assert experience_block in text
     assert "第1轮问题" in text and "第2轮问题" in text and "第3轮问题" in text
     assert "HOT记忆块" in text
 

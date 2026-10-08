@@ -95,8 +95,20 @@ class SqliteJobStore:
             if reclaim_expired:
                 condition += " OR (status='running' AND lease_expires_at<=?)"
                 args.append(now)
+            order_guard = ''
+            if job_type == 'memory.extract':
+                order_guard = (
+                    " AND NOT EXISTS ("
+                    "SELECT 1 FROM memory_review_turns current_turn "
+                    "JOIN memory_review_turns earlier ON earlier.scope_key=current_turn.scope_key "
+                    "AND earlier.ordinal<current_turn.ordinal "
+                    "JOIN jobs earlier_job ON earlier_job.id=earlier.batch_job_id "
+                    "WHERE current_turn.batch_job_id=jobs.id "
+                    "AND earlier.batch_job_id<>jobs.id "
+                    "AND earlier_job.status NOT IN ('completed','terminal_failed','cancelled'))"
+                )
             row = conn.execute('SELECT id FROM jobs WHERE job_type=?'+version_filter+' AND ('+condition+
-                               ') ORDER BY available_at,id LIMIT 1',args).fetchone()
+                               ')'+order_guard+' ORDER BY available_at,id LIMIT 1',args).fetchone()
             if not row:
                 return None
             conn.execute("UPDATE jobs SET status='running',lease_owner=?,lease_token=?,lease_expires_at=?,"

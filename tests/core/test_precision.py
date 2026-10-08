@@ -26,16 +26,14 @@ def _session(*pairs: tuple[str, str]) -> Session:
     return session
 
 
-def _snapshot(*, daily: str | None = None, provider: str | None = None):
+def _snapshot(*, experience: str | None = None):
     return SimpleNamespace(
-        prompt="HOT",
-        hot_prompt="HOT",
-        daily_prompt=daily,
-        provider_prompt=provider,
+        prompt="用户手册",
+        experience_prompt=experience,
     )
 
 
-def test_load_grade_build_defers_p3_and_preserves_latest_user():
+def test_load_grade_build_includes_experience_and_preserves_latest_user():
     session = _session(
         ("user", "旧问"),
         ("assistant", "旧答"),
@@ -43,26 +41,23 @@ def test_load_grade_build_defers_p3_and_preserves_latest_user():
     )
     result = PrecisionBuilder().build(
         session,
-        memory_snapshot=_snapshot(
-            daily='<today-daily date="2026-07-23">流水正文</today-daily>'
-        ),
+        memory_snapshot=_snapshot(experience="经验卡片：先运行测试"),
         token_estimator=_PerMessage(),
         trace_id="t1",
     )
     text = "\n".join(str(message.get("content")) for message in result.messages)
-    assert "流水正文" not in text
-    assert "daily:2026-07-23" in text
+    assert "经验卡片：先运行测试" in text
     assert "新问" in text
-    assert result.exposed_refs == ("daily:2026-07-23",)
-    assert result.metrics.p3_exposed_count == 1
+    assert result.exposed_refs == ()
+    assert result.metrics.p3_exposed_count == 0
     assert any(
         record.priority == Priority.P0 and record.item_name.endswith(":seq:2")
         for record in result.records
     )
     assert any(
-        record.item_name == "memory_daily"
-        and record.priority == Priority.P3
-        and record.decision == "lazyload"
+        record.item_name == "memory_experience"
+        and record.priority == Priority.P1
+        and record.decision == "selected"
         for record in result.records
     )
 
@@ -125,36 +120,30 @@ def test_old_tool_error_moves_to_failed_anchor_decision():
     assert result.metrics.protected_error_missing_count == 0
 
 
-def test_trace_counts_one_real_turn_across_react_rebuilds_and_records_p3_hit():
+def test_trace_counts_one_real_turn_across_react_rebuilds():
     trace = PrecisionTrace(window=20)
     engine = PrecisionBuilder(trace=trace)
     session = _session(("user", "now"))
-    snapshot = _snapshot(
-        daily='<today-daily date="2026-07-23">x</today-daily>'
-    )
+    snapshot = _snapshot(experience="一次旧经验")
     engine.build(session, memory_snapshot=snapshot, token_estimator=_PerMessage(), trace_id="hit1")
     session.add_message(Message(role="assistant", content_text="再想一步"))
     engine.build(session, memory_snapshot=snapshot, token_estimator=_PerMessage(), trace_id="hit1")
-    trace.record_memory_read(
-        "hit1", {"target": "daily", "date": "2026-07-23"}
-    )
+    assert trace.record_memory_read("hit1", {"reference": "card:old"}) == ()
     snap = trace.snapshot()
     assert snap.n == 1
-    assert snap.p3_hit_rate == 1.0
+    assert snap.p3_hit_rate == 0.0
     assert trace.latest().trace_id == "hit1"
 
 
-def test_provider_handle_hit_matching_lives_in_trace():
+def test_ordinary_memory_search_does_not_create_a_lazy_handle():
     trace = PrecisionTrace()
     result = PrecisionBuilder(trace=trace).build(
         _session(("user", "now")),
-        memory_snapshot=_snapshot(
-            provider='<provider-memory name="fake">正文</provider-memory>'
-        ),
+        memory_snapshot=_snapshot(experience="经验卡片：正文"),
         token_estimator=_PerMessage(),
-        trace_id="provider-turn",
+        trace_id="experience-turn",
     )
-    assert result.exposed_refs == ("provider:fake",)
+    assert result.exposed_refs == ()
     assert trace.record_memory_read(
-        "provider-turn", {"query": "找 fake 档案"}
-    ) == ("provider:fake",)
+        "experience-turn", {"reference": "card:anything"}
+    ) == ()

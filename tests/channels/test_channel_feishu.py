@@ -43,7 +43,7 @@ def _raw(**over) -> dict:
 def channel(monkeypatch):
     monkeypatch.setenv("FEISHU_APP_ID", "cli_xxx")
     monkeypatch.setenv("FEISHU_APP_SECRET", "secret_xxx")
-    return FeishuChannel()
+    return FeishuChannel({"app_id": "cli_xxx", "app_secret": "secret_xxx"})
 
 
 # ---- 入站归一化 ----
@@ -137,7 +137,7 @@ def test_event_to_raw_non_text_falls_back(channel):
     )
     sender = SimpleNamespace(sender_id=SimpleNamespace(open_id="ou_u9"), sender_type="user")
     raw = channel.event_to_raw(SimpleNamespace(event=SimpleNamespace(message=message, sender=sender)))
-    assert "image" in raw["text"]  # 占位文案包含类型提示
+    assert raw["resource"]["image_key"] == "img_v2_x"
 
 
 # ---- 出站投递（mock lark client）----
@@ -163,7 +163,7 @@ def test_deliver_prefers_reply_to_message(channel):
     req = client.im.v1.message.reply.call_args[0][0]
     assert req.message_id == "om_1"
     assert not client.im.v1.message.create.called
-    assert channel.status["outbound_event_count"] == 1
+    assert channel.status["outbound_event_count"] == 0  # Gateway 投递成功后统一记账
 
 
 def test_deliver_falls_back_to_create_when_no_reply_to(channel):
@@ -190,5 +190,5 @@ def test_deliver_reply_failure_falls_back_to_create(channel):
 
 def test_deliver_without_client_counts_error(channel):
     channel._client = None
-    channel.deliver_to_OutboundEvent(_reply())
-    assert channel.status["error_count"] == 1
+    with pytest.raises(RuntimeError, match="REST client"):
+        channel.deliver_to_OutboundEvent(_reply())

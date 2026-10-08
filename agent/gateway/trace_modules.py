@@ -36,18 +36,29 @@ def list_traces(
     session_id: str | None,
     limit: int,
     offset: int,
+    filters: Mapping[str, object] | None = None,
 ) -> dict:
     spec = next((item for item in _MODULES if item["module"] == module), None)
     if spec is None:
         raise CatalogError("unknown module")
     bounded = max(1, min(int(limit), 100))
     start = max(0, int(offset))
-    columns, rows, total = spec["read"](databases, session_id=session_id or None, limit=bounded, offset=start)
+    options = _trace_filter_options(databases, module, session_id)
+    selected = dict(filters or {})
+    if any(name not in options for name in selected):
+        raise CatalogError("unknown filter column")
+    if any(value not in options[name] for name, value in selected.items()):
+        raise CatalogError("unknown filter value")
+    columns, rows, total = spec["read"](
+        databases, session_id=session_id or None, limit=bounded, offset=start,
+        filters=selected,
+    )
     return {
         "module": spec["module"],
         "persisted": spec["persisted"],
         "note": spec["note"],
         "columns": [{"name": name} for name in columns],
+        "filter_options": options,
         "rows": rows,
         "total": total,
         "limit": bounded,
@@ -95,8 +106,41 @@ _MEMORY_COLUMNS = (
 )
 
 
+def _trace_filter_options(
+    databases: Mapping[str, Path], module: str, session_id: str | None
+) -> dict[str, list[object]]:
+    path = _memory_file(databases)
+    if path is None:
+        return {}
+    conn = open_readonly(path)
+    try:
+        if module == "memory":
+            if not _has_table(conn, "traces"):
+                return {}
+            values = [row[0] for row in conn.execute(
+                "SELECT DISTINCT operation FROM traces WHERE module='memory' "
+                "AND (? IS NULL OR session_id=?) ORDER BY operation LIMIT 41",
+                (session_id, session_id),
+            )]
+            return {"operation": values} if 0 < len(values) <= 40 else {}
+        if not _has_table(conn, "turns"):
+            return {}
+        expression = "json_extract(payload_json,'$.precision_trace.metrics.anchor_status')"
+        values = [row[0] for row in conn.execute(
+            f"SELECT DISTINCT {expression} FROM turns WHERE "
+            "(? IS NULL OR session_id=?) AND "
+            "json_type(payload_json,'$.precision_trace')='object' AND "
+            f"{expression} IS NOT NULL ORDER BY {expression} LIMIT 41",
+            (session_id, session_id),
+        )]
+        return {"anchor_status": values} if 0 < len(values) <= 40 else {}
+    finally:
+        conn.close()
+
+
 def _read_precision(
-    databases: Mapping[str, Path], *, session_id: str | None, limit: int, offset: int
+    databases: Mapping[str, Path], *, session_id: str | None, limit: int, offset: int,
+    filters: Mapping[str, object],
 ) -> tuple[list[str], list[dict]]:
     path = _memory_file(databases)
     if path is None:
@@ -107,11 +151,15 @@ def _read_precision(
             return list(_PRECISION_COLUMNS), [], 0
         conn.execute("BEGIN")
         where = " WHERE (? IS NULL OR session_id=?) AND json_type(payload_json,'$.precision_trace')='object'"
-        total = conn.execute("SELECT COUNT(*) FROM turns"+where,(session_id,session_id)).fetchone()[0]
+        params: tuple[object, ...] = (session_id, session_id)
+        if "anchor_status" in filters:
+            where += " AND json_extract(payload_json,'$.precision_trace.metrics.anchor_status') IS ?"
+            params += (filters["anchor_status"],)
+        total = conn.execute("SELECT COUNT(*) FROM turns"+where, params).fetchone()[0]
         stored = conn.execute(
             "SELECT turn_id, session_id, created_at, payload_json FROM turns "
             + where + " ORDER BY created_at DESC,turn_id DESC LIMIT ? OFFSET ?",
-            (session_id, session_id, limit, offset),
+            (*params, limit, offset),
         ).fetchall()
         matched = []
         for turn_id, row_session_id, created_at, payload_json in stored:
@@ -129,7 +177,8 @@ def _read_precision(
 
 
 def _read_memory(
-    databases: Mapping[str, Path], *, session_id: str | None, limit: int, offset: int
+    databases: Mapping[str, Path], *, session_id: str | None, limit: int, offset: int,
+    filters: Mapping[str, object],
 ) -> tuple[list[str], list[dict]]:
     path = _memory_file(databases)
     if path is None:
@@ -138,9 +187,13 @@ def _read_memory(
     try:
         conn.execute("BEGIN")
         where = " WHERE module='memory' AND (? IS NULL OR session_id=?)"
-        total=conn.execute("SELECT COUNT(*) FROM traces"+where,(session_id,session_id)).fetchone()[0]
+        params: tuple[object, ...] = (session_id, session_id)
+        if "operation" in filters:
+            where += " AND operation IS ?"
+            params += (filters["operation"],)
+        total=conn.execute("SELECT COUNT(*) FROM traces"+where,params).fetchone()[0]
         ids=conn.execute("SELECT id FROM traces"+where+" ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?",
-                         (session_id,session_id,limit,offset)).fetchall()
+                         (*params,limit,offset)).fetchall()
         traces=[SqliteTraceStore._get_with_conn(conn,row[0]) for row in ids]
         talks = _conversations(conn, [trace.turn_id for trace in traces if trace.turn_id])
     finally:

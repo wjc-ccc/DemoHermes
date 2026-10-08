@@ -33,13 +33,15 @@ class SqliteSessionArchiveReader:
 class SqliteSessionStore:
     """一个深 Store interface：会话恢复、Turn 原子提交和 outbox 调度。"""
 
-    def __init__(self, database, *, executions, jobs, id_factory=None, extractor_version='memory-review-v1'):
+    def __init__(self, database, *, executions, jobs, id_factory=None, extractor_version='memory-extractor-v3', review_scheduler=None, card_mutator=None):
         self.db = database
         self._db_path = database.path
         self.executions = executions
         self.jobs = jobs
         self._id_factory = id_factory
         self._extractor_version = extractor_version
+        self._review_scheduler = review_scheduler
+        self._card_mutator = card_mutator
 
     def _new_session(self, session_key, channel, author_id):
         return Session(session_id=self._id_factory() if self._id_factory else str(uuid.uuid4()),
@@ -77,11 +79,22 @@ class SqliteSessionStore:
             self._upsert_session(conn,session,scope)
             sequence = insert_turn(conn,turn)
             insert_session_facts(conn,session,turn)
-            enqueue_job(conn,job_type='memory.extract',handler_version=self._extractor_version,
-                session_id=session.session_id,turn_id=turn.turn_id,job_id=turn.turn_id,
-                dedupe_key=f'memory.extract:{self._extractor_version}:{turn.turn_id}',
-                input={'turn_id':turn.turn_id,'from_turn_no':sequence,'to_turn_no':sequence,
-                       'trigger_type':'turn_committed'})
+            if self._card_mutator is not None and turn.completed and not turn.interrupted:
+                for call in session.tool_calls:
+                    if (call.trajectory_id != turn.turn_id or call.tool_name != 'memory_edit'
+                        or call.status != 'success' or not isinstance(call.tool_call_result, dict)):
+                        continue
+                    mutation = call.tool_call_result.get('memory_mutation')
+                    if mutation is not None:
+                        item = self._card_mutator.apply(conn, scope, turn.user_message_id, mutation)
+            if self._review_scheduler is not None:
+                self._review_scheduler.record_turn(conn, turn)
+            else:
+                enqueue_job(conn,job_type='memory.extract',handler_version=self._extractor_version,
+                    session_id=session.session_id,turn_id=turn.turn_id,job_id=turn.turn_id,
+                    dedupe_key=f'memory.extract:{self._extractor_version}:{turn.turn_id}',
+                    input={'turn_id':turn.turn_id,'from_turn_no':sequence,'to_turn_no':sequence,
+                           'trigger_type':'turn_committed'})
 
     def close_and_reset(self, session_key, session, *, scope, channel='', author_id=''):
         with self.db.write() as conn:
@@ -95,6 +108,8 @@ class SqliteSessionStore:
             conn.execute('UPDATE sessions SET is_current=0 WHERE session_id=?',(closed.session_id,))
             new_session = self._new_session(session_key,channel,author_id)
             self._upsert_session(conn,new_session,scope)
+            if self._review_scheduler is not None:
+                self._review_scheduler.flush_scope(conn, scope.storage_key, trigger_type='reset')
             return SessionReset(closed_session=closed,new_session=new_session)
 
     def archive(self, session_id):

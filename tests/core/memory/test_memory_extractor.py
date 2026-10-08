@@ -1,91 +1,181 @@
 from __future__ import annotations
 
-from agent.core.memory import (
-    FallbackMemoryExtractor,
-    MemoryLayer,
-    MemoryScope,
-    ModelMemoryExtractor,
-    RuleBasedMemoryExtractor,
-)
+import json
+
+import pytest
+
+from agent.core.memory import MemoryExtractor, MemoryExtractionError, MemoryScope
+from agent.core.memory.memory_item import UserMemoryItem, content_sha256
 from agent.core.memory.types import TurnRecord
-from agent.core.types import Message, Session
+from agent.core.types import Message, Session, ToolCall
 
 
-def _turn(scope, message_id="m1"):
-    return TurnRecord(
-        turn_id="t1",
-        session_id="s1",
-        scope=scope,
-        user_message_id=message_id,
-        assistant_message_ids=(),
-        tool_call_ids=(),
-        started_at=1.0,
-        finished_at=2.0,
-        completed=True,
-        interrupted=False,
-        error=None,
+class _Cards:
+    def search(self, scope, query, *, limit, kind=None, offset=0):
+        return ()
+
+
+class _StoredCards:
+    def __init__(self, cards):
+        self._cards = tuple(cards)
+
+    def search(self, scope, query, *, limit, kind=None, offset=0):
+        rows = [card for card in self._cards if kind is None or card.kind.value == kind]
+        return tuple(rows[offset:offset + limit])
+
+
+def _stored_card(identity, content, *, kind, slot_key=None, summary=None, keywords=()):
+    return UserMemoryItem(
+        item_id=identity, kind=kind, slot_key=slot_key,
+        source_type="memory_extraction", source_ref="m0",
+        content=content, summary=summary or content,
+        content_hash=content_sha256(content), source_authority="user_explicit",
+        keywords=keywords,
     )
 
 
-def _session(text):
+def _source(text="以后请用中文回答"):
+    scope = MemoryScope(user_id="u1")
     session = Session(session_id="s1")
     session.add_message(Message(message_id="m1", role="user", content_text=text))
-    return session
+    turn = TurnRecord(
+        turn_id="t1", session_id="s1", scope=scope, user_message_id="m1",
+        assistant_message_ids=(), tool_call_ids=(), started_at=1.0,
+        finished_at=2.0, completed=True, interrupted=False, error=None,
+    )
+    return (turn,), (session,)
 
 
-def test_rule_extractor_separates_user_preference_and_task_progress() -> None:
-    ids = iter(("p-user", "p-task"))
-    extractor = RuleBasedMemoryExtractor(id_factory=ids.__next__)
-    user_scope = MemoryScope(user_id="u1")
-
-    user = extractor.extract(_turn(user_scope), _session("以后请用中文回答"))
-    task_scope = MemoryScope(user_id="u1", task_id="task-1")
-    task = extractor.extract(_turn(task_scope), _session("已经完成了 SQLite 迁移"))
-
-    assert user[0].target_layer is MemoryLayer.USER
-    assert user[0].type == "preference"
-    assert user[0].source_authority == "user_explicit"
-    assert task[0].target_layer is MemoryLayer.TASK
-    assert task[0].type == "progress"
-
-
-def test_model_extractor_output_stays_proposed_authority() -> None:
-    class _Response:
-        text = """[{"target_layer":"user","type":"capability",
-        "memory_kind":"semantic","normalized_key":"capability.python",
-        "summary":"可能熟悉 Python","content":"用户可能熟悉 Python",
-        "confidence":0.7,"reason_code":"inferred_capability"}]"""
-
-    class _Model:
+def test_empty_model_result_is_valid_without_rule_fallback():
+    class Model:
         def chat(self, messages):
-            return _Response()
+            return {"text": "[]"}
 
-    proposal = ModelMemoryExtractor(
-        _Model(), id_factory=lambda: "proposal-1"
-    ).extract(_turn(MemoryScope(user_id="u1")), _session("我用 Python 写过脚本"))[0]
-
-    assert proposal.source_authority == "model_inferred"
-    assert proposal.target_layer is MemoryLayer.USER
+    batch = MemoryExtractor(Model(), _Cards()).extract_batch(*_source())
+    assert batch.proposals == ()
+    assert batch.issues == ()
 
 
-def test_model_failure_falls_back_but_valid_empty_does_not() -> None:
-    class _Broken:
-        version = "broken"
+def test_model_failure_and_invalid_json_raise_for_job_retry():
+    class Broken:
+        def chat(self, messages):
+            raise RuntimeError("unavailable")
 
-        def extract(self, turn, session):
-            from agent.core.memory import ModelMemoryExtractionError
+    class Invalid:
+        def chat(self, messages):
+            return {"text": "{not-json"}
 
-            raise ModelMemoryExtractionError("bad")
+    for model in (Broken(), Invalid(), None):
+        with pytest.raises(MemoryExtractionError):
+            MemoryExtractor(model, _Cards()).extract_batch(*_source())
 
-    class _Empty:
-        version = "empty"
 
-        def extract(self, turn, session):
-            return []
+def test_valid_card_survives_one_invalid_item():
+    class Model:
+        def chat(self, messages):
+            return {"text": json.dumps([
+                {"kind": "stable_preference", "subject": "assistant",
+                 "attribute": "response_language", "summary": "以后用中文回答",
+                 "content": "以后用中文回答", "confidence": 0.8,
+                 "source_message_ids": ["m1"],
+                 "evidence_quotes": {"m1": "以后请用中文回答"},
+                 "reason_code": "explicit_preference"},
+                {"kind": "profile", "summary": "missing fact slot"},
+            ], ensure_ascii=False)}
 
-    fallback = RuleBasedMemoryExtractor(id_factory=lambda: "proposal-1")
-    turn = _turn(MemoryScope(user_id="u1"))
-    session = _session("以后请用中文回答")
+    batch = MemoryExtractor(Model(), _Cards()).extract_batch(*_source())
+    assert len(batch.proposals) == 1
+    assert batch.proposals[0].kind.value == "stable_preference"
+    assert batch.proposals[0].source_authority == "model_inferred"
+    assert len(batch.issues) == 1
 
-    assert FallbackMemoryExtractor(_Broken(), fallback).extract(turn, session)
-    assert FallbackMemoryExtractor(_Empty(), fallback).extract(turn, session) == []
+
+def test_interrupted_turn_is_not_extracted():
+    turns, sessions = _source()
+    interrupted = turns[0].model_copy(update={"completed": False, "interrupted": True})
+    with pytest.raises(ValueError, match="正常完成"):
+        MemoryExtractor(None, _Cards()).extract_batch((interrupted,), sessions)
+
+
+def test_memory_tool_output_cannot_be_reused_as_new_card_evidence():
+    class Model:
+        def chat(self, messages):
+            assert '"tools": []' in messages[-1]["content"]
+            return {"text": json.dumps([{
+                "kind": "ongoing_fact", "subject": "user", "attribute": "project",
+                "summary": "用户开发 DemoCursor", "content": "用户开发 DemoCursor",
+                "confidence": 0.7, "source_tool_call_ids": ["memory-search-1"],
+                "evidence_quotes": {"memory-search-1": "DemoCursor"},
+                "reason_code": "copied_memory",
+            }], ensure_ascii=False)}
+
+    turns, sessions = _source("请查一下旧记忆")
+    sessions[0].tool_calls.append(ToolCall(
+        tool_call_id="memory-search-1", session_id="s1", trajectory_id="t1",
+        tool_name="memory_search", status="success", result_text="DemoCursor",
+    ))
+    turn = turns[0].model_copy(update={"tool_call_ids": ("memory-search-1",)})
+    batch = MemoryExtractor(Model(), _Cards()).extract_batch((turn,), sessions)
+    assert batch.proposals == () and len(batch.issues) == 1
+
+
+def test_existing_cards_keep_stable_slots_and_batch_overlaps():
+    cards = (
+        _stored_card("name", "用户希望被称作老王", kind="profile",
+                     slot_key="profile:user:display_name", summary="用户希望被称作老王"),
+        _stored_card("lang", "以后请用中文回答", kind="stable_preference",
+                     slot_key="stable_preference:assistant:response_language",
+                     summary="以后请用中文回答"),
+        _stored_card("cat", "用户养了一只猫", kind="ongoing_fact",
+                     slot_key="ongoing_fact:user:pet", summary="用户养了一只猫"),
+        _stored_card("png-fact", "DemoCursor 项目使用 PNG 导出图片", kind="ongoing_fact",
+                     slot_key="ongoing_fact:user:export_format",
+                     summary="DemoCursor 项目使用 PNG 导出图片"),
+        _stored_card("cook", "红烧肉的做法和结果", kind="reusable_experience",
+                     summary="红烧肉的做法和结果"),
+        _stored_card("png-exp", "图片导出改用 PNG 后成功", kind="reusable_experience",
+                     summary="图片导出改用 PNG 后成功"),
+    )
+    model = _CapturingModel()
+    MemoryExtractor(model, _StoredCards(cards)).extract_batch(
+        *_source("这次图片导出改用 PNG 格式后成功了"),
+    )
+    shown = model.payload["existing_cards"]
+    assert [card["summary"] for card in shown] == [
+        "用户希望被称作老王",
+        "以后请用中文回答",
+        "图片导出改用 PNG 后成功",
+        "DemoCursor 项目使用 PNG 导出图片",
+    ]
+    assert all(set(card) == {"kind", "slot_key", "summary"} for card in shown)
+    assert shown[0]["slot_key"] == "profile:user:display_name"
+    assert shown[2]["slot_key"] is None
+
+
+def test_existing_cards_keep_only_eight_related_overlaps():
+    cards = [
+        _stored_card("name", "用户希望被称作老王", kind="profile",
+                     slot_key="profile:user:display_name"),
+    ]
+    cards.extend(
+        _stored_card(
+            f"related-{index:02d}", f"PNG 记录 related-{index:02d}",
+            kind="ongoing_fact", slot_key=f"ongoing_fact:user:export_{index:02d}",
+            summary=f"PNG 记录 related-{index:02d}",
+        )
+        for index in range(1, 10)
+    )
+    model = _CapturingModel()
+    MemoryExtractor(model, _StoredCards(cards)).extract_batch(*_source("请看 PNG"))
+    summaries = [card["summary"] for card in model.payload["existing_cards"]]
+    assert summaries[0] == "用户希望被称作老王"
+    assert summaries[1:] == [f"PNG 记录 related-{index:02d}" for index in range(1, 9)]
+
+
+class _CapturingModel:
+    def __init__(self):
+        self.payload = None
+
+    def chat(self, messages):
+        self.payload = json.loads(messages[-1]["content"])
+        return {"text": "[]"}

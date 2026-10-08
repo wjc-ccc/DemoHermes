@@ -33,10 +33,8 @@ class TurnExpectation(BaseModel):
     context_lacks: tuple[str, ...] = ()
     memory_contains: tuple[str, ...] = ()
     memory_lacks: tuple[str, ...] = ()
-    daily_contains: tuple[str, ...] = ()
-    daily_lacks: tuple[str, ...] = ()
-    provider_contains: tuple[str, ...] = ()
-    provider_lacks: tuple[str, ...] = ()
+    experience_contains: tuple[str, ...] = ()
+    experience_lacks: tuple[str, ...] = ()
     skill_contains: tuple[str, ...] = ()
     skill_lacks: tuple[str, ...] = ()
     reply_contains: tuple[str, ...] = ()
@@ -124,8 +122,7 @@ class ModelCallEvidence(BaseModel):
     context_text: str
     context_chars: int
     memory_text: str = ""
-    daily_text: str = ""
-    provider_text: str = ""
+    experience_text: str = ""
     skill_text: str = ""
 
 

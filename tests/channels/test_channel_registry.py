@@ -7,7 +7,7 @@
     enable:true  + 凭据缺   → 跳过（warn，不炸）
     依赖缺失                → 跳过（install_hint）
     单个 channel 异常       → 不拖垮其他 channel
-    JSON 节里的同名 key     → 可替代 env 凭据
+    JSON 节里的同名 key     → 不作为凭据
 """
 from __future__ import annotations
 
@@ -30,8 +30,8 @@ class FakeChannel(BaseChannel):
 
     name = "fake"
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, config=None) -> None:
+        super().__init__(config)
         self.started = False
         self.stopped = False
 
@@ -42,6 +42,7 @@ class FakeChannel(BaseChannel):
 
     def stop(self) -> None:
         self.stopped = True
+        self.status["start"] = False
 
     def parse_to_InboundEvent(self, raw):  # pragma: no cover - 不在本测试范围
         return InboundEvent(text=str(raw))
@@ -67,6 +68,11 @@ class FakeGateway:
 
     def get_channel(self, name: str):
         return self.channels.get(name)
+
+    def unregister_channel(self, name: str):
+        channel = self.channels.pop(name, None)
+        if channel is not None:
+            channel.unbind_gateway()
 
     def submit(self, event) -> None:  # pragma: no cover - send_gateway 备用
         pass
@@ -95,18 +101,23 @@ def _clean_env(monkeypatch):
 def test_resolve_credentials_from_env(monkeypatch):
     monkeypatch.setenv("FAKE_API_KEY", "k1")
     entry = _entry()
-    assert resolve_channel_credentials(entry, {}) == {"api_key": "k1"}
+    assert resolve_channel_credentials(entry) == {"api_key": "k1"}
 
 
-def test_resolve_credentials_json_overrides_env(monkeypatch):
-    monkeypatch.setenv("FAKE_API_KEY", "from-env")
+def test_optional_env_is_injected_with_credentials(monkeypatch):
+    monkeypatch.setenv("FAKE_API_KEY", "k1")
+    monkeypatch.setenv("WEIXIN_BASE_URL", "https://regional.weixin.qq.com")
     entry = _entry()
-    assert resolve_channel_credentials(entry, {"api_key": "from-json"}) == {"api_key": "from-json"}
+    entry.optional_env_map = {"base_url": "WEIXIN_BASE_URL"}
+    assert resolve_channel_credentials(entry) == {
+        "api_key": "k1",
+        "base_url": "https://regional.weixin.qq.com",
+    }
 
 
 def test_resolve_credentials_missing_returns_none():
     entry = _entry()
-    assert resolve_channel_credentials(entry, {}) is None
+    assert resolve_channel_credentials(entry) is None
 
 
 # ---- 自动启动矩阵 ----
@@ -118,6 +129,7 @@ def test_autostart_with_env_credentials(monkeypatch):
     assert [c.name for c in started] == ["fake"]
     ch = gw.get_channel("fake")
     assert ch is not None and ch.started
+    assert ch.config["api_key"] == "k1"
     assert ch._gateway is gw  # bind_gateway 已回调
 
 
@@ -151,13 +163,13 @@ def test_autostart_skips_when_deps_missing(monkeypatch):
     assert started == []
 
 
-def test_autostart_uses_json_credentials(monkeypatch):
-    """密钥写在 registry.json 同名 key 里也能启用（不依赖 env）。"""
+def test_autostart_rejects_json_credentials(monkeypatch):
+    """密钥只从 env 读取，避免把 JSON 中的旧密钥误用作有效凭据。"""
     gw = FakeGateway()
     started = autostart_channels(
         gw, config={"fake": {"api_key": "json-key"}}, entries={"fake": _entry()}
     )
-    assert [c.name for c in started] == ["fake"]
+    assert started == []
 
 
 def test_one_channel_failure_does_not_block_others(monkeypatch):
@@ -172,8 +184,9 @@ def test_one_channel_failure_does_not_block_others(monkeypatch):
     }
     started = autostart_channels(gw, config={"boom": {}, "fake": {}}, entries=entries)
     assert [c.name for c in started] == ["fake"]
-    # boom 注册过但 start 失败——不影响 fake
+    # boom 启动失败后注销，不影响 fake
     assert gw.get_channel("fake") is not None
+    assert gw.get_channel("boom") is None
 
 
 def test_builtin_entries_cover_feishu_qq_wechat():

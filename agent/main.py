@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 from pathlib import Path
 
 from .channel.channel_cli import CliChannel
@@ -26,6 +27,7 @@ from .channel.channel_frontier import FrontierChannel
 from .channel.registry import autostart_channels
 from .core.event_bus import default_event_bus
 from .core.agent_loop import AgentLoop
+from .core.context_budget import ContextBudget
 from .gateway import FrontierHttpServer, Gateway
 from .model.registry import ModelRegistry
 from .skills import SkillManageTool, SkillRegistry, UseSkillTool
@@ -46,24 +48,27 @@ def _memory_paths(root: Path | None = None) -> tuple[Path, Path]:
     return memory_root, db_path
 
 
-def build_gateway(*, workers: int = 2, use_memory: bool = True) -> Gateway:
+def build_gateway(*, workers: int = 2, use_memory: bool = True,
+                  data_root: Path | None = None,
+                  model_registry: ModelRegistry | None = None) -> Gateway:
     """组装后端：注册表 → Loop → Gateway → Channel。
 
     use_memory=True 时：
       - SqliteSessionStore 持久化 transcript
       - MemoryContextLoader 冻结 Policy / Project / User Markdown 快照
-      - SessionMemoryReviewer 异步提案并原子写入结构化记忆
+      - MemoryReviewWorker 后台处理提炼作业，MemoryBatchReviewer 审查提案，Committer 原子写入卡片
     use_memory=False 时：保持原 DictSessionStore 内存路径。
+    data_root 用于隔离评测的数据、用户手册和技能产物；默认使用项目 data 目录。
     """
     # ---- provider / 模型 ----
-    model_registry = ModelRegistry.default()
+    model_registry = model_registry if model_registry is not None else ModelRegistry.default()
 
     # ---- 技能 + 工具（use_skill / skill_manage 是技能体系入口）----
     from .provider import ROOT as _ROOT
     from .skills.repository import SkillRepository
 
     skill_registry = SkillRegistry()
-    skills_root = _ROOT / "data" / "skills"
+    skills_root = (Path(data_root) if data_root is not None else _ROOT / "data") / "skills"
     skills_root.mkdir(parents=True, exist_ok=True)
     skill_repository = SkillRepository(skills_root, registry=skill_registry)
     tool_registry = ToolRegistry()
@@ -89,49 +94,62 @@ def build_gateway(*, workers: int = 2, use_memory: bool = True) -> Gateway:
         from .evolution.skill_gate import SkillLifecycleGate
         from .evolution.skill_optimizer import SkillOptimizer
         from .core.memory import (
-            FallbackMemoryExtractor,
             MemoryContextLoader,
+            MemoryManualEditor,
             MemoryValidator,
-            ModelMemoryExtractor,
-            RuleBasedMemoryExtractor,
-            SessionMemoryReviewer,
-            SessionMemoryReviewWorker,
+            MemoryExtractor,
+            MemoryBatchReviewer,
+            MemoryReviewWorker,
         )
+        from .core.memory.memory_retrieval import MemoryRetriever
+        from .tools.memory_tools import MemorySearchTool, MemoryReadTool
+        from .tools.memory_edit_tool import MemoryEditTool
         from .storage.sqlite import RuntimeStorage
 
-        memory_root, db_path = _memory_paths()
+        memory_root, db_path = _memory_paths(Path(data_root)) if data_root is not None else _memory_paths()
         memory_root.mkdir(parents=True, exist_ok=True)
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        rule_extractor = RuleBasedMemoryExtractor()
-        try:
-            extractor = FallbackMemoryExtractor(
-                ModelMemoryExtractor(model_registry.get()),
-                rule_extractor,
-            )
-        except Exception:
-            extractor = rule_extractor
         storage = RuntimeStorage.open(
             db_path,
-            extractor_version=extractor.version,
+            extractor_version=MemoryExtractor.version,
         )
         store = storage.sessions
+        try:
+            memory_model = model_registry.get()
+        except Exception:
+            memory_model = None
+        extractor = MemoryExtractor(memory_model, storage.memory)
         project_books = tuple(
             path
             for path in (_ROOT / "project.md", _ROOT / "AGENTS.md", _ROOT / "CLAUDE.md")
             if path.exists()
         )
+        manual_editor = MemoryManualEditor(
+            memory_root, storage.db,
+            max_tokens=int(os.getenv("AGENT_MEMORY_MANUAL_TOKENS", "1200")),
+        )
+        retriever = MemoryRetriever(
+            storage.db, document_root=memory_root,
+            allowed_document_paths=(memory_root / "POLICY.md", *project_books),
+        )
+        tool_registry.register(MemorySearchTool(retriever))
+        tool_registry.register(MemoryReadTool(retriever))
+        tool_registry.register(MemoryEditTool(storage.memory, manual_editor))
         memory_context = MemoryContextLoader(
             root=memory_root,
             policy_paths=(memory_root / "POLICY.md",),
             project_paths=project_books,
             document_registry=storage.documents,
+            manual_editor=manual_editor,
+            experience_retriever=retriever,
+            experience_token_budget=int(os.getenv("AGENT_MEMORY_EXPERIENCE_TOKENS", "600")),
         )
-        reviewer = SessionMemoryReviewer(
+        reviewer = MemoryBatchReviewer(
             extractor,
             validator=MemoryValidator(),
         )
-        reviewer_worker = SessionMemoryReviewWorker(
+        reviewer_worker = MemoryReviewWorker(
             store,
             reviewer,
             storage.review_committer,
@@ -219,7 +237,9 @@ def build_gateway(*, workers: int = 2, use_memory: bool = True) -> Gateway:
 
             def stop(_self) -> None:
                 skill_evolution.worker.stop()
-                memory_reviewer.stop()
+                storage.review_scheduler.flush_all()
+                memory_reviewer.stop(timeout=30)
+                memory_reviewer.process_pending()
 
         reviewer_worker = _LifecycleBundle()
         assembly_policy = AssemblyPolicy()
@@ -244,6 +264,12 @@ def build_gateway(*, workers: int = 2, use_memory: bool = True) -> Gateway:
         loop=loop,
         store=store,
         memory_context=memory_context,
+        context_budget=(
+            ContextBudget(
+                model_context_tokens=int(os.getenv("AGENT_MODEL_CONTEXT_TOKENS", "32768")),
+                reserved_output_tokens=int(os.getenv("AGENT_RESERVED_OUTPUT_TOKENS", "4096")),
+            ) if use_memory else None
+        ),
         workers=workers,
         on_turn_committed=on_turn_committed,
         on_session_end=on_session_end,
@@ -256,8 +282,6 @@ def build_gateway(*, workers: int = 2, use_memory: bool = True) -> Gateway:
         observe_databases=observe_databases,
     )
     gateway.register_channel(FrontierChannel())
-    # 平台 channel 自动启用：registry.json 未显式关闭且凭据（env/JSON）填齐即连接
-    autostart_channels(gateway)
     return gateway
 
 
@@ -269,15 +293,16 @@ def _print_memory_banner(use_memory: bool) -> None:
     print("[memory] 已启用")
     print(f"[memory] Markdown 分册目录: {memory_root}")
     print(f"[memory] SQLite 数据库: {db_path}")
-    print("[memory] Reviewer: Model Proposal → Validator → SQLite 原子提交")
+    print("[memory] Reviewer: 按 1/2/3/4/5 轮渐进批处理；有效卡片直接入库")
     print("[memory] Evolution: Hermes 式 Skill distill/select/manage")
-    print("[memory] MEMORY.md 全量加载；召回工具将在检索阶段接入")
+    print("[memory] MEMORY.md 有界常驻；经验关键词最多召回 3 张；其余内容按工具检索")
 
 
 def _run_http(port: int, *, use_memory: bool, enable_memory_debug: bool) -> None:
     """HTTP 模式：Gateway + FrontierHttpServer，供 frontier 前端调用。"""
     gateway = build_gateway(use_memory=use_memory)
     gateway.start()
+    autostart_channels(gateway)
     for ch in (gateway.get_channel("frontier"),):
         ch and ch.start()
     server = FrontierHttpServer(
@@ -314,6 +339,7 @@ def _run_cli(*, use_memory: bool) -> None:
     cli = CliChannel(quiet=True)
     gateway.register_channel(cli)
     gateway.start()
+    autostart_channels(gateway)
     cli.start()
     print("[cli] 已进入对话模式，/new 重开会话，Ctrl+C 退出")
     _print_memory_banner(use_memory)

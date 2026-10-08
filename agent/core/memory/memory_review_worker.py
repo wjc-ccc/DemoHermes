@@ -1,28 +1,28 @@
-"""Outbox consumer：连接事实队列、纯 Reviewer 与原子 Committer。"""
+"""待处理作业消费者：连接事实队列、纯审查器与原子提交器。"""
+# 职责：后台认领固定来源的提炼作业，加载轮次，续租、重试并提交结果。
+# 边界：不决定提炼内容或卡片冲突规则；作业状态保存在 SQLite 队列中。
+# 关联：由 main.py 启停，调用 MemoryBatchReviewer 与 memory_review_committer.py。
 from __future__ import annotations
 
 import logging
 import threading
 import time
-from typing import Any, Protocol
 
-from ..types import Session
-from .session_memory_reviewer import MemoryReviewResult, SessionMemoryReviewer
-from .types import TurnRecord
+from .memory_batch_reviewer import MemoryBatchReviewer
+from .types.review_worker_types import MemoryReviewCommitter, MemoryReviewQueue
+
 
 logger = logging.getLogger(__name__)
 
-
-from .types.review_worker_types import MemoryReviewQueue, MemoryReviewCommitter
-
-
-class SessionMemoryReviewWorker:
+### 消费由 AgentLoop 产生的 outbox 作业，审查后交给 Committer 入库
+#### 心跳循环领取作业；内部串联 Reviewer、Validator 与 Committer
+class MemoryReviewWorker:
     """消费 outbox；同一 Interface 同时支持确定性测试与后台生命周期。"""
 
     def __init__(
         self,
         queue: MemoryReviewQueue,
-        reviewer: SessionMemoryReviewer,
+        reviewer: MemoryBatchReviewer,
         committer: MemoryReviewCommitter,
         *,
         extractor_version: str,
@@ -103,11 +103,16 @@ class SessionMemoryReviewWorker:
             heartbeat_thread=threading.Thread(target=heartbeat,daemon=True)
             heartbeat_thread.start()
             try:
-                session = self._queue.get_session(job.session_id)
-                turn = self._queue.executions.get_record(job.turn_id)
-                if session is None or turn is None:
+                # 传入本次需要处理的turn ids
+                turn_ids = tuple(job.input.get("turn_ids") or (job.turn_id,))
+                turns = tuple(self._queue.executions.get_record(identity) for identity in turn_ids)
+                sessions = tuple(
+                    self._queue.get_session(turn.session_id) if turn is not None else None
+                    for turn in turns
+                )
+                if any(turn is None for turn in turns) or any(session is None for session in sessions):
                     raise LookupError(f"review job {job.id} source missing")
-                result = self._reviewer.review(turn, session)
+                result = self._reviewer.review_batch(turns, sessions)
                 self._committer.commit(job, result, extractor_version=self._extractor_version,
                                        now=int(self._clock()*1000))
             except Exception as exc:

@@ -3,6 +3,9 @@
 不识别标题协议、隐藏 marker 或条目 ID。复杂度集中在原子替换、并发修订检查、
 内容哈希和 token 统计，调用方只需 read / replace 两个操作。
 """
+# 职责：把一份 Markdown 文件读成带指纹的快照，并按预期版本原子替换。
+# 边界：不解释标题或内容含义，也不决定哪些事实应进入用户卡片。
+# 关联：MemoryContextLoader 读取 Policy/Project；MemoryManualEditor 管理用户手册。
 from __future__ import annotations
 
 import os
@@ -48,10 +51,14 @@ def _lock_for(path: Path) -> threading.RLock:
         return _LOCKS.setdefault(key, threading.RLock())
 
 
-def _default_token_counter(content: str) -> int:
+def estimate_markdown_tokens(content: str) -> int:
+    """统一估算 Markdown 成本；中英文混排时按 UTF-8 字节保守计数。"""
     if not content:
         return 0
-    return len(content.split()) if content.isascii() else len(content)
+    return max(len(content.split()), (len(content.encode("utf-8")) + 2) // 3)
+
+
+_default_token_counter = estimate_markdown_tokens
 
 ## 一个markdown的文件管理类
 ### 负责整文件 加载和替换 以及对应的快照
@@ -68,6 +75,7 @@ class MarkdownBook:
         writable: bool = False,
         token_counter: Callable[[str], int] | None = None,
     ) -> None:
+        """一个markdown记忆的文件管理类别 要包含layer path 是否可修改 以及读 替换 快照的逻辑 用于记忆的拼装"""
         validate_item_type(layer, type)
         self._path = Path(path)
         self._layer = layer
@@ -79,7 +87,8 @@ class MarkdownBook:
     @property
     def path(self) -> Path:
         return self._path
-
+    
+    ## markdown的读取 并且通过lock锁住对应的文件
     def read(self) -> MarkdownBookSnapshot:
         with _lock_for(self._path):
             content = self._path.read_text(encoding="utf-8") if self._path.exists() else ""

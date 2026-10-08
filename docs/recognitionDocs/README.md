@@ -1,149 +1,40 @@
-# DemoCursor Agent 架构认知文档
+# 架构认知文档
 
-> 目标：用统一视角讲清 types / channel / gateway / agent loop / tool&skill&plugin 这五块**各自是什么、负责什么、边界在哪、如何相连**，让你拿到一个需求时能快速判断"这事该归谁管"。
->
-> 阅读顺序建议：本 README（鸟瞰）→ types（地基）→ channel（入口）→ gateway（枢纽）→ agent loop（大脑）→ tool&skill&plugin（手脚）。
+本目录只描述当前代码已经接线的行为。先读 [七个能力模块总览](../模块架构总览.md)，再按问题进入以下文档。历史设计、已替换的流程和阶段计划保留在 `docs/aiDocs/`。
 
----
+| 想了解的问题 | 当前文档 | 主要代码 |
+| --- | --- | --- |
+| 跨模块传递什么数据 | [types](types.md) | `agent/core/types.py` 及各模块的 `types/` |
+| 消息和附件怎样进入系统 | [channel](channel.md) | `agent/channel/`、`agent/model/media_messages.py` |
+| 谁控制会话、并发和持久化提交 | [gateway](gateway.md) | `agent/gateway/`、`agent/storage/sqlite/` |
+| 模型、上下文和工具如何循环 | [agent loop](agent%20loop.md) | `agent/core/agent_loop.py`、`agent/core/precision/` |
+| Tool、Skill、Plugin 的实际状态 | [tool / skill / plugin](tool&skill&plugin.md) | `agent/tools/`、`agent/skills/`、`agent/evolution/` |
+| 长期信息怎样读取、写入和复核 | [memory](memory.md) | `agent/core/memory/`、`agent/storage/sqlite/` |
 
-## 一、一张图看懂整体架构
+## 主链
 
-```
-外部世界（CLI / 飞书 / 微信 / HTTP 前端）
-        │  平台原始消息（str / webhook / JSON）
-        ▼
-┌──────────────────── Channel ────────────────────┐
-│  parse_to_InboundEvent(raw)  平台字段 → 统一 DTO  │
-│  deliver_to_OutboundEvent()  统一回复 → 平台      │
-│  busy/typing/鉴权 都留在这里，不外泄              │
-└─────────────────────┬───────────────────────────┘
-                      │ InboundEvent（统一入站）
-                      ▼
-┌──────────────── Gateway（枢纽 / 薄编排）─────────┐
-│  MessageBus: [in_dto] → worker → [out_dto]      │
-│  build_session_key(source)  唯一会话键           │
-│  SessionStore: session_key → Session              │
-│  生产默认 SqliteSessionStore；Dict 仅测试替身     │
-│  同 key 串行（每 key 一锁）/ 异 key 并行（线程池）│
-│  斜杠命令 /new /reset /help 短路，不进 Loop       │
-└─────────────────────┬───────────────────────────┘
-                      │ Session + Message + MemorySnapshot
-                      ▼
-┌──────────────── Agent Loop（大脑 / OTAP）────────┐
-│  observe → think ⇄ act(工具内循环) → 返回        │
-│  ContextBuilder 组 messages → model.chat         │
-│  解析 tool_calls → ToolRegistry 执行 → 回注 → 再 think │
-│  容错：模型重试 / 工具失败回注 / max_iterations 兜底 │
-└─────────────────────┬───────────────────────────┘
-                      │ TurnResult → commit_turn
-                      ▼
-         EvolutionScheduler（旁路）→ 下一 turn 上下文
-                      │
-              Gateway → Channel → 用户
+```text
+Channel.parse_to_InboundEvent
+  → Gateway.submit / ask → MessageBus.in_dto
+  → 按 session_key 加锁 → MemoryContextLoader.freeze
+  → AgentLoop.run_turn → PrecisionBuilder.build → model.chat
+  → 若有 tool_calls：ToolRegistry.dispatch → ToolCall 回注 → 再次 model.chat
+  → SqliteSessionStore.commit_turn → EvolutionScheduler.notify
+  → MessageBus.out_dto → Channel.deliver_to_OutboundEvent
 ```
 
-一句话定位：**Channel 管 I/O 归一化，Gateway 管调度与会话，Loop 管思考与行动，Memory/Evolution 管下一 turn 的上下文，types 是契约语言，tool/skill/plugin 是手脚和经验包。**
+`agent/main.py:build_gateway` 是核对生产装配的起点。默认启用 Memory 时使用 SQLite；`--no-use-memory` 使用 `DictSessionStore`，没有持久化记忆旁路。HTTP Debug、Trace 和前端视图是观测入口，不负责对话决策。
 
----
+## 职责定位
 
-## 二、模块速查表
+| 变更内容 | 放在何处 |
+| --- | --- |
+| 平台协议、下载、发送、去重 | Channel |
+| 会话键、并发锁、斜杠命令、提交后通知 | Gateway |
+| 上下文选择、Anchor、预算 | Precision |
+| 模型迭代、工具回注、错误结果 | AgentLoop |
+| 原子工具行为、Skill 文本和状态 | Tool / Skill |
+| 记忆快照、检索、卡片及手册版本 | Memory + Store |
+| 已提交轨迹的 Skill 提案与回放 | Evolution + Eval |
 
-| 模块 | 一句话定义 | 核心职责 | 绝不做的事 |
-|------|------------|----------|-----------|
-| **types** | 全局数据契约（pydantic 模型） | 定义 Message/Session/InboundEvent 等结构 | 不含任何业务逻辑 |
-| **channel** | 平台适配器 | 平台载荷 ⇄ 统一 DTO 的转换与投递 | 不碰 Session/Loop/模型 |
-| **gateway** | 进程内消息枢纽 | 双队列调度 + session_key 路由 + 并发控制 | 不思考、不调模型 |
-| **agent loop** | 对话大脑 | observe→think→act 循环 + 工具内循环 + 容错 | 不认识平台 SDK、不写磁盘 |
-| **tool** | 原子能力（函数级） | 执行确定性操作（计算/查库/调 API） | 不做复杂多步编排 |
-| **skill** | 经验包（Markdown 指南） | 注入 prompt 引导 LLM 按特定流程做事 | 不直接执行代码 |
-| **plugin** | 外部插拔式扩展位 | 预留的 tool/skill/memory 动态挂载点 | 当前阶段未实现 |
-
----
-
-## 三、数据流：一条消息的完整生命周期
-
-以"用户在 CLI 输入：帮我算 23*17"为例：
-
-```
-1. 用户输入 "帮我算 23*17"
-   └─ CliChannel.parse_to_InboundEvent(raw)
-      → InboundEvent(text="帮我算 23*17", source=SessionSource(channel="cli",...))
-
-2. Channel.send_gateway(event) → Gateway.submit(event) → MessageBus.in_dto
-
-3. Gateway._inbound_dispatch_loop 线程取到 event
-   └─ 提交线程池 → _process_inbound(event)
-      ├─ key = build_session_key(source) = "agent:main:cli:dm:local"
-      ├─ lock = _lock_for(key)  ← 同 key 串行
-      └─ _run_turn_locked(key, event)
-         ├─ session = store.get_or_create(key)  ← dict 里找/建
-         ├─ user_msg = build_message(event)     ← InboundEvent → Message
-         └─ loop.run_turn(session, user_msg, ...)
-
-4. AgentLoop.run_turn  ← 这是"大脑"真正工作的地方
-   ├─ observe: session.add_message(user_msg)
-   ├─ iteration 1 (think):
-   │    ContextBuilder.building_context() → [system, skill摘要, 平台说明, ...历史消息]
-   │    model.chat(messages, tools=[calculator_schema])
-   │    → response.tool_calls = [ToolRequest(name="calculator", args={expr:"23*17"})]
-   ├─ act: ToolRegistry.dispatch("calculator", {expr:"23*17"})
-   │    → ToolCallResult(ok=True, result_text="391")
-   │    session.add_message(tool_result_msg)
-   ├─ iteration 2 (think): 模型看到 391 → 返回纯文本 "23×17=391"
-   └─ return TurnResult(final_text="23×17=391", completed=True)
-
-5. Gateway 拿到 TurnResult → 包成 OutboundReply → MessageBus.out_dto
-
-6. Gateway._outbound_dispatch_loop 线程取到 reply
-   └─ 按 reply.source.channel="cli" 找到 CliChannel
-      → ch.deliver_to_OutboundEvent(reply) → print("ai > 23×17=391")
-
-7. 用户看到回复 ✅
-```
-
-关键观察：**CLI 和飞书走的是同一条路径**，差别只在第 1 步和第 6 步的 Channel 实现不同。Loop 完全不知道消息来自哪个平台。
-
----
-
-## 四、如何判断"这个需求归谁管"
-
-| 需求特征 | 归属模块 | 例子 |
-|----------|----------|------|
-| 涉及特定平台 SDK / webhook / 消息格式 | Channel | 飞书消息解密、微信图文上传 |
-| 涉及会话隔离、并发、命令、路由 | Gateway | /new 命令、同会话防重入、多渠道调度 |
-| 涉及思考、多步推理、调模型、调工具 | Agent Loop | 工具内循环、上下文组装、重试 |
-| 确定性的原子操作（输入→输出固定） | Tool | 计算器、查天气、查数据库 |
-| 引导 LLM 按某流程做事的经验文本 | Skill | 周报生成指南、代码评审 checklist |
-| 新增数据结构 / 字段 | types | 扩展 ContentPart |
-| 跨会话/跨用户的知识沉淀 | memory | USER.md/GROUP.md、daily、SQLite 检索 |
-
-**铁律：Loop 文件里不应出现任何平台 SDK import；Channel 文件里不应出现 model.chat。** 这条边界一旦守住，扩展平台和换模型都不会互相牵连。
-
----
-
-## 五、各模块详细文档
-
-- [types.md](./types.md) — 数据契约与地基
-- [channel.md](./channel.md) — 平台入口与出口
-- [gateway.md](./gateway.md) — 消息枢纽与调度
-- [agent loop.md](./agent%20loop.md) — 对话大脑与 OTAP
-- [tool&skill&plugin.md](./tool&skill&plugin.md) — 能力扩展体系
-- [memory.md](./memory.md) — 记忆系统（精选记忆 / daily / SQLite transcript / Provider / Reviewer）
-- 方案：`docs/aiDocs/8.04`（进化旁路）、`docs/aiDocs/8.15`（Eval 质量闭环）
-
----
-
-## 六、当前实现状态与后续演进
-
-| 模块 | 当前状态 | 下一步演进 |
-|------|---------|-----------|
-| types | ✅ 完整（含 tool 协议字段） | 多模态 ContentPart 落地 |
-| channel | ✅ CLI / frontier / 飞书/QQ/微信（凭据填齐可连） | 按使用需要加深，非主线 |
-| gateway | ✅ 双队列 + 并发锁；生产 SqliteSessionStore | Redis 分布式锁（后置） |
-| agent loop | ✅ OTAP + 工具内循环 + MemorySnapshot + AssemblyPolicy | Eval 驱动的装配加深 |
-| tool | ✅ registry + calculator/bash/file/memory_read/memory_edit | 按任务需要加，非主线 |
-| skill | ✅ SKILL.md + 两级加载；evolution 可写 draft | SkillSelector 按 query 裁剪 |
-| plugin | 🔲 预留位 | 动态加载后置 |
-| memory | ✅ Slice 1–14；Provider 仅 recall+sync_turn | 抽取评测集；FTS/向量后置 |
-| evolution | ✅ Phase 0–6 已接线（playbook/skills/held-out/audit/envsnap） | Replay Gate + Eval 质量闭环 |
-| eval | ✅ E1 最小面（`Agent/eval` + `tests/eval`） | E2 抽取集 → E3 装配 → E4 Replay Gate |
+模块之间通过明确的 Interface 连接。增加功能时先定位它消费和产出的数据，再在负责该行为的模块中实现；必要时更新本目录与总览。

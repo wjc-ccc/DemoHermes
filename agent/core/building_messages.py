@@ -13,12 +13,28 @@ from ..model.baseStructure import ToolCallRequest
 
 def build_user_message(event: InboundEvent) -> Message:
     """入站事件 → 用户消息。channel_prompt 是 ephemeral，不写进消息。"""
+    parts = list(event.content)
+    if event.text and not any(p.type == "text" and p.text == event.text for p in parts):
+        parts.insert(0, ContentPart(type="text", text=event.text))
+    descriptions = []
+    for part in parts:
+        if part.type == "image":
+            descriptions.append(f"[图片附件: {part.file_name or 'image'}；内容未解析]")
+        elif part.type == "file":
+            descriptions.append(
+                f"[文件附件: {part.file_name or 'file'}，类型 {part.mime_type or '未知'}，"
+                f"大小 {part.size_bytes if part.size_bytes is not None else '未知'} 字节；正文未解析]"
+            )
+    content_text = "\n".join([item for item in [event.text, *descriptions] if item])
+    metadata = {"channel": event.source.channel}
+    if event.source.reply_to_message_id:
+        metadata["source_message_id"] = event.source.reply_to_message_id
     return Message(
         role="user",
-        content_text=event.text,
-        content=[ContentPart(type="text", text=event.text)] if event.text else [],
+        content_text=content_text,
+        content=parts,
         author_id=event.source.user_id or "",
-        metadata={"channel": event.source.channel},
+        metadata=metadata,
     )
 
 ## TODO：工具调用这里 如何类型判断为action or observation 从而在压缩的时候 使用不同的逻辑？

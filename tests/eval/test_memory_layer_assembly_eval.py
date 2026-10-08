@@ -37,5 +37,4 @@ def test_policy_project_and_user_books_share_one_frozen_snapshot(tmp_path):
     assert "生产数据库不可直接写" in call.memory_text
     assert "测试命令是 pytest" in call.memory_text
     assert "用户偏好中文回答" in call.memory_text
-    assert call.daily_text == ""
-    assert call.provider_text == ""
+    assert call.experience_text == ""

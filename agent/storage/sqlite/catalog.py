@@ -11,6 +11,20 @@ class CatalogError(ValueError):
     """库名或表名不在已打开的目录里。"""
 
 
+_FILTER_NAMES = {
+    "category", "type", "status", "role", "channel", "validity", "operation",
+    "decision", "layer", "level", "phase", "direction", "scope_kind",
+    "memory_kind", "source_authority", "provider",
+    "dataset_id", "dataset_version", "version", "scenario", "difficulty",
+}
+_MAX_FILTER_OPTIONS = 40
+
+
+def is_filter_column(name: str) -> bool:
+    """只允许类别、枚举类字段参与列筛选。"""
+    return name in _FILTER_NAMES or name.endswith(("_type", "_status", "_kind", "_category"))
+
+
 def list_catalog(databases: Mapping[str, Path]) -> dict:
     """返回每个已登记库的用户表及其字段。文件还不存在时表列表为空。"""
     result = []
@@ -27,6 +41,7 @@ def read_table_page(
     *,
     limit: int,
     offset: int,
+    filters: Mapping[str, object] | None = None,
 ) -> dict:
     """按库名和表名分页读取。名字必须先出现在目录里。"""
     path = databases.get(database)
@@ -41,10 +56,29 @@ def read_table_page(
     conn = open_readonly(Path(path))
     try:
         conn.execute("BEGIN")
-        total = conn.execute(f"SELECT COUNT(*) FROM {quoted}").fetchone()[0]
+        options = {}
+        for column in columns:
+            name = column["name"]
+            if not is_filter_column(name):
+                continue
+            values = [row[0] for row in conn.execute(
+                f"SELECT DISTINCT {_quote(name)} FROM {quoted} "
+                f"ORDER BY {_quote(name)} LIMIT ?", (_MAX_FILTER_OPTIONS + 1,)
+            )]
+            if len(values) <= _MAX_FILTER_OPTIONS and values:
+                options[name] = [_cell(value) for value in values]
+        selected = dict(filters or {})
+        if any(name not in options for name in selected):
+            raise CatalogError("unknown filter column")
+        if any(not isinstance(value, (str, int, float, bool, type(None))) for value in selected.values()):
+            raise CatalogError("invalid filter value")
+        clauses = [f"{_quote(name)} IS ?" for name in selected]
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        params = tuple(selected.values())
+        total = conn.execute(f"SELECT COUNT(*) FROM {quoted}{where}", params).fetchone()[0]
         cursor = conn.execute(
-            f"SELECT * FROM {quoted} ORDER BY rowid LIMIT ? OFFSET ?",
-            (bounded_limit, bounded_offset),
+            f"SELECT * FROM {quoted}{where} ORDER BY rowid LIMIT ? OFFSET ?",
+            (*params, bounded_limit, bounded_offset),
         )
         names = [item[0] for item in cursor.description]
         rows = [
@@ -57,6 +91,7 @@ def read_table_page(
         "database": database,
         "table": table,
         "columns": columns,
+        "filter_options": options,
         "rows": rows,
         "total": total,
         "limit": bounded_limit,

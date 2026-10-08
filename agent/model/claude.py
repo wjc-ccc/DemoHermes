@@ -15,6 +15,7 @@ ClaudeModel — Anthropic Messages 协议接入（httpx 直连，不依赖 anthr
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 import httpx
@@ -37,6 +38,11 @@ class ClaudeModel(BaseModel):
         self.api_key = ANTHROPIC_API_KEY or DEEPSEEK_API_KEY
         self.base_url = (ANTHROPIC_BASE_URL or "https://api.anthropic.com").rstrip("/")
         self.model_name = model_name or MODEL
+        capability = os.getenv("MODEL_SUPPORTS_IMAGES", "").strip().lower()
+        self.supports_images = (
+            capability in {"1", "true", "yes"}
+            if capability else self.base_url == "https://api.anthropic.com"
+        )
 
     # ================= 出站转换：OpenAI 风格 → Anthropic =================
     @staticmethod
@@ -101,7 +107,27 @@ class ClaudeModel(BaseModel):
                 out.append({"role": "assistant", "content": blocks})
             else:
                 flush_tool_results(tool_buffer)
-                out.append({"role": role, "content": m.get("content") or ""})
+                content = m.get("content") or ""
+                if isinstance(content, list):
+                    converted = []
+                    for block in content:
+                        if block.get("type") == "image_url":
+                            url = str((block.get("image_url") or {}).get("url") or "")
+                            header, _, payload = url.partition(",")
+                            if not header.startswith("data:image/") or ";base64" not in header:
+                                raise ValueError("Claude 图片仅接受 base64 data URL")
+                            converted.append({
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": header[5:].split(";", 1)[0],
+                                    "data": payload,
+                                },
+                            })
+                        else:
+                            converted.append(block)
+                    content = converted
+                out.append({"role": role, "content": content})
         flush_tool_results(tool_buffer)
         return "\n\n".join(p for p in system_parts if p), out
 

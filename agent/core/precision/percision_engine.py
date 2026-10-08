@@ -34,8 +34,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 ## 固定对应的权限级别
-_P0_KINDS = frozenset({"system_prompt", "skill", "ephemeral", "memory_hot"})
-_P3_KINDS = frozenset({"memory_daily", "memory_provider"})
+_P0_KINDS = frozenset({"system_prompt", "skill", "ephemeral", "memory_manual"})
+_P1_KINDS = frozenset({"memory_experience"})
 _ANCHOR_SLOTS = ("intent", "changes", "decisions", "next_steps", "excluded")
 _TOOL_FAIL_PREFIX = "工具执行失败"
 _KEEP_RECENT_P2_TURNS = 2
@@ -58,6 +58,7 @@ class _ConservativeEstimator:
         return sum(
             len(json.dumps(message, ensure_ascii=False).encode("utf-8"))
             + _MESSAGE_OVERHEAD_BYTES
+            + 8192 * len(message.get("_images", []))
             for message in messages
         )
 
@@ -274,26 +275,11 @@ class PrecisionBuilder:
         tagged.append(("system_prompt", {"role": "system", "content": system_prompt}))
 
         if memory_snapshot is not None:
-            has_segments = (
-                memory_snapshot.hot_prompt is not None
-                or bool(memory_snapshot.daily_prompt)
-                or bool(memory_snapshot.provider_prompt)
-            )
-            hot = (
-                memory_snapshot.hot_prompt
-                if has_segments and memory_snapshot.hot_prompt is not None
-                else memory_snapshot.prompt
-            )
-            tagged.append(("memory_hot", {"role": "system", "content": hot}))
-            if has_segments and memory_snapshot.daily_prompt:
+            tagged.append(("memory_manual", {"role": "system", "content": memory_snapshot.prompt}))
+            if memory_snapshot.experience_prompt:
                 tagged.append((
-                    "memory_daily",
-                    {"role": "system", "content": memory_snapshot.daily_prompt},
-                ))
-            if has_segments and memory_snapshot.provider_prompt:
-                tagged.append((
-                    "memory_provider",
-                    {"role": "system", "content": memory_snapshot.provider_prompt},
+                    "memory_experience",
+                    {"role": "system", "content": memory_snapshot.experience_prompt},
                 ))
 
         if skill_selection is not None and skill_selection.summary_prompt:
@@ -320,6 +306,8 @@ class PrecisionBuilder:
         )
         items: list[ContextItem] = []
         for position, source in enumerate(messages):
+            if source.status == "failed" and source.role != "user":
+                continue
             if last_user_position is not None and position == last_user_position:
                 priority = Priority.P0
             elif last_user_position is not None and position > last_user_position:
@@ -733,7 +721,16 @@ class PrecisionBuilder:
                 "tool_call_id": message.metadata.get("tool_call_id", ""),
                 "content": message.content_text,
             }
-        return {"role": message.role, "content": message.content_text}
+        mapped = {"role": message.role, "content": message.content_text}
+        if message.role == "user":
+            images = [
+                {"path": part.path, "mime_type": part.mime_type, "file_name": part.file_name}
+                for part in message.content
+                if part.type == "image" and part.path
+            ]
+            if images:
+                mapped["_images"] = images
+        return mapped
 
 
 def _items_from_nonhistory(
@@ -745,8 +742,8 @@ def _items_from_nonhistory(
         priority = (
             Priority.P0
             if kind in _P0_KINDS
-            else Priority.P3
-            if kind in _P3_KINDS
+            else Priority.P1
+            if kind in _P1_KINDS
             else Priority.P2
         )
         items.append(ContextItem(
@@ -1052,14 +1049,7 @@ def _anchor_token_limit(cap: int) -> int:
 
 
 def _origin_ref(kind: str, message: dict) -> str | None:
-    """从 Daily/Provider 围栏中提取可暴露给模型的稳定 handle。"""
-    content = str(message.get("content") or "")
-    if kind == "memory_daily":
-        match = re.search(r'date="([^"]+)"', content)
-        return f"daily:{match.group(1)}" if match else "daily"
-    if kind == "memory_provider":
-        match = re.search(r'name="([^"]+)"', content)
-        return f"provider:{match.group(1)}" if match else "provider"
+    """自动注入的经验已经包含可按需读取的 card 引用。"""
     return None
 
 

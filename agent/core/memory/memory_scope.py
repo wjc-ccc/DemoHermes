@@ -1,4 +1,7 @@
 """MemoryScope：五层内容共用的显式归属值对象。"""
+# 职责：把渠道来源转换为用户/群聊归属，并生成跨会话稳定的存储键。
+# 边界：只表示身份，不替调用方完成授权；工具和 Store 必须据此过滤读写。
+# 关联：Gateway 构造 scope，Markdown 目录、卡片和原文检索共用 storage_key。
 from __future__ import annotations
 
 import hashlib
@@ -9,7 +12,7 @@ from pydantic import BaseModel, ConfigDict
 
 from ..types import SessionSource
 
-
+## 用户级别的身份认证
 class MemoryScope(BaseModel):
     model_config = ConfigDict(frozen=True)
 

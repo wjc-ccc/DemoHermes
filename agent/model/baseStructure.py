@@ -49,6 +49,7 @@ class BaseModel(ABC):
     """模型抽象基类。子类只需实现 chat()。"""
 
     name: str = "base"
+    supports_images: bool = False
 
     def __init__(self) -> None:
         """加载对应的 client，并进行初始化。"""

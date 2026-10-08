@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import pytest
+import httpx
+from unittest.mock import MagicMock
 
 from agent.channel.channel_wechat import (
     EP_GET_UPDATES,
@@ -29,8 +31,10 @@ class CollectGateway:
 def channel(tmp_path, monkeypatch):
     monkeypatch.setenv("WEIXIN_TOKEN", "tok_wx")
     monkeypatch.setenv("WEIXIN_ACCOUNT_ID", "bot@im.bot")
-    ch = WechatChannel()
-    ch._state_path = tmp_path / "wechat_state.json"  # 不碰真实 data/
+    ch = WechatChannel(
+        {"token": "tok_wx", "account_id": "bot@im.bot"},
+        state_path=tmp_path / "wechat_state.json",  # 不碰真实 data/
+    )
     ch._gateway = CollectGateway()
     return ch
 
@@ -82,6 +86,12 @@ def test_poll_once_timeout_returns_empty(channel):
     assert channel._sync_buf == "buf_keep"
 
 
+def test_connect_timeout_is_not_treated_as_empty_poll(channel):
+    channel._post = lambda *a, **k: (_ for _ in ()).throw(httpx.ConnectTimeout("unreachable"))
+    with pytest.raises(httpx.ConnectTimeout):
+        channel._poll_once()
+
+
 def test_session_expired_detected(channel):
     assert channel._is_session_expired({"ret": 0, "errcode": -14}) is True
     assert channel._is_session_expired({"ret": 0, "msgs": []}) is False
@@ -129,9 +139,7 @@ def test_state_roundtrip(channel, tmp_path):
     channel._context_tokens["peer1"] = "ctx_9"
     channel._save_state()
 
-    fresh = WechatChannel()
-    fresh._state_path = tmp_path / "wechat_state.json"
-    fresh._load_state()
+    fresh = WechatChannel(state_path=tmp_path / "wechat_state.json")
     assert fresh._sync_buf == "buf_9"
     assert fresh._context_tokens["peer1"] == "ctx_9"
 
@@ -152,7 +160,7 @@ def test_deliver_with_context_token(channel):
     assert msg["to_user_id"] == "user_a@im.wechat"
     assert msg["context_token"] == "ctx_aaa"
     assert msg["item_list"] == [{"type": 1, "text_item": {"text": "你好"}}]
-    assert channel.status["outbound_event_count"] == 1
+    assert channel.status["outbound_event_count"] == 0  # Gateway 统一记账
 
 
 def test_deliver_falls_back_to_stored_context_token(channel):
@@ -182,7 +190,16 @@ def test_deliver_failure_counts_error(channel):
     def boom(*a, **k):
         raise RuntimeError("network down")
     channel._post = boom
-    channel.deliver_to_OutboundEvent(OutboundReply(
-        text="x", source=SessionSource(channel="wechat", chat_id="u"),
-    ))
-    assert channel.status["error_count"] == 1
+    with pytest.raises(RuntimeError, match="network down"):
+        channel.deliver_to_OutboundEvent(OutboundReply(
+            text="x", source=SessionSource(channel="wechat", chat_id="u"),
+        ))
+
+
+def test_stop_closes_http_client(channel):
+    channel._http = MagicMock()
+    http = channel._http
+    channel.status["connected"] = True
+    channel.stop()
+    http.close.assert_called_once()
+    assert channel.status["connected"] is False

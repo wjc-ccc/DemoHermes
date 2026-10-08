@@ -5,7 +5,6 @@ import copy
 import hashlib
 import json
 from pathlib import Path
-import re
 import threading
 import uuid
 
@@ -15,11 +14,12 @@ from ..core.agent_loop import AgentLoop
 from ..core.memory import (
     MarkdownBook,
     MemoryContextLoader,
+    MemoryManualEditor,
     MemoryLayer,
     MemoryScope,
     MemoryValidator,
-    SessionMemoryReviewer,
-    SessionMemoryReviewWorker,
+    MemoryBatchReviewer,
+    MemoryReviewWorker,
     build_memory_scope,
     ensure_scope_dir,
 )
@@ -28,6 +28,10 @@ from ..evolution.skill_selector import SkillSelector
 from ..gateway import Gateway
 from ..gateway.session_key import build_session_key
 from ..storage.sqlite import RuntimeStorage
+from ..core.memory.memory_retrieval import MemoryRetriever
+from ..tools.memory_tools import MemoryReadTool, MemorySearchTool
+from ..tools.memory_edit_tool import MemoryEditTool
+from ..tools.registry import ToolRegistry
 from .types import (
     EvalCase,
     EvalCaseResult,
@@ -71,19 +75,9 @@ class _RecordingModel:
                 for message in messages
                 if "<memory-context" in str(message.get("content", ""))
             )
-            daily_text = "\n".join(
-                re.findall(
-                    r"<today-daily\b[^>]*>.*?</today-daily>",
-                    memory_text,
-                    flags=re.DOTALL,
-                )
-            )
-            provider_text = "\n".join(
-                re.findall(
-                    r"<provider-memory\b[^>]*>.*?</provider-memory>",
-                    memory_text,
-                    flags=re.DOTALL,
-                )
+            experience_text = "\n".join(
+                str(message.get("content", "")) for message in messages
+                if "<memory-experiences" in str(message.get("content", ""))
             )
             skill_text = "\n".join(
                 str(message.get("content", ""))
@@ -96,8 +90,7 @@ class _RecordingModel:
                     context_text=text,
                     context_chars=len(text),
                     memory_text=memory_text,
-                    daily_text=daily_text,
-                    provider_text=provider_text,
+                    experience_text=experience_text,
                     skill_text=skill_text,
                 )
             )
@@ -225,12 +218,26 @@ class EvalRunner:
         extractor_version = getattr(extractor, "version", "eval-no-extractor")
         storage = RuntimeStorage.open(db_path, extractor_version=extractor_version)
         store = storage.sessions
+        manual_editor = MemoryManualEditor(case_root, storage.db)
+        retriever = MemoryRetriever(
+            storage.db, document_root=case_root,
+            allowed_document_paths=(case_root / "POLICY.md", case_root / "PROJECT.md"),
+        )
         memory_context = MemoryContextLoader(
             case_root,
             policy_paths=(case_root / "POLICY.md",),
             project_paths=(case_root / "PROJECT.md",),
             document_registry=storage.documents,
+            manual_editor=manual_editor,
+            experience_retriever=retriever,
         )
+        tools = ToolRegistry()
+        if self._tools is not None:
+            for name in self._tools.list_tools():
+                tools.register(self._tools.get(name))
+        tools.register(MemorySearchTool(retriever))
+        tools.register(MemoryReadTool(retriever))
+        tools.register(MemoryEditTool(storage.memory, manual_editor))
         delegate = (
             self._model_factory() if self._model_factory is not None else self._model
         )
@@ -240,17 +247,17 @@ class EvalRunner:
             self._skills.reload()
         loop = AgentLoop(
             model=model,
-            tool_registry=self._tools,
+            tool_registry=tools,
             skill_registry=self._skills,
             event_bus=EventBus(),
         )
         on_turn_committed = None
         if extractor is not None:
-            reviewer = SessionMemoryReviewer(
+            reviewer = MemoryBatchReviewer(
                 extractor,
                 validator=MemoryValidator(),
             )
-            review_worker = SessionMemoryReviewWorker(
+            review_worker = MemoryReviewWorker(
                 store,
                 reviewer,
                 storage.review_committer,
@@ -398,8 +405,7 @@ class EvalRunner:
                 )
         context = "\n".join(call.context_text for call in evidence)
         memory_text = "\n".join(call.memory_text for call in evidence)
-        daily_text = "\n".join(call.daily_text for call in evidence)
-        provider_text = "\n".join(call.provider_text for call in evidence)
+        experience_text = "\n".join(call.experience_text for call in evidence)
         skill_text = "\n".join(call.skill_text for call in evidence)
         for needle in expectation.context_contains:
             if needle not in context:
@@ -413,18 +419,12 @@ class EvalRunner:
         for needle in expectation.memory_lacks:
             if needle in memory_text:
                 failures.append(EvalFailure(code="memory.forbidden", detail=needle))
-        for needle in expectation.daily_contains:
-            if needle not in daily_text:
-                failures.append(EvalFailure(code="daily.missing", detail=needle))
-        for needle in expectation.daily_lacks:
-            if needle in daily_text:
-                failures.append(EvalFailure(code="daily.forbidden", detail=needle))
-        for needle in expectation.provider_contains:
-            if needle not in provider_text:
-                failures.append(EvalFailure(code="provider.missing", detail=needle))
-        for needle in expectation.provider_lacks:
-            if needle in provider_text:
-                failures.append(EvalFailure(code="provider.forbidden", detail=needle))
+        for needle in expectation.experience_contains:
+            if needle not in experience_text:
+                failures.append(EvalFailure(code="experience.missing", detail=needle))
+        for needle in expectation.experience_lacks:
+            if needle in experience_text:
+                failures.append(EvalFailure(code="experience.forbidden", detail=needle))
         for needle in expectation.skill_contains:
             if needle not in skill_text:
                 failures.append(EvalFailure(code="skill.missing", detail=needle))

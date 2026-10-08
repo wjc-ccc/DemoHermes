@@ -99,8 +99,6 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json({"sessions": self.server.gateway.store.list_sessions()})
         elif path == "/api/events":
             self._handle_sse()
-        elif path == "/api/debug/memory/states":
-            self._handle_debug_states(query)
         elif path == "/api/debug/memory/session":
             self._handle_debug_session(query)
         elif path == "/api/debug/memory/sessions":
@@ -274,24 +272,6 @@ class _Handler(BaseHTTPRequestHandler):
             "window": trace.snapshot().model_dump(mode="json") if trace else None,
         })
 
-    def _handle_debug_states(self, query: dict) -> None:
-        if not self._require_debug():
-            return
-        from ..storage.sqlite.database import Database
-        from ..storage.sqlite.observe_queries import ObserveQueries
-        path = self.server.gateway.observe_databases.get("agent")
-        if path is None or not path.is_file():
-            self._send_json({"error": "runtime database not available"}, status=404)
-            return
-        try:
-            payload = ObserveQueries(Database(path)).session_states(
-                str(query.get("session_id") or ""),
-                limit=int(query.get("limit") or 50), offset=int(query.get("offset") or 0))
-        except ValueError:
-            self._send_json({"error": "invalid pagination"}, status=400)
-            return
-        self._send_json(payload or {"error": "session not found"}, status=200 if payload else 404)
-
     def _handle_debug_tables(self) -> None:
         if not self._require_debug():
             return
@@ -307,14 +287,18 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json({"error": "limit and offset must be integers"}, status=400)
             return
         try:
+            filters = json.loads(str(query.get("filters") or "{}"))
+            if not isinstance(filters, dict):
+                raise ValueError("filters must be an object")
             page = read_table_page(
                 self.server.gateway.observe_databases,
                 str(query.get("database") or ""),
                 str(query.get("table") or ""),
                 limit=limit,
                 offset=offset,
+                filters=filters,
             )
-        except CatalogError as exc:
+        except (CatalogError, ValueError, TypeError) as exc:
             self._send_json({"error": str(exc)}, status=400)
             return
         self._send_json(page)
@@ -334,14 +318,18 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json({"error": "limit and offset must be integers"}, status=400)
             return
         try:
+            filters = json.loads(str(query.get("filters") or "{}"))
+            if not isinstance(filters, dict):
+                raise ValueError("filters must be an object")
             payload = list_traces(
                 self.server.gateway.observe_databases,
                 str(query.get("module") or ""),
                 session_id=str(query.get("session_id") or "") or None,
                 limit=limit,
                 offset=offset,
+                filters=filters,
             )
-        except CatalogError as exc:
+        except (CatalogError, ValueError, TypeError) as exc:
             self._send_json({"error": str(exc)}, status=400)
             return
         self._send_json(payload)

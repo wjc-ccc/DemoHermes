@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import pytest
+from unittest.mock import MagicMock
 
 from agent.channel.channel_qq import (
     GATEWAY_URL,
@@ -31,7 +32,7 @@ class CollectGateway:
 def channel(monkeypatch):
     monkeypatch.setenv("QQ_APP_ID", "102000001")
     monkeypatch.setenv("QQ_CLIENT_SECRET", "secret_x")
-    ch = QQChannel()
+    ch = QQChannel({"app_id": "102000001", "client_secret": "secret_x"})
     ch._gateway = CollectGateway()
     return ch
 
@@ -98,6 +99,7 @@ def test_ready_stores_session(channel):
                              "d": {"session_id": "sess_1"}})
     assert channel._session_id == "sess_1"
     assert channel._last_seq == 1
+    assert channel.status["connected"] is True
 
 
 def test_resume_when_session_exists(channel):
@@ -110,7 +112,9 @@ def test_resume_when_session_exists(channel):
 
 
 def test_reconnect_ops_signal_reconnect(channel):
+    channel.status["connected"] = True
     assert channel._handle_payload({"op": 7, "d": {}}) == "reconnect"
+    assert channel.status["connected"] is False
     assert channel._handle_payload({"op": 9, "d": {"resumable": False}}) == "reconnect"
 
 
@@ -174,7 +178,7 @@ def test_deliver_c2c(channel):
     assert payload["content"] == "回复你"
     assert payload["msg_type"] == 0
     assert headers["Authorization"] == "QQBot tok_x"
-    assert channel.status["outbound_event_count"] == 1
+    assert channel.status["outbound_event_count"] == 0  # Gateway 统一记账
 
 
 def test_deliver_group(channel):
@@ -193,7 +197,28 @@ def test_deliver_failure_counts_error(channel):
     def boom(url, payload, headers=None):
         raise RuntimeError("network down")
     channel._post = boom
-    channel.deliver_to_OutboundEvent(OutboundReply(
-        text="x", source=SessionSource(channel="qq", chat_id="U", chat_type="dm"),
-    ))
-    assert channel.status["error_count"] == 1
+    with pytest.raises(RuntimeError, match="network down"):
+        channel.deliver_to_OutboundEvent(OutboundReply(
+            text="x", source=SessionSource(channel="qq", chat_id="U", chat_type="dm"),
+        ))
+
+
+def test_deliver_rejects_api_error_code(channel):
+    channel._token = "tok_x"
+    channel._token_expire_at = 1e18
+    channel._post = lambda *a, **k: {"code": 40001}
+    with pytest.raises(RuntimeError, match="code=40001"):
+        channel.deliver_to_OutboundEvent(OutboundReply(
+            text="x", source=SessionSource(channel="qq", chat_id="U", chat_type="dm"),
+        ))
+
+
+def test_stop_closes_websocket_and_http_client(channel):
+    channel._ws = MagicMock()
+    channel._http = MagicMock()
+    ws, http = channel._ws, channel._http
+    channel.status["connected"] = True
+    channel.stop()
+    ws.close.assert_called_once()
+    http.close.assert_called_once()
+    assert channel.status["connected"] is False
