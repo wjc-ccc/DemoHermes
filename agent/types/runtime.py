@@ -33,7 +33,7 @@ class LoopConfig:
 class RuntimeDescription:
     memory: bool = False
     action: bool = False
-    storage: str = "memory"
+    storage: str = "sqlite"
     database: str | None = None
     model: str = "unknown"
     tools: tuple[str, ...] = ()

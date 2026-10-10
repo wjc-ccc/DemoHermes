@@ -8,6 +8,8 @@ main.py → agent.main.main → agent.runtime.build_runtime(RuntimeConfig) → A
 
 Runtime 装配模型、SQLite、技能与工具、可选 MemoryBuilder、ToolHandler/ToolDispatch、PrecisionBuilder、AgentLoop 和 Gateway。core 保留原路径，属于 Runtime 内部能力。
 
+Action 的账本、Guard、计划、工件和恢复位于 agent/core/action，属于 Runtime 内部的执行控制能力；共享契约仍在 agent/types/action。Gateway 必须接收装配好的 SQLite 会话存储，dict 存储与回退路径已删除。
+
 | 模块 | 行为 | 实现 |
 | --- | --- | --- |
 | AgentRuntime | 装配、启停、能力说明、提交后通知 | agent/runtime.py |
@@ -16,6 +18,7 @@ Runtime 装配模型、SQLite、技能与工具、可选 MemoryBuilder、ToolHan
 | MemoryBuilder | 装配快照加载器、工具和 Reviewer | agent/core/memory/memory_builder.py |
 | ToolHandler | PRE、审批、版本、预算、资源领取及分配 | agent/core/tool_handler.py |
 | ToolDispatch | 调用、超时、迟到结果、效果、POST 与回放 | agent/core/tool_dispatch.py |
+| ActionRuntime | 装配执行控制、账本、计划、工件与恢复 | agent/core/action/runtime.py |
 | PrecisionBuilder | 保护、准入、Anchor、渲染及预算 | agent/core/precision/percision_engine.py |
 | Trace | 事件载荷、完整输入快照、指标窗口 | agent/core/agent_loop_trace.py、precision/percision_trace.py |
 | RuntimeStorage | SQLite 初始化与 Store 装配 | agent/storage/sqlite/runtime_storage.py |

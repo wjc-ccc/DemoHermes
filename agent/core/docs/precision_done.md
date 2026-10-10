@@ -148,3 +148,7 @@ Anchor 之前先对 P2 历史中的工具结果逐条定案 keep / trim / defer�
 **模式**：`off` 与未接入完全一致；`shadow` 照常判、写定案和 `PrecisionRecord.admission_*`，但不改消息；`active` 生效。生产由 `agent/provider.py` 按 `CONTEXT_ADMISSION_MODE`（默认 shadow）与 `JEVMODEL_API_KEY` / `JEV_BASE_URL`（默认 `https://jevmodel.org/v1/systemone`）/ `JEV_MODEL`（默认 `jev-latest`）/ `JEV_TIMEOUT` / `JEV_BATCH_SIZE` 装配；换 provider 只改 `build_context_judge`。
 
 **指标**：`admission_candidates / judged_count / judge_failures / judge_latency_ms / rule_count / trimmed_count / deferred_count / saved_tokens / missed_count`。shadow 下 trimmed / deferred / saved 是"若生效"的值。
+
+JEV_BASE_URL 填完整 System One 端点，密钥须由对应服务签发。jevmodel.org 每次最多接受 8 道题，每条上下文占 choice + noul 两题，默认每批 4 条；更大的 JEV_BATCH_SIZE 也按此限制拆批。401 会记录为判官失败并使用先验，不代表真实 JEV 已成功裁决。
+
+真实模型探针：`python tests/live/precision_probe.py --output data/eval/precision-live-<新目录>`。探针使用合成对话和独立 SQLite，在进程内将准入触发降至 1%、min_chars 降至 512、Anchor 输入预算设为 11000；不修改生产开关和阈值。输出 report.json 与模型调用记录；两条真实能力未全部通过时退出码为 1。

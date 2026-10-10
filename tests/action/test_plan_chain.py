@@ -3,7 +3,7 @@ import pytest
 from agent.types.action.chain import ChainSegment, Artifact
 from agent.types.action.execution import GateDecision
 from agent.types.action.plan import Plan, PlanStep, PlanPatch
-from agent.action.plan.validator import PlanValidator
+from agent.core.action.plan.validator import PlanValidator
 from agent.types.channel import SessionSource
 from agent.core.memory.memory_scope import build_memory_scope
 from agent.runtime import build_runtime

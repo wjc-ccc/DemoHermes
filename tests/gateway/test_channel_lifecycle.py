@@ -37,8 +37,8 @@ def _reply():
     return OutboundReply(text="ok", source=SessionSource(channel="recording", chat_id="u"))
 
 
-def test_success_counted_once_and_channel_stopped():
-    gateway = Gateway(loop=object())
+def test_success_counted_once_and_channel_stopped(session_store):
+    gateway = Gateway(loop=object(), store=session_store)
     channel = RecordingChannel()
     gateway.register_channel(channel)
     gateway.start()
@@ -53,8 +53,8 @@ def test_success_counted_once_and_channel_stopped():
     assert channel.stopped
 
 
-def test_failed_delivery_counted_once():
-    gateway = Gateway(loop=object())
+def test_failed_delivery_counted_once(session_store):
+    gateway = Gateway(loop=object(), store=session_store)
     channel = RecordingChannel(fail=True)
     gateway.register_channel(channel)
     gateway.start()

@@ -7,12 +7,12 @@ import sqlite3
 import subprocess
 import sys
 import uuid
-from agent.action.catalog import ActionToolCatalog
+from agent.core.action.catalog import ActionToolCatalog
 from agent.types.action.config import ActionConfig
 from agent.types.action.policy import ToolPolicy, Toolset
-from agent.action.runtime import ActionRuntime
-from agent.action.adapters.builtin import BuiltinToolAdapter
-from agent.action.storage.migrations import schema_directory
+from agent.core.action.runtime import ActionRuntime
+from agent.core.action.adapters.builtin import BuiltinToolAdapter
+from agent.core.action.storage.migrations import schema_directory
 from agent.types.conversation import Session, Message
 from agent.types.model import ToolCallRequest
 from agent.storage.sqlite.runtime_storage import RuntimeStorage

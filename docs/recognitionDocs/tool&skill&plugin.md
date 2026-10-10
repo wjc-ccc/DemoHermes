@@ -4,6 +4,8 @@
 
 默认 calculator、use_skill、skill_manage，Memory 增加 memory_search/read/edit；bash/file 不默认注册。Action 保留授权、预算、版本、幂等、恢复与计划。
 
+Action 实现在 agent/core/action，由 Runtime 装配；ToolHandler / ToolDispatch 仍是统一审批与执行入口，共享类型保留在 agent/types/action。
+
 Registry 只暴露 active、scope 可见、满足 required_tools 的技能。skills/selector.py 选择相关技能，选择和正文整轮冻结。
 
 Repository 是写入口，保留内置只读、原子写、版本、备份、冲突、scope 和审计。skill_manage 创建 draft 或修改正文，可信入口审查启用，Runtime 不自动晋升。

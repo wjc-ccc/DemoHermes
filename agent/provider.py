@@ -38,7 +38,7 @@ JEVMODEL_API_KEY = os.getenv("JEVMODEL_API_KEY")
 JEV_BASE_URL = (os.getenv("JEV_BASE_URL") or JEVMODEL_BASE_URL).rstrip("/")
 JEV_MODEL = os.getenv("JEV_MODEL") or _JEV_MODEL_BY_BASE_URL.get(JEV_BASE_URL, "jev-latest")
 JEV_TIMEOUT = float(os.getenv("JEV_TIMEOUT", "6"))
-JEV_BATCH_SIZE = int(os.getenv("JEV_BATCH_SIZE", "8"))
+JEV_BATCH_SIZE = int(os.getenv("JEV_BATCH_SIZE", "4"))
 CONTEXT_ADMISSION_MODE = os.getenv("CONTEXT_ADMISSION_MODE", "shadow").strip().lower()
 
 # 前端 HTTP API 访问控制：配置 token 后每个 /api 请求都要带 Authorization: Bearer <token>
@@ -52,7 +52,7 @@ AGENT_HTTP_ALLOWED_ORIGINS = tuple(
 )
 
 # System Prompt 文件路径（由 PrecisionBuilder 的加载阶段读取）
-SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent / "prompt" / "prompts" / "systemPrompt.py"
+SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent / "prompt" / "systemPrompt.py"
 
 # Channel 配置文件路径
 def _resolve_channel_config() -> str:

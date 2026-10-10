@@ -17,7 +17,7 @@ from agent.core.memory.retrieval_terms import _contains, _specific_keyword, _ter
 from agent.types.memory.categories import UserCardKind
 from agent.types.memory.extraction import MemoryExtractionBatch, MemoryExtractionIssue, MemoryProposal, MEMORY_EXTRACTOR_VERSION
 from agent.types.memory.source import TurnRecord
-from agent.prompt.prompts.memoryCardExtraction import memoryCardExtractionPrompt
+from agent.prompt.memoryCardExtraction import memoryCardExtractionPrompt
 
 _STABLE_KINDS = (UserCardKind.PROFILE, UserCardKind.STABLE_PREFERENCE)
 _RELATED_KINDS = (UserCardKind.ONGOING_FACT, UserCardKind.REUSABLE_EXPERIENCE)

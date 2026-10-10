@@ -86,7 +86,7 @@ class SqliteSessionStore:
             sequence = insert_turn(conn,turn)
             insert_session_facts(conn,session,turn)
             # ACTION-HOOK-06：提交暂存卡片前核验 action 领取凭证；未启用时无 hook。
-            # 事务回执与业务修改同时提交，详见 action/docs/INTEGRATION.md。
+            # 事务回执与业务修改同时提交，详见 agent/core/action/docs/INTEGRATION.md。
             if self._action_commit_hook is not None:
                 self._action_commit_hook.before_commit(conn, session, turn)
             if self._card_mutator is not None and turn.completed and not turn.interrupted:

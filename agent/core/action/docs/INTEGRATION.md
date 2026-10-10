@@ -2,6 +2,8 @@
 
 RuntimeConfig(use_action=True) 装配 ActionRuntime、Handler 和 Dispatch。默认关闭不加载实现或迁移。
 
+实现入口为 agent/core/action/bootstrap.py，执行控制内部实现集中在 agent/core/action，共享协议与数据保持在 agent/types/action。Gateway 的 SQLite 会话存储为必填依赖。
+
 | 时机 | 模块 | 保证 |
 | --- | --- | --- |
 | Runtime.start | 恢复 | 先查证，再接收请求 |

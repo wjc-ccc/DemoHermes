@@ -14,7 +14,7 @@ Gateway — 进程内消息枢纽（MessageBus 双队列 + 按 session_key 排�
         → worker：store.get_or_create → AgentLoop.run_turn → store.commit_turn
         → [outbound] → 按 source.channel 路由 → Channel.deliver_to_OutboundEvent
 
-DictSessionStore 与 SqliteSessionStore 接口一致，Gateway 只有一条 turn 路径；
+Gateway 由装配入口注入 SQLite 会话存储，所有请求走同一提交路径；
 memory_context 为空时只是不冻结 MemorySnapshot。
 
 斜杠命令（/new /reset /help）在 Gateway 短路处理，不进 Loop。
@@ -45,7 +45,6 @@ from agent.types.conversation import Message, Session, TurnResult
 from agent.types.runtime import RuntimeDescription
 from .message_bus import MessageBus
 from .session_key import build_session_key
-from .session_store import DictSessionStore
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +60,7 @@ class Gateway:
         self,
         *,
         loop: AgentLoop,
-        store=None,
+        store,
         event_bus: EventBus | None = None,
         workers: int = 2,
         memory_context: MemoryContextLoader | None = None,
@@ -73,9 +72,7 @@ class Gateway:
     ):
         self.loop = loop  # 对话核心；每轮不变的装配配置都在 Loop 构造时注入
         self.agent_id = getattr(loop, "agent_id", "main")
-        self.store = store or DictSessionStore()  # 与 SqliteSessionStore 同接口
-        # 是否使用了可持久化的会话存储：action 的提交闭环与计划调度都只在这条路径成立。
-        self._persistent = store is not None
+        self.store = store
         self.bus = MessageBus()                   # 入站/出站双队列
         self.events = event_bus if event_bus is not None else EventBus()
         self._memory_context = memory_context  # 可选；每 turn 只冻结一次 MemorySnapshot
@@ -217,12 +214,10 @@ class Gateway:
                 self._submit(session_key, *following)
 
     # ACTION-HOOK-10：显式计划入口在 Loop 外调度；每段复用正常持久化 turn。
-    # 关闭 action 或会话未落库时拒绝计划任务，不隐式改变普通对话模式。
+    # 关闭 action 时拒绝计划任务，不隐式改变普通对话模式。
     def _require_plan_runtime(self):
-        # 判据是"会话是否持久化"，不是"Memory 是否启用"：
-        # action-only 模式同样可以调度计划，只要 turn 会真正 commit。
-        if self._action is None or not self._persistent:
-            raise ValueError("计划执行需要 action 和持久化会话")
+        if self._action is None:
+            raise ValueError("计划执行需要 action")
 
     def create_plan(self, plan, source):
         self._require_plan_runtime()

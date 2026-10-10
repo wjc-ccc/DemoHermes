@@ -129,7 +129,7 @@ def build_runtime(config: RuntimeConfig | None = None, *, model_registry=None) -
     # action-only 只持久记账，不启用 Memory 工具与后台提炼。
     schema_dirs = ()
     if config.use_action:
-        from agent.action.storage.migrations import schema_directory
+        from agent.core.action.storage.migrations import schema_directory
         schema_dirs = (schema_directory(),)
     storage = RuntimeStorage.open(
         data_root / "agent.db", extractor_version=MemoryExtractor.version,
@@ -157,7 +157,7 @@ def build_runtime(config: RuntimeConfig | None = None, *, model_registry=None) -
             tools.register(tool)
     action = None
     if config.use_action:
-        from agent.action.bootstrap import build_action_runtime
+        from agent.core.action.bootstrap import build_action_runtime
         action = build_action_runtime(storage, tools, config=config.action_config,
                                       event_bus=events, skill_repository=repository, trace=trace)
     budget = None

@@ -21,8 +21,9 @@ DemoCursor/
 ├── agent/              # 核心代码包（小写；import 必须保持 agent）
 │   ├── runtime.py      # 装配、生命周期与提交后通知
 │   ├── core/           # 内部 Loop、Precision、MemoryBuilder、Handler/Dispatch
+│   │   └── action/     # 执行控制：账本、Guard、计划、工件和恢复
 │   ├── types/          # 跨模块结构、类别与协议
-│   ├── gateway/        # 消息枢纽、SessionStore（dict + SQLite adapter）
+│   ├── gateway/        # 消息枢纽；会话存储由 Runtime 注入 SQLite
 │   ├── storage/sqlite/ # RuntimeStorage 与会话/记忆/Job/Trace Store
 │   ├── channel/        # 平台适配（CLI / frontier / 飞书 / 微信 / QQ）
 │   ├── model/          # LLM 接入（claude / deepseek）

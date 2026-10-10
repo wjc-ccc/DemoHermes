@@ -3,8 +3,8 @@ import uuid
 import time
 import pytest
 from datetime import datetime, timezone
-from agent.action.bootstrap import build_action_runtime
-from agent.action.storage.migrations import schema_directory
+from agent.core.action.bootstrap import build_action_runtime
+from agent.core.action.storage.migrations import schema_directory
 from agent.storage.sqlite.markdown_documents import MarkdownDocuments
 from agent.types.memory.scope import MemoryScope
 from agent.types.memory.items import UserMemoryItem, content_sha256

@@ -19,7 +19,7 @@ class ToolDispatch:
         self._lock = threading.Lock()
         self._pool = None
         if catalog is not None:
-            from agent.action.guards.post import PostGuard
+            from agent.core.action.guards.post import PostGuard
             self.post = PostGuard(catalog)
             self._pool = ThreadPoolExecutor(max_workers=config.max_read_workers, thread_name_prefix="action-tool")
 

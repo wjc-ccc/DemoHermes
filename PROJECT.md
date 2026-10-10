@@ -12,3 +12,5 @@
 
 7.模型总喜欢补偿 比如去掉xx就已经足够 还需要加一层兼容或者过滤保障 这种做法应当避免
 8. 当前 Runtime 决议：core 为内部能力，保留路径；跨模块数据、结果、协议和共享枚举放入 agent/types，算法内部状态留在实现。删除 Skill Evolution，保留普通技能管理；当前时序见 docs/runtime-architecture.md。
+
+9. 会话始终使用 SQLite，删除 dict 会话存储和隐式回退；Action 执行控制实现归 agent/core/action，共享契约仍归 agent/types/action。

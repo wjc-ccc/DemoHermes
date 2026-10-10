@@ -47,3 +47,12 @@
 Runtime 始终装配 SQLite，会话、消息、轮次和工具事实落库不再受 Memory / Action 开关影响。Memory 开关继续控制记忆快照、工具、Reviewer 与预算；Action 表继续按 Action 开关装配。
 
 四组合落库、关闭 Memory / Action 后重建 Runtime 恢复完整会话并将旧历史传给模型、失败轮次落库的验收通过。相关测试 23 passed，完整后端 392 passed；CLI --help 与 git diff --check 通过。本次没有重建或清空运行数据库。
+
+## 删除 dict 会话链路与 Action 归位（2026-10-10）
+
+- 删除 agent/gateway/session_store.py、DictSessionStore 导出、Gateway 内存回退与 `_persistent` 分支；store 为必填依赖，测试使用临时 SQLite。
+- agent/action 整体迁至 agent/core/action；Runtime、Handler、Dispatch 和测试直接使用新导入路径，共享契约保留在 agent/types/action，没有旧路径包装。
+- 20 个 Action 实现文件与迁移前 AST 一致，3 个 SQL 迁移文件字节与 SHA-256 一致；旧 Action 包和 dict 存储模块无法导入。
+- 13 处 Gateway 装配调用全部显式提供存储；运行代码与测试无 DictSessionStore 或旧 Action 引用。当前架构、执行接入与 Gateway 文档同步更新。
+
+相关测试 76 passed。首次完整回归发现原超时测试依赖短延迟的时间竞争，改为显式控制模拟银行入账时机，执行代码未改；修正后完整后端 392 passed。CLI --help 与 git diff --check 通过。本次未重建或清空运行数据库。

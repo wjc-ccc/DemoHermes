@@ -19,7 +19,7 @@ def test_contracts_import_without_loading_implementations():
         for name in sys.modules:
             if name.startswith((
                 'agent.gateway', 'agent.storage', 'agent.model', 'agent.tools',
-                'agent.action', 'agent.eval', 'agent.evolution', 'agent.skills', 'agent.provider',
+                'agent.core.action', 'agent.eval', 'agent.evolution', 'agent.skills', 'agent.provider',
                 'httpx', 'openai', 'claude_agent_sdk', 'lark_oapi',
             )):
                 forbidden.append(name)

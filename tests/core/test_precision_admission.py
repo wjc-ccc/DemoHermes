@@ -472,6 +472,24 @@ def test_system_one_http_errors_become_stable_codes():
     assert caught.value.code == "http_401" and caught.value.detail == "bad key"
 
 
+def test_jev_respects_eight_question_limit_with_large_batch_setting():
+    sizes = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        sizes.append(len(body["questions"]))
+        if len(body["questions"]) > 8:
+            return httpx.Response(422, json={"error": {"message": "At most 8 questions per request."}})
+        return httpx.Response(200, json={"answers": {
+            name: {"noul": 0.4} for name in body["questions"] if name.startswith("n")
+        }})
+
+    requests = [_request(index) for index in range(9)]
+    results = _jev(handler, batch_size=8).judge(requests)
+    assert sorted(sizes) == [2, 8, 8]
+    assert [result.item_id for result in results] == [request.item_id for request in requests]
+
+
 def test_system_one_requires_injected_endpoint_and_model():
     """Adapter 不带任何默认端点或模型。"""
     with pytest.raises(ValueError):

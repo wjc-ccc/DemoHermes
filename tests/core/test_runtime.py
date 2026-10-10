@@ -162,7 +162,7 @@ from agent.types.model import ModelResponse
 class Models:
     def get(self): return type('Model', (), {'name': 'fake', 'chat': lambda self,*a,**k: ModelResponse(text='ok')})()
 runtime=build_runtime(RuntimeConfig(use_memory=False,use_action=False,data_root=Path(sys.argv[1])),model_registry=Models())
-assert not any(name.startswith('agent.action') for name in sys.modules)
+assert not any(name.startswith('agent.core.action') for name in sys.modules)
 assert (Path(sys.argv[1])/'agent.db').exists()
 with runtime.storage.db.read() as conn:
     assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'action_%'").fetchone()[0] == 0

@@ -1,4 +1,4 @@
-"""SqliteSessionStore.list_sessions — 与 DictSessionStore 对齐的观测面。"""
+"""SqliteSessionStore.list_sessions — SQLite 会话观测面。"""
 from agent.storage.sqlite.runtime_storage import RuntimeStorage
 from agent.types.conversation import Message
 from agent.types.memory.scope import MemoryScope

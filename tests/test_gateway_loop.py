@@ -3,7 +3,7 @@ Gateway / AgentLoop / Tool / Skill 全链路测试
 
 用 MockModel 替代真实 LLM，覆盖：
     1. session_key 构建公式
-    2. DictSessionStore 上下文寻找 / 重开（与 SqliteSessionStore 同接口）
+    2. SqliteSessionStore 上下文寻找 / 重开
     3. 消息构建函数（user / assistant+tool_calls / tool）
     4. calculator 工具（含安全拦截）
     5. SkillRegistry + use_skill 工具
@@ -41,7 +41,6 @@ from agent.types.memory.scope import MemoryScope
 from agent.types.channel import InboundEvent, SessionSource
 from agent.types.conversation import Session, ToolCall, TurnResult
 from agent.core.precision.percision_engine import PrecisionBuilder
-from agent.gateway.session_store import DictSessionStore
 from agent.gateway.gateway import Gateway
 from agent.gateway.session_key import build_session_key
 from agent.model.baseStructure import BaseModel
@@ -100,33 +99,33 @@ def test_session_key_thread():
     assert build_session_key(src) == "agent:main:cli:dm:c1:thread:t9"
 
 
-# ================= 2. DictSessionStore =================
+# ================= 2. SqliteSessionStore =================
 _STORE_SCOPE = MemoryScope(tenant_id="cli", user_id="u1")
 
 
-def test_store_get_or_create_and_find():
-    store = DictSessionStore()
+def test_store_get_or_create_and_find(session_store):
+    store = session_store
     s1 = store.get_or_create("k1", scope=_STORE_SCOPE, channel="cli", author_id="u1")
-    assert store.find("k1") is s1
-    assert store.get_or_create("k1", scope=_STORE_SCOPE) is s1  # 同 key 复用上下文
+    assert store.find("k1").session_id == s1.session_id
+    assert store.get_or_create("k1", scope=_STORE_SCOPE).session_id == s1.session_id  # 同 key 复用上下文
     assert store.find("不存在") is None
 
 
-def test_store_rejects_scope_change_on_same_key():
-    store = DictSessionStore()
+def test_store_rejects_scope_change_on_same_key(session_store):
+    store = session_store
     store.get_or_create("k1", scope=_STORE_SCOPE)
     with pytest.raises(ValueError):
         store.get_or_create("k1", scope=MemoryScope(tenant_id="cli", user_id="u2"))
 
 
-def test_store_close_and_reset_new_session_id():
-    store = DictSessionStore()
+def test_store_close_and_reset_new_session_id(session_store):
+    store = session_store
     s1 = store.get_or_create("k1", scope=_STORE_SCOPE)
     reset = store.close_and_reset("k1", s1, scope=_STORE_SCOPE)
     assert reset.closed_session.session_id == s1.session_id
     assert reset.closed_session.status == "completed"
     assert reset.new_session.session_id != s1.session_id
-    assert store.find("k1") is reset.new_session
+    assert store.find("k1").session_id == reset.new_session.session_id
 
 
 # ================= 3. 消息构建函数 =================
@@ -343,17 +342,17 @@ def test_loop_max_iterations_fallback():
 
 
 # ================= 9. Gateway 总线回路 =================
-def _make_gateway(script) -> Gateway:
+def _make_gateway(script, store) -> Gateway:
     loop, _ = _make_loop(script)
     from agent.channel.channel_cli import CliChannel
-    gateway = Gateway(loop=loop, store=DictSessionStore())
+    gateway = Gateway(loop=loop, store=store)
     gateway.register_channel(CliChannel())
     gateway.start()
     return gateway
 
 
-def test_gateway_ask_roundtrip():
-    gateway = _make_gateway([ModelResponse(text="pong")])
+def test_gateway_ask_roundtrip(session_store):
+    gateway = _make_gateway([ModelResponse(text="pong")], session_store)
     try:
         reply = gateway.ask(make_event("ping"), timeout=10)
         assert reply.text == "pong"
@@ -364,8 +363,8 @@ def test_gateway_ask_roundtrip():
         gateway.stop()
 
 
-def test_gateway_new_command_shortcuts_loop():
-    gateway = _make_gateway([ModelResponse(text="不应被用到")])
+def test_gateway_new_command_shortcuts_loop(session_store):
+    gateway = _make_gateway([ModelResponse(text="不应被用到")], session_store)
     try:
         reply = gateway.ask(make_event("/new"), timeout=10)
         assert "已新开会话" in reply.text
@@ -374,8 +373,8 @@ def test_gateway_new_command_shortcuts_loop():
         gateway.stop()
 
 
-def test_gateway_context_accumulates_across_turns():
-    gateway = _make_gateway([ModelResponse(text="回复1"), ModelResponse(text="回复2")])
+def test_gateway_context_accumulates_across_turns(session_store):
+    gateway = _make_gateway([ModelResponse(text="回复1"), ModelResponse(text="回复2")], session_store)
     try:
         gateway.ask(make_event("第一句"), timeout=10)
         gateway.ask(make_event("第二句"), timeout=10)
@@ -387,9 +386,9 @@ def test_gateway_context_accumulates_across_turns():
         gateway.stop()
 
 
-def test_gateway_same_session_key_serialized():
+def test_gateway_same_session_key_serialized(session_store):
     """同 session_key 的两条消息必须串行（第二条看到第一条的完整上下文）。"""
-    gateway = _make_gateway([ModelResponse(text="r1"), ModelResponse(text="r2")])
+    gateway = _make_gateway([ModelResponse(text="r1"), ModelResponse(text="r2")], session_store)
     try:
         import threading
         replies = []
@@ -443,16 +442,16 @@ def _user_event(text: str, user: str) -> InboundEvent:
     )
 
 
-def _start(loop, *, workers: int) -> Gateway:
+def _start(loop, *, store, workers: int) -> Gateway:
     from agent.channel.channel_cli import CliChannel
-    gateway = Gateway(loop=loop, workers=workers)
+    gateway = Gateway(loop=loop, store=store, workers=workers)
     gateway.register_channel(CliChannel())
     gateway.start()
     return gateway
 
 
-def test_concurrent_ask_each_caller_gets_its_own_reply():
-    gateway = _start(_ScriptedLoop(delay=0.05), workers=4)
+def test_concurrent_ask_each_caller_gets_its_own_reply(session_store):
+    gateway = _start(_ScriptedLoop(delay=0.05), store=session_store, workers=4)
     replies: dict[str, str] = {}
 
     def ask(user: str) -> None:
@@ -469,9 +468,9 @@ def test_concurrent_ask_each_caller_gets_its_own_reply():
     assert replies == {f"user{i}": f"reply:user{i}" for i in range(6)}
 
 
-def test_queued_turn_does_not_block_other_sessions_and_keeps_order():
+def test_queued_turn_does_not_block_other_sessions_and_keeps_order(session_store):
     loop = _ScriptedLoop(gated="A1")
-    gateway = _start(loop, workers=2)
+    gateway = _start(loop, store=session_store, workers=2)
     replies: dict[str, str] = {}
 
     def ask(text: str, user: str) -> None:

@@ -1,6 +1,6 @@
 # Action 执行模块
 
-Action 可选。Tool 在 tools/skills，审批分配在 core/tool_handler.py，执行、效果和发布在 core/tool_dispatch.py。账本、Guard、计划、工件和恢复仍在 action/。
+Action 是 Runtime 内部的可选执行控制能力。Tool 在 agent/tools、agent/skills，审批分配在 agent/core/tool_handler.py，执行、效果和发布在 agent/core/tool_dispatch.py。账本、Guard、计划、工件和恢复位于 agent/core/action；共享契约位于 agent/types/action。
 
     python main.py --cli --use-action
     python main.py --use-action
@@ -21,4 +21,4 @@ Action 可选。Tool 在 tools/skills，审批分配在 core/tool_handler.py，�
 
 恢复与补偿走同一 Handler/Dispatch。UNKNOWN 不重发，补偿保留原成功。卡片工具 success 是暂存，实际成功看事务回执，回放不再交出指令。
 
-迁移由 RuntimeStorage.open(extra_schema_dirs=...) 加载，原 checksum 不改。接入见 INTEGRATION.md，历史回退见 ROLLBACK.md。
+迁移由 RuntimeStorage.open(extra_schema_dirs=...) 加载，原 checksum 不改。接入见 [INTEGRATION.md](INTEGRATION.md)。

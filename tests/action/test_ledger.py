@@ -1,8 +1,8 @@
 import pytest
 from agent.types.action.execution import ToolContext, ActionItem, digest
 from agent.types.action.policy import Toolset
-from agent.action.storage.migrations import schema_directory
-from agent.action.storage.tool_store import SqliteToolLedgerStore, ActionConflictError
+from agent.core.action.storage.migrations import schema_directory
+from agent.core.action.storage.tool_store import SqliteToolLedgerStore, ActionConflictError
 from agent.types.model import ToolCallRequest
 from agent.storage.sqlite.runtime_storage import RuntimeStorage
 

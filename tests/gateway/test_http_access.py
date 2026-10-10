@@ -26,9 +26,9 @@ class _CountingModel:
 
 
 @pytest.fixture
-def running():
+def running(session_store):
     model = _CountingModel()
-    gateway = Gateway(loop=make_loop(model=model, event_bus=EventBus()), workers=1)
+    gateway = Gateway(loop=make_loop(model=model, event_bus=EventBus()), store=session_store, workers=1)
     gateway.register_channel(FrontierChannel())
     gateway.start()
     servers = []
@@ -96,7 +96,7 @@ def test_token_is_required_when_configured(running):
     assert model.calls == 0
 
 
-def test_non_loopback_bind_requires_token():
-    gateway = Gateway(loop=make_loop(model=_CountingModel(), event_bus=EventBus()))
+def test_non_loopback_bind_requires_token(session_store):
+    gateway = Gateway(loop=make_loop(model=_CountingModel(), event_bus=EventBus()), store=session_store)
     with pytest.raises(ValueError, match="api_token"):
         FrontierHttpServer(gateway, host="0.0.0.0", port=0)

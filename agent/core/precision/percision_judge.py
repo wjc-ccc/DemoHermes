@@ -26,6 +26,7 @@ KIND_CRITERIA = {
 }
 _MIN_KIND_PROBABILITY = 0.5
 _MAX_ERROR_DETAIL = 300
+_MAX_BATCH_ITEMS = 4  # System One 每次最多 8 道题，每条结果占 choice + noul 两题。
 
 
 class SystemOneContextJudge:
@@ -38,7 +39,7 @@ class SystemOneContextJudge:
         base_url: str,
         model: str,
         timeout: float = 6.0,
-        batch_size: int = 8,
+        batch_size: int = 4,
         max_workers: int = 4,
         client: httpx.Client | None = None,
     ) -> None:
@@ -49,7 +50,7 @@ class SystemOneContextJudge:
         self._base_url = base_url.rstrip("/")
         self._model = model
         self._timeout = timeout
-        self._batch_size = max(1, batch_size)
+        self._batch_size = max(1, min(batch_size, _MAX_BATCH_ITEMS))
         self._max_workers = max(1, max_workers)
         self._client = client
         self.id = f"systemone:{httpx.URL(self._base_url).host}:{self._model}"

@@ -23,7 +23,7 @@ class ToolHandler:
         self.plan_guard = plan_guard
         self.worker_id = f"{os.getpid()}:{uuid.uuid4().hex}"
         if action is not None:
-            from agent.action.guards.pre import PreGuard
+            from agent.core.action.guards.pre import PreGuard
             self.catalog, self.ledger, self.config = action.catalog, action.ledger, action.config
             self.pre = PreGuard(self.catalog, self.ledger)
 
@@ -99,7 +99,7 @@ class ToolHandler:
                        or arguments.get("action"), "identity": identity})
 
     def _prepare(self, ticket: ToolDispatchItem) -> ToolDispatchItem:
-        from agent.action.storage.tool_store import ActionConflictError
+        from agent.core.action.storage.tool_store import ActionConflictError
         request, context = ticket.request, ticket.context
         attempt = self.ledger.begin_attempt(request, context)
         entry = self.catalog.get(request.name)

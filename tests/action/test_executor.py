@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from agent.types.action.config import ActionConfig
 from agent.types.action.execution import GateDecision, now_ms
 from agent.types.action.policy import Toolset
-from agent.action.runtime import ActionRuntime
+from agent.core.action.runtime import ActionRuntime
 from agent.types.action.policy import AssemblyPolicy
 from agent.types.model import ToolCallRequest
 from conftest import context, payment
@@ -47,13 +47,16 @@ def test_timeout_remains_unknown_until_late_confirmation(bank_runtime):
     bank, _, runtime = bank_runtime
     entry = runtime.catalog.get("fake_pay")
     entry["policy"] = entry["policy"].model_copy(update={"timeout_s": 0.01})
-    bank.delay = 0.15
     ctx = context(runtime)
-    call = runtime.handler.handle_batch((payment(),), ctx)[0]
-    entry_id = call.action_evidence.ledger_entry_id
-    assert "unknown" in call.error and runtime.ledger.get(entry_id).effect_state == "unknown"
-    assert not runtime.handler.handle_batch((payment(),), context(runtime))[0].ok
-    time.sleep(0.2)
+    # 保持银行尚未入账，直到 UNKNOWN 和禁止重试的断言完成。
+    with bank.lock:
+        call = runtime.handler.handle_batch((payment(),), ctx)[0]
+        entry_id = call.action_evidence.ledger_entry_id
+        assert "unknown" in call.error and runtime.ledger.get(entry_id).effect_state == "unknown"
+        assert not runtime.handler.handle_batch((payment(),), context(runtime))[0].ok
+    deadline = time.monotonic() + 3
+    while runtime.ledger.get(entry_id).effect_state != "succeeded" and time.monotonic() < deadline:
+        time.sleep(0.01)
     assert runtime.ledger.get(entry_id).effect_state == "succeeded" and bank.calls == 1
 
 

@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Mapping, Sequence
 
-from agent.prompt.prompt_loader import load_system_prompt
+from agent.prompt.systemPrompt import systemPrompt
 from agent.types.context import (
     ContextBudget,
     TokenEstimator,
@@ -322,8 +322,7 @@ class PrecisionBuilder:
     ) -> list[tuple[str, dict]]:
         """按固定顺序加载系统、Memory、Skill 和临时提示。"""
         tagged: list[tuple[str, dict]] = []
-        system_prompt = load_system_prompt()
-        tagged.append(("system_prompt", {"role": "system", "content": system_prompt}))
+        tagged.append(("system_prompt", {"role": "system", "content": systemPrompt}))
 
         if memory_snapshot is not None:
             tagged.append(("memory_manual", {"role": "system", "content": memory_snapshot.prompt}))

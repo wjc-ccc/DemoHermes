@@ -21,11 +21,11 @@ class _MockModel:
         return self._script.pop(0)
 
 
-def test_outbound_reply_event_shares_turn_id_with_loop():
+def test_outbound_reply_event_shares_turn_id_with_loop(session_store):
     bus = EventBus()
     q = bus.subscribe(maxsize=200)
     loop = make_loop(model=_MockModel([ModelResponse(text="pong")]), event_bus=bus)
-    gw = Gateway(loop=loop, event_bus=bus, workers=1)
+    gw = Gateway(loop=loop, store=session_store, event_bus=bus, workers=1)
     gw.register_channel(CliChannel())
     gw.start()
     try:

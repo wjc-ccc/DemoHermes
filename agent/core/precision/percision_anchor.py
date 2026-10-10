@@ -13,7 +13,7 @@ from agent.types.context import Anchor, AnchorFact, ANCHOR_SECTIONS, render_anch
 from .context_item import AnchorContent, ContextItem, HistoryTurn, _LoadedContext
 from agent.types.precision.priority import Priority
 from .errors import AnchorBuildError, AnchorCompactionError, ContextBudgetExceededError
-from agent.prompt.prompts.anchorExtraction import anchorExtractionPrompt
+from agent.prompt.anchorExtraction import anchorExtractionPrompt
 
 ## anchor提示词设计
 

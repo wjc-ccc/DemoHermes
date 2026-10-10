@@ -1,10 +1,10 @@
 from agent.types.runtime import RuntimeConfig
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from agent.action.bootstrap import build_action_runtime
+from agent.core.action.bootstrap import build_action_runtime
 from agent.types.action.config import ActionConfig
 from agent.types.action.policy import Toolset
-from agent.action.storage.migrations import schema_directory
+from agent.core.action.storage.migrations import schema_directory
 from tests.loop_fakes import make_loop
 from agent.types.conversation import Session, Message
 from agent.types.channel import InboundEvent, SessionSource

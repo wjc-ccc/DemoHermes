@@ -9,8 +9,8 @@ from agent.types.conversation import Session, Message
 from agent.core.building_messages import build_tool_message
 from agent.types.action.config import ActionConfig
 from agent.types.action.policy import Toolset, ToolPolicy
-from agent.action.runtime import ActionRuntime
-from agent.action.adapters.builtin import BuiltinToolAdapter
+from agent.core.action.runtime import ActionRuntime
+from agent.core.action.adapters.builtin import BuiltinToolAdapter
 from agent.tools.base import Tool
 from agent.types.tools import ToolCallResult
 from conftest import context, payment
