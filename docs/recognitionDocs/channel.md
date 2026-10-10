@@ -2,7 +2,7 @@
 
 > 当前架构中的“感知”入口；跨模块位置见 [模块架构总览](../模块架构总览.md)。本页保留渠道协议与媒体处理细节。
 
-> 对应代码：`agent/channel/baseChannel.py`、`agent/channel/channel_cli.py`、`agent/channel/channel_frontier.py`、`agent/channel/channel_wechat.py`
+> 对应代码：`agent/channel/` 下的 `baseChannel.py`（共用骨架）、`registry.py`（自动启用）、`media.py`（附件落盘）、`dedup.py`，以及 `channel_cli.py`、`channel_frontier.py`、`channel_feishu.py`、`channel_qq.py`、`channel_wechat.py`
 > 地位：Agent 与外部世界的**唯一接触面**。所有平台差异在这里归一化，进来后全是统一 DTO。
 
 ---
@@ -51,8 +51,12 @@ OutboundReply（统一出站）<──deliver_to_OutboundEvent── 平台回�
 | 能力 | 方法 | 说明 |
 |------|------|------|
 | 绑定 Gateway | `bind_gateway(gateway)` | register_channel 时回调，绑定后才能 send_gateway |
-| 发送事件 | `send_gateway(event)` | 把 InboundEvent 塞进 Gateway 的入站队列，自动累加计数 |
-| 状态查询 | `get_status()` | 返回 message_count / inbound_event_count / error_count |
+| 入站骨架 | `ingest(raw)` | 平台回调线程里计数 `message_count`、`should_accept` 去重/准入；带附件（`_has_media`）的再进线程池解析 |
+| 发送事件 | `send_gateway(event)` | 把 InboundEvent 塞进 Gateway 的入站队列，累加 `inbound_event_count` |
+| 附件兜底 | `_collect_attachments(text, items, load)` | 逐项加载附件；失败或不支持的说明写进正文 |
+| 生命周期 | `_start_worker` / `stop()` | 起收包线程；stop 统一置停止信号、关线程池与 HTTP 客户端，子类只覆写 `_close_connection` |
+| HTTP | `_http_client()` | 每个渠道复用一个 httpx.Client，附件下载也走它 |
+| 状态 | `status` | start / connected / message_count（平台推来的）/ inbound_event_count（送进 gateway 的）/ outbound_event_count / error_count |
 | 配置加载 | `registry.autostart_channels` | 一次读取 JSON 非敏感项与 `.env` 凭据，再注入 Channel |
 
 ### 3.2 子类必须实现的抽象方法
@@ -60,7 +64,6 @@ OutboundReply（统一出站）<──deliver_to_OutboundEvent── 平台回�
 | 方法 | 职责 |
 |------|------|
 | `start()` | 启动渠道 |
-| `stop()` | 停止渠道 |
 | `parse_to_InboundEvent(raw)` | 平台原始数据 -> InboundEvent |
 | `deliver_to_OutboundEvent(reply)` | OutboundReply -> 发回平台 |
 
@@ -68,11 +71,11 @@ OutboundReply（统一出站）<──deliver_to_OutboundEvent── 平台回�
 
 | Channel | 文件 | 状态 | 特点 |
 |---------|------|------|------|
-| `CliChannel` | `channel_cli.py` | ✅ 完整 | input()/print，chat_id="local" |
+| `CliChannel` | `channel_cli.py` | ✅ 完整 | input() 入站，回复由 ask() 返回后调用方打印；chat_id="local" |
 | `FrontierChannel` | `channel_frontier.py` | ✅ HTTP | 供前端 HTTP API 调用，走 Gateway.ask 同步等回复 |
 | `FeishuChannel` | `channel_feishu.py` | ✅ 完整 | lark-oapi ws 长连（SDK 自动重连）+ REST 投递；群聊 require_mention + TTL 去重 |
-| `QQChannel` | `channel_qq.py` | ✅ 完整 | 官方 bot wss 网关（Hello→Identify→心跳→断线退避重连）+ REST 投递 |
-| `WechatChannel` | `channel_wechat.py` | ✅ 文字回复、图片/文件入站 | 腾讯 iLink Bot API 长轮询 + sendmessage；context_token 随 source.metadata 回流 |
+| `QQChannel` | `channel_qq.py` | ✅ 单聊与群 @ | 官方 bot wss 网关（Hello→Identify→心跳→断线退避重连）+ REST 投递；频道消息未实现，也不订阅 |
+| `WechatChannel` | `channel_wechat.py` | ✅ 文字回复、图片/文件入站 | 腾讯 iLink Bot API 长轮询 + sendmessage；每个会话最新的 context_token 存在 channel 内并持久化，出站时带回 |
 
 ### 3.4 配置即连（Hermes 式自动启用）
 
@@ -84,8 +87,8 @@ OutboundReply（统一出站）<──deliver_to_OutboundEvent── 平台回�
 3. `"enable": true` 但凭据缺失 → 启动时 warn 跳过；单 channel 启动失败后注销，不拖垮其他
 
 凭据分工：密钥只放 `.env`（FEISHU_APP_ID/FEISHU_APP_SECRET、QQ_APP_ID/QQ_CLIENT_SECRET、
-WEIXIN_TOKEN/WEIXIN_ACCOUNT_ID），registry.json 只放开关与非敏感配置（domain、require_mention 等）。
-新平台接入：写一个 BaseChannel 子类 + 在 `CHANNEL_ENTRIES` 加一条 ChannelEntry 即可。
+WEIXIN_TOKEN；WEIXIN_ACCOUNT_ID 可选，协议不使用，仅作日志标识），registry.json 只放开关与非敏感配置（domain、require_mention 等）。
+新平台接入：写一个 BaseChannel 子类，在类属性里声明 `name`、`label`、`env_map`（必需凭据字段 → env 变量名）、`optional_env_map`、`deps`、`install_hint`，再把类加进 `registry.PLATFORM_CHANNELS` 即可。registry 只读这些属性，`start()` 用 `_require_credentials()` 按同一个 `env_map` 校验，名字和凭据清单只写一处。
 
 启动前可复制 `.env.example` 为 `.env` 并填写对应值；飞书需 App ID/Secret，QQ 需 App ID/Client Secret。个人微信 iLink Bot 可运行 `python scripts/wechat_qr_login.py`：在微信扫码并确认后，工具把 Token、Account ID 和区域接口地址写入本地 `.env`。二维码保存在 `data/channel/wechat_login_qr.png`，登录确认后删除。`/api/status` 同时显示 `start`（连接线程已启动）和 `connected`（已观测到平台通信）。飞书与 QQ 验证私聊和群聊；iLink Bot 通常只验证私聊，普通微信群事件受平台能力限制。
 
@@ -107,7 +110,7 @@ WEIXIN_TOKEN/WEIXIN_ACCOUNT_ID），registry.json 只放开关与非敏感配置
 
 **Channel 不做的事：**
 - 不碰 Session / Loop / 模型（拿到事件就 `send_gateway` 甩手）
-- 不构造 Message（那是 Gateway 的 `build_message` 干的）
+- 不构造 Message（那是 Gateway 调 `build_user_message` 干的）
 - 不决定会话隔离策略（session_key 由 Gateway 算）
 - 不做业务逻辑（不判断该不该回复、回复什么内容）
 
@@ -148,61 +151,50 @@ Channel 只产/消两个 DTO：`InboundEvent`（产）和 `OutboundReply`（消�
 
 ## 六、例子
 
-### 6.1 CliChannel 解析一条输入
+### 6.1 CLI：同步一问一答
 
 ```python
-# 用户在终端输入: "你好"
-raw = "你好"
-event = cli_channel.parse_to_InboundEvent(raw)
-# =>
-# InboundEvent(
-#     text="你好",
-#     source=SessionSource(
-#         channel="cli",
-#         chat_id="local",
-#         chat_type="dm",
-#         user_id="local",
-#     ),
-#     channel_prompt="当前通道：本地终端 CLI。回答简洁即可。",
-# )
-cli_channel.send_gateway(event)  # 进 MessageBus
+# agent/main.py 终端模式：输入经 parse 变成事件，ask() 同步等回复，由调用方打印
+event = cli_channel.parse_to_InboundEvent("你好")
+# => InboundEvent(
+#        text="你好",
+#        source=SessionSource(channel="cli", chat_id="local", chat_type="dm", user_id="local"),
+#        channel_prompt="当前通道：本地终端 CLI。回答简洁即可。",
+#    )
+reply = gateway.ask(event)
+print(f"ai  > {reply.text}")
 ```
 
-### 6.2 出站投递
+CLI 与 Frontier 都走 `ask()` 同步链路，回复直接返回给调用方；出站分发仍会调用它们的 `deliver_to_OutboundEvent`，CLI 不做事、Frontier 只记日志，避免重复输出。
+
+### 6.2 飞书群消息：从 SDK 事件到 InboundEvent
 
 ```python
-# Gateway 处理完，回灌 OutboundReply
-reply = OutboundReply(
-    text="你好！有什么可以帮你的？",
-    source=SessionSource(channel="cli", chat_id="local", ...),
-)
-cli_channel.deliver_to_OutboundEvent(reply)
-# => 终端打印: "ai > 你好！有什么可以帮你的？"
+# 1) SDK 回调线程：lark 事件对象 → raw dict（平台字段在这一步拆出并归一）
+raw = feishu_channel.event_to_raw(data)   # data 是 lark 的 P2ImMessageReceiveV1
+# => {
+#        "message_id": "om_xxx", "chat_id": "oc_xxx",
+#        "chat_type": "group",          # 飞书 p2p 在这里已归一为 dm
+#        "user_id": "ou_yyy", "message_type": "text",
+#        "text": "@_user_1 报价",        # content JSON 已解开
+#        "resource": {...},              # 原始 content，图片/文件时取资源 key
+#        "mentions": [{"open_id": "ou_bot", "name": "bot", "key": "@_user_1"}],
+#    }
+
+# 2) ingest(raw)：计数 → should_accept（message_id 去重 + 群聊必须 @ 机器人）
+#    → 纯文本就地 parse；image/file 交线程池下载后再 parse
+feishu_channel.ingest(raw)
+
+# 3) parse_to_InboundEvent(raw) 的结果（ingest 内部调用后 send_gateway）
+# => InboundEvent(
+#        text="报价",                    # mention key 已剥掉
+#        source=SessionSource(channel="feishu", chat_id="oc_xxx", chat_type="group",
+#                             user_id="ou_yyy", reply_to_message_id="om_xxx"),
+#        channel_prompt="当前通道：飞书群聊。回答简洁，不要用过多 Markdown 格式。",
+#    )
 ```
 
-### 6.3 飞书群消息的设想
-
-```python
-# 飞书 webhook 推来一条群消息
-raw = {
-    "event": {"message": {"chat_id": "oc_xxx", "content": '{"text":"@bot 报价"}'},
-              "sender": {"sender_id": {"open_id": "ou_yyy"}}},
-}
-event = feishu_channel.parse_to_InboundEvent(raw)
-# =>
-# InboundEvent(
-#     text="报价",
-#     source=SessionSource(
-#         channel="feishu",
-#         chat_id="oc_xxx",
-#         chat_type="group",
-#         user_id="ou_yyy",
-#     ),
-#     channel_prompt="当前通道：飞书群聊。回答简洁，必要时 @ 提问者。",
-# )
-```
-
-注意：`@bot` 前缀、飞书 content JSON 转义这些**平台杂务**都在 Channel 内消化掉，外面只看到干净的 `text="报价"`。
+注意：`@bot` 前缀、飞书 content JSON 转义这些**平台杂务**都在 Channel 内消化掉，外面只看到干净的 `text="报价"`。`reply_to_message_id` 是回程车票：出站时飞书用它挂回原消息，失败再按 `chat_id` 新发一条。
 
 ---
 

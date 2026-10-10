@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from agent.core.memory import (
-    MemoryScope, MemoryValidator, UserCardKind, UserCardStatus,
-)
-from agent.core.memory.types import MemoryProposal
+from agent.types.memory.scope import MemoryScope
+from agent.core.memory.memory_validator import MemoryValidator
+from agent.types.memory.categories import UserCardKind, UserCardStatus
+from agent.types.memory.extraction import MemoryProposal
 
 
 def _proposal(**updates) -> MemoryProposal:

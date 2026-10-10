@@ -1,13 +1,18 @@
+from dataclasses import replace
 """Gateway、冻结 MemorySnapshot 与 SQLite Session 的端到端接线。"""
-from agent.storage.sqlite import RuntimeStorage, connect
+from agent.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.storage.sqlite.database import connect
 from agent.channel.channel_cli import CliChannel
-from agent.core.agent_loop import AgentLoop
+from tests.loop_fakes import make_loop
 from agent.core.event_bus import EventBus
-from agent.core.memory import MemoryContextLoader, build_memory_scope, ensure_scope_dir
-from agent.core.types import InboundEvent, Message, SessionSource, ToolCall
-from agent.gateway import Gateway, build_session_key
-from agent.model.baseStructure import ModelResponse
-from agent.storage.sqlite import SqliteSessionArchiveReader, SqliteSessionStore
+from agent.core.memory.memory_context_loader import MemoryContextLoader
+from agent.core.memory.memory_scope import build_memory_scope, ensure_scope_dir
+from agent.types.channel import InboundEvent, SessionSource
+from agent.types.conversation import Message, ToolCall
+from agent.gateway.gateway import Gateway
+from agent.gateway.session_key import build_session_key
+from agent.types.model import ModelResponse
+from agent.storage.sqlite.session_store import SqliteSessionArchiveReader, SqliteSessionStore
 
 
 class _MockModel:
@@ -35,7 +40,7 @@ def _event(text: str) -> InboundEvent:
 
 
 def _make_gateway(script, *, store, memory_context, on_session_end=None):
-    loop = AgentLoop(model=_MockModel(script), event_bus=EventBus())
+    loop = make_loop(model=_MockModel(script), event_bus=EventBus())
     gateway = Gateway(
         loop=loop,
         store=store,
@@ -43,7 +48,7 @@ def _make_gateway(script, *, store, memory_context, on_session_end=None):
         workers=1,
         on_session_end=on_session_end,
     )
-    gateway.register_channel(CliChannel(quiet=True))
+    gateway.register_channel(CliChannel())
     gateway.start()
     return gateway, loop
 
@@ -174,7 +179,7 @@ def test_failed_model_reply_is_recorded_with_its_session_turn(tmp_path):
         store=RuntimeStorage.open(db).sessions,
         memory_context=MemoryContextLoader(tmp_path / "memory"),
     )
-    gateway.loop.model_retries = 0
+    gateway.loop.config = replace(gateway.loop.config, model_retries=0)
     event = _event("hi")
     event.source.reply_to_message_id = "platform-message-1"
     try:
@@ -215,7 +220,7 @@ def test_failed_gateway_reply_is_not_sent_as_model_history(tmp_path):
         store=RuntimeStorage.open(db).sessions,
         memory_context=MemoryContextLoader(tmp_path / "memory"),
     )
-    loop.model_retries = 0
+    loop.config = replace(loop.config, model_retries=0)
     try:
         failure = gateway.ask(_event("first"), timeout=10)
         recovery = gateway.ask(_event("second"), timeout=10)

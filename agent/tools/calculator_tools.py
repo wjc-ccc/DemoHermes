@@ -11,7 +11,9 @@ import ast
 import math
 import operator
 
-from .base import Tool, ToolCallResult
+from agent.tools.base import Tool
+from agent.types.action.policy import ToolPolicy
+from agent.types.tools import ToolCallResult, ToolInvocationContext
 
 # 允许的二元运算符
 _BIN_OPS = {
@@ -71,8 +73,9 @@ class CalculatorTool(Tool):
         },
         "required": ["expression"],
     }
+    action_policy = ToolPolicy(when_to_use=description, when_not_to_use="不用于产生业务写入")
 
-    def execute(self, arguments: dict) -> ToolCallResult:
+    def execute(self, arguments: dict, *, context: ToolInvocationContext) -> ToolCallResult:
         expression = str(arguments.get("expression", "")).strip()
         if not expression:
             return ToolCallResult(ok=False, error="缺少参数 expression")

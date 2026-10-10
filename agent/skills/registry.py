@@ -23,10 +23,12 @@ import logging
 from collections.abc import Sequence
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
 
-from .base import Skill, SkillParseError
+from agent.types.skills import Skill, SkillRef, SkillSelection
+from agent.skills.base import SkillParseError
 from ..provider import ROOT
+
+from agent.skills.base import load_skill
 
 logger = logging.getLogger(__name__)
 
@@ -43,44 +45,9 @@ _SUMMARY_HEADER = (
 )
 
 
-class SkillRef(BaseModel):
-    """本轮被选中的技能及其确定版本的正文。"""
-
-    model_config = ConfigDict(frozen=True)
-
-    name: str
-    revision: int
-    content_hash: str
-    description: str = ""
-    body: str = ""
-
-
-class SkillSelection(BaseModel):
-    """一个 turn 冻结的技能选择结果。
-
-    冻结的意义：同一 turn 内多次模型迭代看到的摘要与正文完全一致，
-    turn 中途发生的写盘/晋升只影响下一 turn（与 MemorySnapshot 语义对齐）。
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    summary_prompt: str = ""
-    selected: tuple[SkillRef, ...] = ()
-
-    @property
-    def summary_chars(self) -> int:
-        return len(self.summary_prompt)
-
-    def load(self, name: str) -> SkillRef | None:
-        target = (name or "").strip()
-        for ref in self.selected:
-            if ref.name == target:
-                return ref
-        return None
-
-
 class SkillRegistry:
-    def __init__(self, skill_dirs: list[Path] | None = None) -> None:
+    def __init__(self, skill_dirs: list[Path] | None = None, *, selector=None) -> None:
+        self.selector = selector
         self._skill_dirs = list(
             skill_dirs if skill_dirs is not None else DEFAULT_SKILL_DIRS
         )
@@ -103,7 +70,7 @@ class SkillRegistry:
             return
         for skill_file in sorted(directory.glob("*/SKILL.md")):
             try:
-                skill = Skill.from_file(skill_file)
+                skill = load_skill(skill_file)
             except SkillParseError:
                 # fail closed：无法确认的技能不进上下文
                 logger.exception("技能文件解析失败，已跳过: %s", skill_file)
@@ -170,6 +137,7 @@ class SkillRegistry:
         有 query + selector 时只注入相关子集（渐进披露）；无匹配则返回空选择，
         宁缺毋滥，避免用无关技能灌满上下文。
         """
+        selector = selector if selector is not None else self.selector
         candidates = self.active_skills(
             scope_key=scope_key, available_tools=available_tools
         )

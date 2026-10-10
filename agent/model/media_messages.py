@@ -5,18 +5,15 @@ import base64
 import logging
 from pathlib import Path
 
-from ..provider import ROOT
+from ..channel import media as channel_media
 
 logger = logging.getLogger(__name__)
-MEDIA_ROOT = ROOT / "data" / "channel" / "media"
-MAX_IMAGE_BYTES = 20 * 1024 * 1024
-IMAGE_MIMES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 
 
 def prepare_model_messages(messages: list[dict], *, supports_images: bool) -> list[dict]:
-    """剥离内部媒体引用；视觉模型在请求前才读取已缓存图片。"""
+    """剥离内部媒体引用；视觉模型在请求前才读取已缓存图片（只认 channel 落盘目录）。"""
     prepared: list[dict] = []
-    media_root = MEDIA_ROOT.resolve()
+    media_root = channel_media.MEDIA_ROOT.resolve()
     for message in messages:
         item = {key: value for key, value in message.items() if key != "_images"}
         images = message.get("_images") or []
@@ -33,9 +30,9 @@ def prepare_model_messages(messages: list[dict], *, supports_images: bool) -> li
                 if not path.is_relative_to(media_root):
                     raise ValueError("image path outside media root")
                 mime = str(image.get("mime_type") or "")
-                if mime not in IMAGE_MIMES:
+                if mime not in channel_media.IMAGE_MIMES:
                     raise ValueError("unsupported image MIME")
-                if path.stat().st_size > MAX_IMAGE_BYTES:
+                if path.stat().st_size > channel_media.MAX_MEDIA_BYTES:
                     raise ValueError("image exceeds size limit")
                 encoded = base64.b64encode(path.read_bytes()).decode("ascii")
                 blocks.append({

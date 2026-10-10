@@ -1,8 +1,8 @@
 """EvalReport 的逐 case 单调性比较，供候选资产提交门使用。"""
 from __future__ import annotations
 
-from ..evolution.types import ReplayGateResult
-from .types import EvalReport
+from agent.types.eval.reports import ReplayGateResult
+from agent.types.eval.reports import EvalReport
 
 
 def compare_reports(

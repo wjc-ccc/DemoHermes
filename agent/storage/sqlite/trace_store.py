@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json
 from datetime import datetime
-from ...core.memory.memory_trace import MemoryTrace
+from agent.types.memory.trace import MemoryTrace
 from .database import Database
 from .codec import milliseconds
 

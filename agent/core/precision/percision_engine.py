@@ -2,33 +2,37 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 import logging
-import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Mapping, Sequence
 
-from pydantic import ValidationError
-
-from ...provider import SYSTEM_PROMPT_PATH
-from ..context_budget import ContextBudget, ContextBudgetExceededError, TokenEstimator
-from ..types import Anchor, AnchorFact, Message, Session
-from .percision_anchor import AnchorBuildError, render_anchor
-from .percision_types import (
-    AnchorCompactionError,
+from agent.prompt.prompt_loader import load_system_prompt
+from agent.types.context import (
+    ContextBudget,
+    TokenEstimator,
+    Anchor,
+)
+from agent.types.conversation import Message, Session
+from .percision_admission import AdmissionPlan, admit
+from . import percision_anchor as _anchor
+from agent.types.precision.admission import AdmissionAction, AdmissionPolicy
+from agent.core.precision.errors import AnchorCompactionError, ContextBudgetExceededError
+from agent.types.precision.result import (
     AnchorStatus,
-    ContextItem,
     Decision,
     PrecisionMetrics,
     PrecisionRecord,
     PrecisionResult,
-    Priority,
+    PrecisionConfig,
 )
+from agent.core.precision.context_item import ContextItem, HistoryTurn, _LoadedContext
+from agent.types.precision.priority import Priority
 
 if TYPE_CHECKING:
-    from ..memory import MemorySnapshot
-    from ...skills.registry import SkillSelection
+    from agent.types.memory.snapshot import MemorySnapshot
+    from agent.types.skills import SkillSelection
+    from agent.types.precision.judge import ContextJudge
     from .percision_trace import PrecisionTrace
 
 logger = logging.getLogger(__name__)
@@ -36,18 +40,12 @@ logger = logging.getLogger(__name__)
 ## 固定对应的权限级别
 _P0_KINDS = frozenset({"system_prompt", "skill", "ephemeral", "memory_manual"})
 _P1_KINDS = frozenset({"memory_experience"})
-_ANCHOR_SLOTS = ("intent", "changes", "decisions", "next_steps", "excluded")
 _TOOL_FAIL_PREFIX = "工具执行失败"
 _KEEP_RECENT_P2_TURNS = 2
 _COMPACT_RATIO = 0.85
-_ANCHOR_BUDGET_RATIO = 0.15
-_ANCHOR_HARD_TOKEN_CAP = 2048
 _P0_SHARE_WARNING = 0.10
 _UNLIMITED = 2**31 - 1
 _MESSAGE_OVERHEAD_BYTES = 16
-
-AnchorContent = dict[str, tuple[AnchorFact, ...]]
-HistoryTurn = tuple[ContextItem, ...]
 
 
 class _ConservativeEstimator:
@@ -62,18 +60,6 @@ class _ConservativeEstimator:
             for message in messages
         )
 
-## load阶段产物
-@dataclass(frozen=True)
-class _LoadedContext:
-    """load 阶段的完整产物，包含统一原子和原始历史轮次。"""
-
-    session_id: str
-    items: tuple[ContextItem, ...]
-    history_turns: tuple[HistoryTurn, ...]
-    anchor: Anchor | None
-    legacy_anchor_content: AnchorContent | None
-    anchor_error_code: str | None
-
 ## grade阶段产物 此时只差组装上下文 anchor已经生成完毕
 @dataclass
 class _GradeResult:
@@ -87,11 +73,52 @@ class _GradeResult:
     anchor_status: AnchorStatus
     anchor_builder_attempts: int
     anchor_error_code: str | None
+    admission: AdmissionPlan
 
 ## load - grade - build
+@dataclass(frozen=True)
+class _ProtectedContext:
+    estimated: tuple[ContextItem, ...]
+    cap: int
+    mustload: tuple[ContextItem, ...]
+    must_tokens: int
+    selected: tuple[ContextItem, ...]
+    reasons: dict[str, tuple[Decision, str]]
+    turns: tuple[HistoryTurn, ...]
+    covered_count: int
+    anchor_tokens: int
+    anchor: Anchor | None
+
+
+@dataclass(frozen=True)
+class _AdmittedHistory:
+    protected: _ProtectedContext
+    turns: tuple[HistoryTurn, ...]
+    record_items: tuple[ContextItem, ...]
+    admission: AdmissionPlan
+
+
+@dataclass(frozen=True)
+class _AnchorPlan:
+    candidate_turns: tuple[HistoryTurn, ...]
+    refresh: bool
+    token_limit: int
+
+
+@dataclass(frozen=True)
+class _AnchorSelection:
+    selected: tuple[ContextItem, ...]
+    record_items: tuple[ContextItem, ...]
+    reasons: dict[str, tuple[Decision, str]]
+    anchor: Anchor | None
+    status: AnchorStatus
+    attempts: int
+    error_code: str | None
+
+
 class PrecisionBuilder:
     """上下文唯一入口；固定执行 load、grade、build 三个阶段。"""
-
+    ## percision才进行对应的
     def __init__(
         self,
         *,
@@ -99,10 +126,16 @@ class PrecisionBuilder:
         anchor_builder: Callable[
             [Mapping[str, object]], Mapping[str, object]
         ] | None = None,
+        context_judge: ContextJudge | None = None,
+        admission_policy: AdmissionPolicy | None = None,
+        config: PrecisionConfig | None = None,
     ) -> None:
-        """注入旁路 Trace 和 Anchor 模型 Adapter。"""
+        """注入旁路 Trace、Anchor 模型 Adapter 与准入判官。"""
         self._trace = trace
         self._anchor_builder = anchor_builder
+        self._context_judge = context_judge
+        self._admission_policy = admission_policy or AdmissionPolicy()
+        self.config = config or PrecisionConfig()
 
     def build(
         self,
@@ -114,9 +147,11 @@ class PrecisionBuilder:
         budget: ContextBudget | None = None,
         token_estimator: TokenEstimator | None = None,
         trace_id: str = "context",
+        iteration: int | None = None,
     ) -> PrecisionResult:
         """从所有固定来源构建一次可直接发送给模型的 messages。"""
-        estimator = token_estimator or _ConservativeEstimator()
+        budget = budget if budget is not None else self.config.budget
+        estimator = token_estimator or self.config.token_estimator or _ConservativeEstimator()
         ## 加载所有的context item
         loaded = self._load(
             session,
@@ -136,6 +171,27 @@ class PrecisionBuilder:
 
 
         #### 以下均为指标计算 token 花费 percision相关指标统计等等
+        anchor_updated = graded.anchor_status in {"created", "extended"}
+        admission = graded.admission
+        metrics = self._measure(loaded, graded, messages, final_cost, budget, trace_id)
+
+        ## 记录落库的最终结果
+        result = PrecisionResult(
+            messages=messages,
+            metrics=metrics,
+            records=graded.records,
+            exposed_refs=tuple(item.origin_ref or item.name for item in graded.lazyload),
+            anchor=graded.anchor,
+            anchor_updated=anchor_updated,
+            verdicts=admission.verdicts,
+            verdicts_updated=admission.updated,
+        )
+        if self._trace is not None:
+            self._trace.record(result, iteration=iteration)
+        return result
+
+    def _measure(self, loaded, graded, messages, final_cost, budget, trace_id) -> PrecisionMetrics:
+        """唯一指标计算位置，只读取阶段结果。"""
         selected_names = {item.name for item in graded.selected}
         p0_tokens = sum(
             item.token_estimate
@@ -150,8 +206,8 @@ class PrecisionBuilder:
             ),
             0,
         )
-        anchor_updated = graded.anchor_status in {"created", "extended"}
-        metrics = PrecisionMetrics(
+        admission = graded.admission
+        return PrecisionMetrics(
             trace_id=trace_id or "context",
             budget=budget.max_input_tokens if budget is not None else 0,
             tokens_used=final_cost,
@@ -191,20 +247,18 @@ class PrecisionBuilder:
             anchor_tokens=anchor_tokens,
             anchor_builder_attempts=graded.anchor_builder_attempts,
             anchor_error_code=graded.anchor_error_code,
+            admission_mode=self._admission_policy.mode,
+            admission_candidates=admission.candidates,
+            admission_judged_count=admission.judged,
+            admission_judge_failures=admission.judge_failures,
+            admission_judge_latency_ms=admission.judge_latency_ms,
+            admission_rule_count=admission.rule_count,
+            admission_trimmed_count=admission.trimmed,
+            admission_deferred_count=admission.deferred,
+            admission_saved_tokens=admission.saved_tokens,
+            admission_missed_count=admission.missed,
         )
 
-        ## 记录落库的最终结果
-        result = PrecisionResult(
-            messages=messages,
-            metrics=metrics,
-            records=graded.records,
-            exposed_refs=tuple(item.origin_ref or item.name for item in graded.lazyload),
-            anchor=graded.anchor,
-            anchor_updated=anchor_updated,
-        )
-        if self._trace is not None:
-            self._trace.record(result)
-        return result
 
     ## 加载无需历史数据（记忆 skill 经验） + 加载历史数据（session） + 加载anchor（校验后放入p2a） + 
     def _load(
@@ -225,9 +279,9 @@ class PrecisionBuilder:
         history = self._history_items(session.messages, len(nonhistory) + 1)
         history_turns = _history_turns(history)
 
-        stored_anchor, anchor_error_code = _coerce_anchor(session.context_anchor)
+        stored_anchor, anchor_error_code = _anchor.coerce_anchor(session.context_anchor)
         if stored_anchor is not None:
-            anchor_error_code = _validate_stored_anchor(
+            anchor_error_code = _anchor.validate_stored_anchor(
                 stored_anchor,
                 session_id=session.session_id,
                 turns=history_turns,
@@ -238,16 +292,16 @@ class PrecisionBuilder:
         anchor_items: tuple[ContextItem, ...] = ()
         if stored_anchor is not None:
             anchor_items = (
-                _context_item_from_anchor(
+                _anchor.context_item_from_anchor(
                     stored_anchor,
-                    seq=_anchor_sequence(history_turns),
+                    seq=_anchor.anchor_sequence(history_turns),
                 ),
             )
 
         legacy_anchor_content = (
             None
             if stored_anchor is not None
-            else _parse_legacy_anchor(session.summary or "")
+            else _anchor.parse_legacy_anchor(session.summary or "")
         )
         return _LoadedContext(
             session_id=session.session_id,
@@ -256,6 +310,7 @@ class PrecisionBuilder:
             anchor=stored_anchor,
             legacy_anchor_content=legacy_anchor_content,
             anchor_error_code=anchor_error_code,
+            verdicts=dict(getattr(session, "context_verdicts", None) or {}),
         )
     ## 情景记忆 + skill + 经验卡片
     def _load_nonhistory(
@@ -267,11 +322,7 @@ class PrecisionBuilder:
     ) -> list[tuple[str, dict]]:
         """按固定顺序加载系统、Memory、Skill 和临时提示。"""
         tagged: list[tuple[str, dict]] = []
-        try:
-            system_prompt = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            logger.warning("system prompt 文件缺失: %s，使用兜底文案", SYSTEM_PROMPT_PATH)
-            system_prompt = "你是一个友好的AI助手。"
+        system_prompt = load_system_prompt()
         tagged.append(("system_prompt", {"role": "system", "content": system_prompt}))
 
         if memory_snapshot is not None:
@@ -327,14 +378,15 @@ class PrecisionBuilder:
             ))
         return tuple(items)
 
-    def _grade(
-        self,
-        loaded: _LoadedContext,
-        *,
-        budget: ContextBudget | None,
-        estimator: TokenEstimator,
-    ) -> _GradeResult:
-        """执行固定优先级、Anchor 覆盖替换、窗口约束和失败关闭。"""
+    def _grade(self, loaded, *, budget, estimator) -> _GradeResult:
+        """阶段输入输出固定；预算与历史取舍继续沿用原规则。"""
+        protected = self._protect_context(loaded, budget=budget, estimator=estimator)
+        admitted = self._admit_history(loaded, protected, budget=budget, estimator=estimator)
+        plan = self._plan_anchor(loaded, admitted, budget=budget, estimator=estimator)
+        selected = self._select_history(loaded, admitted, plan, estimator=estimator)
+        return self._finish_grade(admitted, selected, estimator=estimator)
+
+    def _protect_context(self, loaded, *, budget, estimator) -> _ProtectedContext:
         estimated = tuple(_with_estimate(item, estimator) for item in loaded.items)
         item_by_name = {item.name: item for item in estimated}
         history_turns = tuple(
@@ -343,8 +395,6 @@ class PrecisionBuilder:
         )
         cap = budget.max_input_tokens if budget is not None else _UNLIMITED
         reasons: dict[str, tuple[Decision, str]] = {}
-        dropped: list[ContextItem] = []
-        record_items = list(estimated)
 
         mustload = [
             item for item in estimated if item.priority in {Priority.P0, Priority.P1}
@@ -387,9 +437,59 @@ class PrecisionBuilder:
         if must_tokens + anchor_tokens > cap:
             raise ContextBudgetExceededError()
 
+        return _ProtectedContext(
+            estimated, cap, tuple(mustload), must_tokens, tuple(selected), reasons,
+            all_p2_turns, covered_count, anchor_tokens, current_anchor,
+        )
+
+    def _admit_history(self, loaded, protected, *, budget, estimator) -> _AdmittedHistory:
+        estimated, cap = protected.estimated, protected.cap
+        must_tokens, anchor_tokens = protected.must_tokens, protected.anchor_tokens
+        all_p2_turns, covered_count = protected.turns, protected.covered_count
+        uncovered_turns = all_p2_turns[covered_count:]
+        record_items = list(estimated)
+        # 第一级：条目级准入（可读回）；之后仍超阈值才由 Anchor 做整轮语义压缩。
+        admission = self._admit(
+            loaded,
+            all_p2_turns,
+            covered_count=covered_count,
+            live_items=[
+                item
+                for item in estimated
+                if item.kind == "history"
+                and item.priority in {Priority.P0, Priority.P1}
+            ],
+            usage=(
+                (
+                    must_tokens
+                    + anchor_tokens
+                    + sum(_turn_cost(turn) for turn in uncovered_turns)
+                ) / cap
+                if budget is not None and cap
+                else 0.0
+            ),
+            estimator=estimator,
+        )
+        if admission.projected:
+            all_p2_turns = tuple(
+                tuple(admission.projected.get(item.name, item) for item in turn)
+                for turn in all_p2_turns
+            )
+            uncovered_turns = all_p2_turns[covered_count:]
+            record_items = [
+                admission.projected.get(item.name, item) for item in record_items
+            ]
+
+        return _AdmittedHistory(protected, all_p2_turns, tuple(record_items), admission)
+
+    def _plan_anchor(self, loaded, admitted, *, budget, estimator) -> _AnchorPlan:
+        protected = admitted.protected
+        cap, must_tokens = protected.cap, protected.must_tokens
+        anchor_tokens, current_anchor = protected.anchor_tokens, protected.anchor
+        uncovered_turns = admitted.turns[protected.covered_count:]
         raw_uncovered_cost = sum(_turn_cost(turn) for turn in uncovered_turns)
         raw_with_anchor_cost = must_tokens + anchor_tokens + raw_uncovered_cost
-        anchor_limit = _anchor_token_limit(cap) if budget is not None else 0
+        anchor_limit = _anchor.anchor_token_limit(cap) if budget is not None else 0
         trigger = bool(
             budget is not None
             and cap
@@ -439,6 +539,17 @@ class PrecisionBuilder:
             if must_tokens + recent_cost + minimum_anchor_cost > cap:
                 raise ContextBudgetExceededError()
 
+        return _AnchorPlan(candidate_turns, needs_anchor_refresh, anchor_limit)
+
+    def _select_history(self, loaded, admitted, plan, *, estimator) -> _AnchorSelection:
+        protected = admitted.protected
+        cap, mustload = protected.cap, protected.mustload
+        selected, reasons = list(protected.selected), dict(protected.reasons)
+        record_items = list(admitted.record_items)
+        all_p2_turns, covered_count = admitted.turns, protected.covered_count
+        uncovered_turns = all_p2_turns[covered_count:]
+        current_anchor = protected.anchor
+        candidate_turns, needs_anchor_refresh, anchor_limit = plan.candidate_turns, plan.refresh, plan.token_limit
         attempts = 0
         anchor_error_code = loaded.anchor_error_code
         anchor_status: AnchorStatus = (
@@ -457,17 +568,18 @@ class PrecisionBuilder:
                 )
                 anchor_status = "raw_fallback"
             else:
-                coverage_turns = self._coverage_turns(
+                coverage_turns = _anchor.coverage_turns(
                     all_p2_turns,
                     covered_count,
                     candidate_turns,
                 )
-                built_anchor, built_item, attempts, build_error = self._try_build_anchor(
+                built_anchor, built_item, attempts, build_error = _anchor.try_build_anchor(
                     loaded,
+                    builder=self._anchor_builder,
                     coverage_turns=coverage_turns,
                     candidate_turns=candidate_turns,
                     max_tokens=anchor_limit,
-                    estimator=estimator,
+                    estimate_item=lambda item: _with_estimate(item, estimator),
                 )
                 if built_anchor is None or built_item is None:
                     anchor_error_code = build_error or "anchor_output_invalid"
@@ -544,6 +656,16 @@ class PrecisionBuilder:
         if sum(item.token_estimate for item in selected) > cap:
             raise ContextBudgetExceededError()
 
+        return _AnchorSelection(tuple(selected), tuple(record_items), reasons,
+                                current_anchor, anchor_status, attempts, anchor_error_code)
+
+    def _finish_grade(self, admitted, selection, *, estimator) -> _GradeResult:
+        estimated, cap = admitted.protected.estimated, admitted.protected.cap
+        selected, reasons = list(selection.selected), dict(selection.reasons)
+        record_items, admission = selection.record_items, admitted.admission
+        current_anchor, anchor_status = selection.anchor, selection.status
+        attempts, anchor_error_code = selection.attempts, selection.error_code
+        dropped: list[ContextItem] = []
         lazy_candidates = [item for item in estimated if item.priority == Priority.P3]
         lazyload: list[ContextItem] = []
         if lazy_candidates:
@@ -567,104 +689,42 @@ class PrecisionBuilder:
             selected=selected,
             lazyload=lazyload,
             dropped=dropped,
-            records=_make_records(record_items, reasons),
+            records=_make_records(record_items, reasons, admission.notes),
             anchor=current_anchor,
             anchor_status=anchor_status,
             anchor_builder_attempts=attempts,
             anchor_error_code=anchor_error_code,
+            admission=admission,
         )
 
-    def _coverage_turns(
-        self,
-        all_p2_turns: Sequence[HistoryTurn],
-        already_covered: int,
-        candidate_turns: Sequence[HistoryTurn],
-    ) -> tuple[HistoryTurn, ...]:
-        """返回从 Session 起点到新边界的连续完整前缀。"""
-        coverage = tuple(
-            all_p2_turns[: already_covered + len(candidate_turns)]
-        )
-        if not coverage:
-            raise ContextBudgetExceededError()
-        if not all(_turn_starts_with_user(turn) for turn in coverage):
-            raise AnchorCompactionError(
-                "anchor_protocol_invalid", "待压缩前缀存在没有 user 起点的历史轮次"
-            )
-        return coverage
-
-    def _try_build_anchor(
+    def _admit(
         self,
         loaded: _LoadedContext,
+        all_p2_turns: Sequence[HistoryTurn],
         *,
-        coverage_turns: Sequence[HistoryTurn],
-        candidate_turns: Sequence[HistoryTurn],
-        max_tokens: int,
+        covered_count: int,
+        live_items: Sequence[ContextItem],
+        usage: float,
         estimator: TokenEstimator,
-    ) -> tuple[Anchor | None, ContextItem | None, int, str | None]:
-        """最多调用 Builder 两次，并对结构、来源、错误和预算校验。"""
-        allowed_ids = tuple(
-            item.message_id or ""
-            for turn in coverage_turns
-            for item in turn
-            if item.message_id
-        )
-        existing_content = (
-            _anchor_content(loaded.anchor)
-            if loaded.anchor is not None
-            else loaded.legacy_anchor_content
-        )
-        candidate_start = len(coverage_turns) - len(candidate_turns)
-        new_turns = [
-            _anchor_turn_payload(turn, candidate_start + offset)
-            for offset, turn in enumerate(candidate_turns)
-        ]
-        validation_error: str | None = loaded.anchor_error_code
-        last_code: str | None = None
+    ) -> AdmissionPlan:
+        """对未被 Anchor 覆盖的 P2 工具结果执行准入；off 时只透传已有定案。"""
 
-        for attempt in range(1, 3):
-            target = max(1, max_tokens if attempt == 1 else max_tokens // 2)
-            payload: dict[str, object] = {
-                "existing_anchor": (
-                    _anchor_content_payload(existing_content)
-                    if existing_content is not None
-                    else None
-                ),
-                "new_turns": new_turns,
-                "allowed_message_ids": list(allowed_ids),
-                "constraints": {
-                    "max_tokens": target,
-                    "validation_error_from_previous_attempt": validation_error,
-                },
-            }
+        def estimate(message: dict) -> int:
             try:
-                raw_content = self._anchor_builder(payload)  # type: ignore[misc]
-                content = _validate_anchor_content(
-                    raw_content,
-                    allowed_ids=set(allowed_ids),
-                    coverage_turns=coverage_turns,
-                )
-                anchor = _attach_anchor_coverage(
-                    content,
-                    session_id=loaded.session_id,
-                    coverage_turns=coverage_turns,
-                )
-                item = _with_estimate(
-                    _context_item_from_anchor(
-                        anchor,
-                        seq=_anchor_sequence(loaded.history_turns),
-                    ),
-                    estimator,
-                )
-                if item.token_estimate > max_tokens:
-                    raise AnchorBuildError(
-                        "anchor_too_large",
-                        f"Anchor cost {item.token_estimate} > limit {max_tokens}",
-                    )
-                return anchor, item, attempt, None
-            except AnchorBuildError as exc:
-                last_code = exc.code
-                validation_error = f"{exc.code}: {exc.detail or str(exc)}"
-        return None, None, 2, last_code or "anchor_output_invalid"
+                return int(estimator.estimate_messages([message]))
+            except Exception:
+                return max(1, len(str(message.get("content") or "")) // 4)
+
+        return admit(
+            all_p2_turns,
+            covered_count=covered_count,
+            live_items=live_items,
+            usage=usage,
+            policy=self._admission_policy,
+            judge=self._context_judge,
+            stored=loaded.verdicts,
+            estimate=estimate,
+        )
 
     def _raw_fallback(
         self,
@@ -751,7 +811,6 @@ def _items_from_nonhistory(
             kind=kind,
             priority=priority,
             message=message,
-            origin_ref=_origin_ref(kind, message),
             seq=seq,
         ))
     return tuple(items)
@@ -777,282 +836,6 @@ def _turn_cost(turn: HistoryTurn) -> int:
     return sum(item.token_estimate for item in turn)
 
 
-def _turn_starts_with_user(turn: HistoryTurn) -> bool:
-    """返回历史轮次是否具有可信 user 起点。"""
-    return bool(turn and turn[0].message.get("role") == "user")
-
-
-def _coerce_anchor(value: Anchor | dict | None) -> tuple[Anchor | None, str | None]:
-    """恢复全局 Anchor；损坏字典不阻断 Session 原文恢复。"""
-    if value in (None, "", {}):
-        return None, None
-    if isinstance(value, Anchor):
-        return value, None
-    try:
-        return Anchor.model_validate(value), None
-    except (TypeError, ValueError, ValidationError):
-        return None, "anchor_payload_invalid"
-
-
-def _validate_stored_anchor(
-    anchor: Anchor,
-    *,
-    session_id: str,
-    turns: Sequence[HistoryTurn],
-) -> str | None:
-    """证明已存 Anchor 恰好覆盖 Session 最旧的连续完整轮次。"""
-    if anchor.session_id != session_id:
-        return "anchor_session_mismatch"
-    count = anchor.covered_turn_count
-    if count <= 0 or count > len(turns):
-        return "anchor_coverage_invalid"
-    coverage = tuple(turns[:count])
-    if (
-        not coverage
-        or not all(_turn_starts_with_user(turn) for turn in coverage)
-        or not all(
-            item.priority == Priority.P2 for turn in coverage for item in turn
-        )
-    ):
-        return "anchor_protocol_invalid"
-    first = coverage[0][0]
-    last = coverage[-1][-1]
-    if (
-        anchor.covered_start_seq != first.session_seq
-        or anchor.covered_end_seq != last.session_seq
-        or anchor.covered_start_message_id != first.message_id
-        or anchor.covered_end_message_id != last.message_id
-    ):
-        return "anchor_coverage_invalid"
-    digest = _source_digest(coverage)
-    if anchor.source_digest != digest:
-        return "anchor_digest_mismatch"
-    if anchor.anchor_id != _anchor_id(session_id, last.message_id or "", digest):
-        return "anchor_id_invalid"
-    allowed = {
-        item.message_id for turn in coverage for item in turn if item.message_id
-    }
-    for fact in _anchor_facts(anchor):
-        if not fact.source_message_ids or not set(fact.source_message_ids) <= allowed:
-            return "anchor_source_invalid"
-    return None
-
-
-def _validate_anchor_content(
-    raw: Mapping[str, object],
-    *,
-    allowed_ids: set[str],
-    coverage_turns: Sequence[HistoryTurn],
-) -> AnchorContent:
-    """严格校验 Builder 五槽结构、事实来源和必保工具错误。"""
-    if not isinstance(raw, Mapping) or set(raw) != set(_ANCHOR_SLOTS):
-        raise AnchorBuildError(
-            "anchor_output_invalid",
-            f"Anchor 字段必须恰好为 {list(_ANCHOR_SLOTS)}",
-        )
-    content: AnchorContent = {}
-    for slot in _ANCHOR_SLOTS:
-        values = raw.get(slot)
-        if not isinstance(values, (list, tuple)):
-            raise AnchorBuildError(
-                "anchor_output_invalid", f"{slot} 必须是数组"
-            )
-        facts: list[AnchorFact] = []
-        for value in values:
-            try:
-                fact = (
-                    value
-                    if isinstance(value, AnchorFact)
-                    else AnchorFact.model_validate(value)
-                )
-            except (TypeError, ValueError, ValidationError) as exc:
-                raise AnchorBuildError(
-                    "anchor_output_invalid", f"{slot}: {exc}"
-                ) from exc
-            if not fact.text.strip():
-                raise AnchorBuildError(
-                    "anchor_output_invalid", "存在空白事实"
-                )
-            sources = set(fact.source_message_ids)
-            if not sources or not sources <= allowed_ids:
-                raise AnchorBuildError(
-                    "anchor_source_invalid",
-                    f"非法来源: {sorted(sources - allowed_ids)}",
-                )
-            facts.append(fact)
-        content[slot] = tuple(facts)
-
-    failed_sources = {
-        source
-        for fact in content["decisions"]
-        if fact.status == "failed"
-        for source in fact.source_message_ids
-    }
-    required_errors = {
-        item.message_id
-        for turn in coverage_turns
-        for item in turn
-        if item.is_error and item.message_id
-    }
-    missing = required_errors - failed_sources
-    if missing:
-        raise AnchorBuildError(
-            "anchor_error_omitted",
-            f"工具错误未进入 failed decisions: {sorted(missing)}",
-        )
-    return content
-
-
-def _attach_anchor_coverage(
-    content: AnchorContent,
-    *,
-    session_id: str,
-    coverage_turns: Sequence[HistoryTurn],
-) -> Anchor:
-    """由运行时给模型语义附加不可伪造的连续覆盖账本。"""
-    first = coverage_turns[0][0]
-    last = coverage_turns[-1][-1]
-    digest = _source_digest(coverage_turns)
-    return Anchor(
-        anchor_id=_anchor_id(session_id, last.message_id or "", digest),
-        session_id=session_id,
-        covered_start_seq=int(first.session_seq or 0),
-        covered_end_seq=int(last.session_seq or 0),
-        covered_start_message_id=first.message_id or "",
-        covered_end_message_id=last.message_id or "",
-        covered_turn_count=len(coverage_turns),
-        source_digest=digest,
-        **content,
-    )
-
-
-def _anchor_content(anchor: Anchor) -> AnchorContent:
-    """返回不含覆盖账本的五槽内容。"""
-    return {
-        "intent": anchor.intent,
-        "changes": anchor.changes,
-        "decisions": anchor.decisions,
-        "next_steps": anchor.next_steps,
-        "excluded": anchor.excluded,
-    }
-
-
-def _anchor_content_payload(content: AnchorContent) -> dict[str, list[dict]]:
-    """把五槽内容序列化成 Builder 可消费的 JSON 对象。"""
-    return {
-        slot: [fact.model_dump(mode="json") for fact in content[slot]]
-        for slot in _ANCHOR_SLOTS
-    }
-
-
-def _anchor_facts(anchor: Anchor) -> tuple[AnchorFact, ...]:
-    """按固定槽顺序返回 Anchor 全部事实。"""
-    return (
-        *anchor.intent,
-        *anchor.changes,
-        *anchor.decisions,
-        *anchor.next_steps,
-        *anchor.excluded,
-    )
-
-
-def _parse_legacy_anchor(text: str) -> AnchorContent | None:
-    """读取旧五槽文本作为迁移提示，但不建立覆盖关系。"""
-    if "<context-anchor>" not in (text or ""):
-        return None
-    title_to_slot = {
-        "Intent": "intent",
-        "Changes": "changes",
-        "Decisions": "decisions",
-        "Next steps": "next_steps",
-        "Excluded": "excluded",
-    }
-    buckets: dict[str, list[AnchorFact]] = {
-        slot: [] for slot in _ANCHOR_SLOTS
-    }
-    current: str | None = None
-    for raw in text.splitlines():
-        line = raw.strip()
-        if line.endswith(":") and line[:-1] in title_to_slot:
-            current = title_to_slot[line[:-1]]
-        elif current and line.startswith("- "):
-            value = line[2:].strip()
-            if value:
-                buckets[current].append(AnchorFact(text=value))
-    return {slot: tuple(buckets[slot]) for slot in _ANCHOR_SLOTS}
-
-
-def _anchor_turn_payload(turn: HistoryTurn, turn_index: int) -> dict:
-    """把完整历史轮次转成一次性 Builder JSON。"""
-    return {
-        "turn_index": turn_index,
-        "start_seq": int(turn[0].session_seq or 0),
-        "end_seq": int(turn[-1].session_seq or 0),
-        "messages": [
-            {
-                "message_id": item.message_id or "",
-                "seq_id": int(item.session_seq or 0),
-                "role": str(item.message.get("role") or ""),
-                "content": str(item.message.get("content") or ""),
-                "tool_calls": list(item.message.get("tool_calls") or ()),
-                "is_error": item.is_error,
-            }
-            for item in turn
-        ],
-    }
-
-
-def _source_digest(turns: Sequence[HistoryTurn]) -> str:
-    """对覆盖原文的身份、顺序和模型可见内容计算稳定摘要。"""
-    payload = [
-        {
-            "message_id": item.message_id,
-            "seq_id": item.session_seq,
-            "message": item.message,
-        }
-        for turn in turns
-        for item in turn
-    ]
-    canonical = json.dumps(
-        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    )
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-
-def _anchor_id(session_id: str, end_message_id: str, digest: str) -> str:
-    """根据 Session、覆盖边界和摘要生成确定性 Anchor 标识。"""
-    raw = f"{session_id}:{end_message_id}:{digest}"
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
-
-
-def _anchor_sequence(turns: Sequence[HistoryTurn]) -> int:
-    """返回 Anchor 在统一上下文中位于所有 Session 历史之前的位置。"""
-    if not turns or not turns[0]:
-        return 0
-    return turns[0][0].seq - 1
-
-
-def _context_item_from_anchor(anchor: Anchor, *, seq: int) -> ContextItem:
-    """把全局 Anchor 转成优先于历史原文的 P2-A 原子。"""
-    return ContextItem(
-        name="p2_anchor",
-        kind="p2_anchor",
-        priority=Priority.P2,
-        message={"role": "system", "content": render_anchor(anchor)},
-        seq=seq,
-    )
-
-
-def _anchor_token_limit(cap: int) -> int:
-    """返回 Anchor 的 15% 动态上限和 2048 token 硬上限。"""
-    return max(1, min(int(cap * _ANCHOR_BUDGET_RATIO), _ANCHOR_HARD_TOKEN_CAP))
-
-
-def _origin_ref(kind: str, message: dict) -> str | None:
-    """自动注入的经验已经包含可按需读取的 card 引用。"""
-    return None
-
-
 def _is_tool_error(message: dict) -> bool:
     """识别需要在 Anchor decisions 中显式保留的工具错误。"""
     return bool(
@@ -1074,12 +857,16 @@ def _with_estimate(item: ContextItem, estimator: TokenEstimator) -> ContextItem:
 
 
 def _make_records(
-    items: Sequence[ContextItem], reasons: dict[str, tuple[Decision, str]]
+    items: Sequence[ContextItem],
+    reasons: dict[str, tuple[Decision, str]],
+    admission_notes: Mapping[str, tuple[AdmissionAction, str]],
 ) -> tuple[PrecisionRecord, ...]:
     """把内部原子投影成稳定、可检查的逐条 Trace。"""
     unique = {item.name: item for item in items}
     return tuple(
         PrecisionRecord(
+            admission_action=admission_notes.get(item.name, (None, ""))[0],
+            admission_reason=admission_notes.get(item.name, (None, ""))[1],
             item_name=item.name,
             priority=item.priority,
             token_estimate=item.token_estimate,

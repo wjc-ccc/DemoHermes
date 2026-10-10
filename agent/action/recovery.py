@@ -1,10 +1,9 @@
 """只依据账本和外部回执恢复；查询不可见不等于确认未执行。"""
 import uuid
-from ..core.memory.memory_scope import MemoryScope
-from ..model.baseStructure import ToolCallRequest
-from ..tools.base import ToolCallResult
-from .context import ToolContext
-from .ledger import now_ms
+from agent.types.memory.scope import MemoryScope
+from agent.types.model import ToolCallRequest
+from agent.types.tools import ToolCallResult, ToolTurnContext
+from agent.types.action.execution import ToolContext, now_ms
 
 
 class ActionRecovery:
@@ -15,7 +14,7 @@ class ActionRecovery:
         runtime = self.runtime
         recovered = []
         for item in runtime.ledger.list(scope_key=scope_key, unfinished=True):
-            if runtime.executor.is_active(item.entry_id):
+            if runtime.dispatch.is_active(item.entry_id):
                 recovered.append(item)
                 continue
             if item.lease_expires_at and item.lease_expires_at > now_ms():
@@ -62,7 +61,7 @@ class ActionRecovery:
             if "external_ref" in properties and item.external_ref:
                 args["external_ref"] = item.external_ref
             request = ToolCallRequest(id=uuid.uuid4().hex, name=policy.recovery_tool, arguments=args)
-            call = runtime.execute_batch((request,), context)[0]
+            call = runtime.handler.handle_batch((request,), ToolTurnContext.from_action(context))[0]
             data = call.tool_call_result or {}
             current = runtime.ledger.get(item.entry_id)
             if current.effect_state == "succeeded":
@@ -70,7 +69,7 @@ class ActionRecovery:
                 continue
             if call.ok and data.get("status") == "succeeded":
                 raw = ToolCallResult(ok=True, result_text="外部系统确认成功", data=data.get("result") or data)
-                _, current = runtime.executor.settle(current, raw, context, item.effective_args, policy)
+                _, current = runtime.dispatch.settle(current, raw, context, item.effective_args, policy)
             elif call.ok and data.get("status") == "failed" and data.get("confirmed_no_effect") is True:
                 current = runtime.ledger.update(current, changes={"effect_state": "failed", "phase": "finished",
                     "lease_expires_at": None}, event_type="confirmed_no_effect", evidence=data)
@@ -108,10 +107,10 @@ class ActionRecovery:
             raise ValueError("补偿引用不匹配")
         arguments = {**arguments, reference_name: reference}
         item = self.runtime.ledger.update(item, changes={"compensation_state": "started"}, event_type="compensation_requested")
-        call = self.runtime.execute_batch((ToolCallRequest(id=uuid.uuid4().hex,
+        call = self.runtime.handler.handle_batch((ToolCallRequest(id=uuid.uuid4().hex,
             name=policy.compensation_tool, arguments=arguments),),
-            context.model_copy(update={"compensates_entry_id": entry_id}))[0]
-        compensation = self.runtime.ledger.get(call.metadata["action"]["ledger_entry_id"])
+            ToolTurnContext.from_action(context.model_copy(update={"compensates_entry_id": entry_id})))[0]
+        compensation = self.runtime.ledger.get(call.action_evidence.ledger_entry_id)
         state = "succeeded" if compensation.effect_state == "succeeded" else (
             "failed" if compensation.effect_state == "failed" else "unknown")
         return self.runtime.ledger.update(item, changes={"compensation_state": state}, event_type="compensation_result",

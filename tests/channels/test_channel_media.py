@@ -40,7 +40,7 @@ def test_feishu_resource_becomes_content_part(message_type, resource, filename, 
     channel._client = MagicMock()
     channel._client.im.v1.message_resource.get.return_value = response
     event = channel.parse_to_InboundEvent({
-        "message_id": "om_1", "chat_id": "oc_1", "chat_type": "p2p",
+        "message_id": "om_1", "chat_id": "oc_1", "chat_type": "dm",
         "user_id": "ou_1", "text": "", "message_type": message_type,
         "resource": resource, "mentions": [],
     })
@@ -102,7 +102,6 @@ def test_wechat_decrypts_media(monkeypatch, item_type, detail_key, name, expecte
 
 def test_wechat_multiple_images_and_file_keep_order_and_unique_paths(monkeypatch, tmp_path):
     monkeypatch.setattr("agent.channel.channel_wechat.download_media", lambda *a, **k: b"media")
-    monkeypatch.setattr("agent.model.media_messages.MEDIA_ROOT", tmp_path / "media")
     channel = WechatChannel()
     event = channel.parse_to_InboundEvent({
         "message_id": "wx-many", "chat_id": "peer", "chat_type": "dm", "user_id": "peer",
@@ -178,8 +177,8 @@ def test_qq_media_callback_is_queued_and_duplicate_dropped(monkeypatch):
         }],
     }
     try:
-        channel._queue_ingest(raw)
-        channel._queue_ingest(raw)
+        channel.ingest(raw)
+        channel.ingest(raw)
         deadline = time.monotonic() + 2
         while len(gateway.events) < 1 and time.monotonic() < deadline:
             time.sleep(0.01)

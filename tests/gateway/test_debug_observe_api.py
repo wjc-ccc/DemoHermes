@@ -3,20 +3,18 @@ from __future__ import annotations
 
 import pytest
 
-from agent.storage.sqlite import RuntimeStorage
-from agent.channel.channel_frontier import FrontierChannel
-from agent.core.memory import MemoryContextLoader, build_memory_scope
-from agent.core.memory.memory_trace import (
-    MemoryItemTrace,
-    MemoryTrace,
-    MemoryTraceDecision,
-    MemoryTraceOperation,
-)
-from agent.core.memory.types import TurnRecord
-from agent.core.types import Message, SessionSource
-from agent.gateway.gateway import Gateway
-from agent.storage.sqlite import SqliteDocumentRegistry, SqliteSessionStore, SqliteTraceStore
-from tests.gateway.test_debug_memory_api import _get, _start_server, _stop_server, _turn
+from agent.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.memory.memory_context_loader import MemoryContextLoader
+from agent.core.memory.memory_scope import build_memory_scope
+from agent.types.memory.trace import MemoryItemTrace, MemoryTrace
+from agent.types.memory.trace_categories import MemoryTraceDecision, MemoryTraceOperation
+from agent.types.memory.source import TurnRecord
+from agent.types.conversation import Message
+from agent.types.channel import SessionSource
+from agent.storage.sqlite.document_registry import SqliteDocumentRegistry
+from agent.storage.sqlite.session_store import SqliteSessionStore
+from agent.storage.sqlite.trace_store import SqliteTraceStore
+from tests.gateway.test_debug_memory_api import _gateway, _get, _start_server, _stop_server, _turn
 
 
 @pytest.fixture
@@ -49,19 +47,16 @@ def memory_stack(tmp_path):
     }
 
 
-def _gateway(memory_stack, databases):
-    gateway = Gateway(
-        store=memory_stack["store"],
-        memory_context=memory_stack["memory_context"],
+def _serve(memory_stack, databases, *, enable_memory_debug):
+    return _start_server(
+        _gateway(memory_stack),
+        enable_memory_debug=enable_memory_debug,
         observe_databases=databases,
     )
-    gateway.register_channel(FrontierChannel())
-    return gateway
 
 
 def test_observe_routes_404_when_flag_off(memory_stack):
-    gateway = _gateway(memory_stack, {"agent": memory_stack["db"]})
-    server, port = _start_server(gateway, enable_memory_debug=False)
+    server, port = _serve(memory_stack, {"agent": memory_stack["db"]}, enable_memory_debug=False)
     try:
         status, body = _get(port, "/api/debug/tables")
         assert status == 404
@@ -75,14 +70,14 @@ def test_observe_routes_404_when_flag_off(memory_stack):
 def test_table_catalog_lists_sessions_and_side_database(memory_stack, tmp_path):
     audit_path = tmp_path / "evolution_audit.db"
     RuntimeStorage.open(audit_path).audit
-    gateway = _gateway(
+    server, port = _serve(
         memory_stack,
         {
             "agent": memory_stack["db"],
             "evolution_audit": audit_path,
         },
+        enable_memory_debug=True,
     )
-    server, port = _start_server(gateway, enable_memory_debug=True)
     try:
         status, body = _get(port, "/api/debug/tables")
         assert status == 200
@@ -179,8 +174,7 @@ def test_trace_modules_read_precision_note_and_memory_rows(memory_stack):
             ),
         )
     )
-    gateway = _gateway(memory_stack, {"agent": memory_stack["db"]})
-    server, port = _start_server(gateway, enable_memory_debug=True)
+    server, port = _serve(memory_stack, {"agent": memory_stack["db"]}, enable_memory_debug=True)
     try:
         status, modules = _get(port, "/api/debug/traces/modules")
         assert status == 200

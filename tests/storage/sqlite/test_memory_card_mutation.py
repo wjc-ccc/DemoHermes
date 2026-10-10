@@ -1,13 +1,15 @@
 from __future__ import annotations
+from agent.types.memory.mutation import MemoryMutationItem
 
 from datetime import datetime, timezone
 
 import pytest
 
-from agent.core.memory import MemoryScope, UserMemoryItem, content_sha256
-from agent.core.memory.types.memory_source_types import EvidenceRef, TurnRecord
-from agent.core.types import Message
-from agent.storage.sqlite import RuntimeStorage
+from agent.types.memory.scope import MemoryScope
+from agent.types.memory.items import UserMemoryItem, content_sha256
+from agent.types.memory.source import EvidenceRef, TurnRecord
+from agent.types.conversation import Message
+from agent.storage.sqlite.runtime_storage import RuntimeStorage
 from agent.storage.sqlite.memory_card_mutation import SqliteMemoryCardMutationService
 
 
@@ -41,17 +43,17 @@ def test_mutation_requires_existing_card_revision_and_scoped_source(tmp_path):
                "expected_revision": card.revision,
                "summary": "以后用英文回答", "content": "以后用英文回答"}
     with storage.db.write() as conn:
-        updated = service.apply(conn, scope, "m1", payload)
+        updated = service.apply(conn, scope, "m1", MemoryMutationItem.model_validate(payload))
     assert updated.item_id == card.item_id and updated.revision == 2
     with pytest.raises(Exception, match="revision"):
         with storage.db.write() as conn:
-            service.apply(conn, scope, "m1", payload)
+            service.apply(conn, scope, "m1", MemoryMutationItem.model_validate(payload))
     with pytest.raises(Exception, match="outside current user scope"):
         with storage.db.write() as conn:
-            service.apply(conn, other, "m1", {**payload, "expected_revision": 2})
+            service.apply(conn, other, "m1", MemoryMutationItem.model_validate({**payload, "expected_revision": 2}))
     with pytest.raises(ValueError, match="unsupported"):
         with storage.db.write() as conn:
-            service.apply(conn, scope, "m1", {
+            service.apply(conn, scope, "m1", MemoryMutationItem.model_validate({
                 **payload, "operation": "set", "expected_revision": 2,
-            })
+            }))
 

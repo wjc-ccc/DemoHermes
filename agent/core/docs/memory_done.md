@@ -52,3 +52,10 @@ Memory 现在有四种不同生命周期的内容：原始事实、常驻 Markdo
 当前关键词召回依赖具体对象和场景词，不能等同语义理解。逐字引文及实体锚点只能降低编造风险，不能完整证明一条自然语言主张被原文蕴含。模型可以选择不产卡，`[]` 不被规则兜底填充；这正是选择性记忆的边界。
 
 主要实现入口：`agent/main.py`、`agent/core/memory/memory_context_loader.py`、`agent/core/memory/memory_extractor.py`、`agent/core/memory/memory_batch_reviewer.py`、`agent/storage/sqlite/memory_review_scheduler.py`、`agent/storage/sqlite/memory_review_committer.py`、`agent/tools/memory_edit_tool.py`。
+
+
+## 统一 Markdown 文档入口
+
+`MarkdownDocuments` 统一读取 Policy、Project 和 User 文档。只读路径来自启动配置，个人 MEMORY.md 根据可信运行期 scope 定位。`read(..., persist=False)` 与正常读取共用校验/回退，不写修订历史；检索、冻结、memory_edit、Action 资源定位共享同一生产实例。
+
+AI 仅通过 replace_user/restore_user 编辑当前个人 MEMORY.md；工具不接受路径或目标身份参数。保留内容预算、凭证过滤、路径隔离、expected_hash 冲突检查、版本恢复及数据库失败后的文件回滚。context_documents 保存索引，memory_document_versions 保存有效历史正文。旧 MarkdownBook/MemoryManualEditor 与 ManualRead 已移除，DocumentRead 只保存 snapshot/diagnostics/disk_hash/revision。

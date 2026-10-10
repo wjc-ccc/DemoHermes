@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from ...core.memory.types.card_types import UserCardKind
+from agent.types.memory.categories import UserCardKind
 
 
 def evidence_time(item):

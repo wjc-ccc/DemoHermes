@@ -3,16 +3,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent.eval import (
-    EvalCase,
-    EvalRunner,
-    EvalSuite,
-    EvalTurn,
-    TurnExpectation,
-)
-from agent.evolution.skill_selector import SkillSelector
-from agent.model.baseStructure import ModelResponse
-from agent.skills import SkillRegistry
+from agent.types.eval.cases import EvalCase, EvalSuite, EvalTurn, TurnExpectation
+from agent.eval.runner import EvalRunner
+from agent.skills.selector import SkillSelector
+from agent.types.model import ModelResponse
+from agent.skills.registry import SkillRegistry
 
 
 def _write_skill(root: Path, name: str, description: str) -> None:

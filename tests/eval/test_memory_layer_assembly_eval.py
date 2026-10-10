@@ -1,6 +1,7 @@
 """Memory Layer 与 Precision 优先级正交，三本常驻文档作为冻结快照进入上下文。"""
-from agent.eval import EvalCase, EvalRunner, EvalSuite, EvalTurn, MemorySeed
-from agent.model.baseStructure import ModelResponse
+from agent.types.eval.cases import EvalCase, EvalSuite, EvalTurn, MemorySeed
+from agent.eval.runner import EvalRunner
+from agent.types.model import ModelResponse
 
 
 class _FakeModel:

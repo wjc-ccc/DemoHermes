@@ -16,7 +16,7 @@ from agent.channel.channel_wechat import (
     EP_SEND_MESSAGE,
     WechatChannel,
 )
-from agent.core.types import OutboundReply, SessionSource
+from agent.types.channel import OutboundReply, SessionSource
 
 
 class CollectGateway:
@@ -108,9 +108,7 @@ def test_dm_message_becomes_inbound(channel):
     assert event.source.chat_id == "user_a@im.wechat"
     assert event.source.user_id == "user_a@im.wechat"
     assert event.source.reply_to_message_id == "wx1"
-    # context_token 搭 source.metadata 的顺风车回流给出站
-    assert event.source.metadata["context_token"] == "ctx_aaa"
-    # channel 侧也留了底（主动消息兜底）
+    assert event.source.metadata == {}  # context_token 不随事件外流，只留在 channel 内
     assert channel._context_tokens["user_a@im.wechat"] == "ctx_aaa"
 
 
@@ -132,6 +130,19 @@ def test_empty_text_dropped(channel):
     assert channel._gateway.events == []
 
 
+def test_media_message_token_saved_and_deduped_on_poll_thread(channel, tmp_path):
+    queued = []
+    channel.submit_inbound_work = lambda fn, *args: queued.append(args)  # 线程池不执行
+    media_msg = _dm_msg(msg_id="wx_img", context_token="ctx_img", item_list=[
+        {"type": 2, "image_item": {"media": {"full_url": "https://a.weixin.qq.com/1"}}},
+    ])
+    channel._post = lambda *a, **k: {"ret": 0, "msgs": [media_msg, media_msg], "get_updates_buf": "b"}
+    channel._poll_once()
+    assert len(queued) == 1  # 重复消息在入队前就被去重
+    fresh = WechatChannel(state_path=tmp_path / "wechat_state.json")
+    assert fresh._context_tokens["user_a@im.wechat"] == "ctx_img"  # 工作线程未运行也已落盘
+
+
 # ---- 状态持久化 ----
 
 def test_state_roundtrip(channel, tmp_path):
@@ -148,11 +159,11 @@ def test_state_roundtrip(channel, tmp_path):
 
 def test_deliver_with_context_token(channel):
     sent = []
+    channel._context_tokens["user_a@im.wechat"] = "ctx_aaa"
     channel._post = lambda endpoint, payload, timeout=15.0: sent.append((endpoint, payload)) or {}
     channel.deliver_to_OutboundEvent(OutboundReply(
         text="你好",
-        source=SessionSource(channel="wechat", chat_id="user_a@im.wechat",
-                             metadata={"context_token": "ctx_aaa"}),
+        source=SessionSource(channel="wechat", chat_id="user_a@im.wechat"),
     ))
     endpoint, payload = sent[0]
     assert endpoint == EP_SEND_MESSAGE
@@ -163,15 +174,16 @@ def test_deliver_with_context_token(channel):
     assert channel.status["outbound_event_count"] == 0  # Gateway 统一记账
 
 
-def test_deliver_falls_back_to_stored_context_token(channel):
+def test_deliver_uses_latest_context_token_of_chat(channel):
     sent = []
-    channel._context_tokens["user_a@im.wechat"] = "ctx_stored"
+    channel._ingest_message(_dm_msg(msg_id="wx_old", context_token="ctx_old"))
+    channel._ingest_message(_dm_msg(msg_id="wx_new", context_token="ctx_new"))
     channel._post = lambda endpoint, payload, timeout=15.0: sent.append(payload) or {}
+    # 回复第一条消息时，也要带对端最新的 token
     channel.deliver_to_OutboundEvent(OutboundReply(
-        text="兜底",
-        source=SessionSource(channel="wechat", chat_id="user_a@im.wechat"),
+        text="回复旧消息", source=channel._gateway.events[0].source,
     ))
-    assert sent[0]["msg"]["context_token"] == "ctx_stored"
+    assert sent[0]["msg"]["context_token"] == "ctx_new"
 
 
 def test_deliver_chunks_long_text(channel):

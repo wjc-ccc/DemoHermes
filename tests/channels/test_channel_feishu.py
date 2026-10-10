@@ -4,9 +4,8 @@ raw 约定（channel 内部把 lark event 提取成纯 dict 后交给 parse）�
     {
         "message_id": "om_xxx",
         "chat_id": "oc_xxx",
-        "chat_type": "p2p" | "group",
+        "chat_type": "dm" | "group",   # event_to_raw 已把飞书的 p2p 归一为 dm
         "user_id": "ou_xxx",
-        "user_name": "张三",
         "message_type": "text",
         "text": "消息正文",
         "mentions": [{"open_id": "ou_bot", "name": "bot", "key": "@_user_1"}],
@@ -21,16 +20,15 @@ from unittest.mock import MagicMock
 import pytest
 
 from agent.channel.channel_feishu import FeishuChannel
-from agent.core.types import OutboundReply, SessionSource
+from agent.types.channel import OutboundReply, SessionSource
 
 
 def _raw(**over) -> dict:
     raw = {
         "message_id": "om_1",
         "chat_id": "oc_chat1",
-        "chat_type": "p2p",
+        "chat_type": "dm",
         "user_id": "ou_user1",
-        "user_name": "张三",
         "message_type": "text",
         "text": "你好",
         "mentions": [],
@@ -48,7 +46,7 @@ def channel(monkeypatch):
 
 # ---- 入站归一化 ----
 
-def test_parse_p2p_text(channel):
+def test_parse_dm_text(channel):
     event = channel.parse_to_InboundEvent(_raw())
     assert event.text == "你好"
     assert event.source.channel == "feishu"
@@ -56,7 +54,6 @@ def test_parse_p2p_text(channel):
     assert event.source.chat_type == "dm"
     assert event.source.user_id == "ou_user1"
     assert event.source.reply_to_message_id == "om_1"  # 回程车票
-    assert event.metadata["message_id"] == "om_1"
     assert "飞书" in (event.channel_prompt or "")
 
 
@@ -104,7 +101,7 @@ def test_group_without_require_mention_accepts_all(channel):
 
 def test_dm_always_accepted(channel):
     channel._bot_open_id = "ou_bot"
-    assert channel.should_accept(_raw(chat_type="p2p", mentions=[])) is True
+    assert channel.should_accept(_raw(chat_type="dm", mentions=[])) is True
 
 
 # ---- lark event 对象 → raw dict ----
@@ -138,6 +135,7 @@ def test_event_to_raw_non_text_falls_back(channel):
     sender = SimpleNamespace(sender_id=SimpleNamespace(open_id="ou_u9"), sender_type="user")
     raw = channel.event_to_raw(SimpleNamespace(event=SimpleNamespace(message=message, sender=sender)))
     assert raw["resource"]["image_key"] == "img_v2_x"
+    assert raw["chat_type"] == "dm"  # 飞书 p2p 在 raw 阶段归一
 
 
 # ---- 出站投递（mock lark client）----
@@ -145,7 +143,6 @@ def test_event_to_raw_non_text_falls_back(channel):
 def _reply(**kw) -> OutboundReply:
     base = dict(
         text="你好，我是 bot",
-        reply_to="om_1",
         source=SessionSource(channel="feishu", chat_id="oc_chat1",
                              chat_type="dm", user_id="ou_user1",
                              reply_to_message_id="om_1"),
@@ -170,8 +167,7 @@ def test_deliver_falls_back_to_create_when_no_reply_to(channel):
     client = MagicMock()
     client.im.v1.message.create.return_value = SimpleNamespace(success=lambda: True)
     channel._client = client
-    channel.deliver_to_OutboundEvent(_reply(reply_to=None,
-                                            source=SessionSource(channel="feishu", chat_id="oc_chat1")))
+    channel.deliver_to_OutboundEvent(_reply(source=SessionSource(channel="feishu", chat_id="oc_chat1")))
     assert client.im.v1.message.create.called
     req = client.im.v1.message.create.call_args[0][0]
     # 统一用 chat_id 寻址（p2p / group 均可）

@@ -24,6 +24,7 @@ test/
 data/
 temp/
 
-## ai
-.claude
-.cursor
+## 本地验证产物
+.pytest_tmp/
+.pytest_cache/
+.coverage

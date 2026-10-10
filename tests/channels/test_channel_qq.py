@@ -17,7 +17,7 @@ from agent.channel.channel_qq import (
     TOKEN_URL,
     QQChannel,
 )
-from agent.core.types import OutboundReply, SessionSource
+from agent.types.channel import OutboundReply, SessionSource
 
 
 class CollectGateway:
@@ -77,9 +77,8 @@ def test_token_refreshes_near_expiry(channel):
 
 # ---- wss 协议状态机 ----
 
-def test_hello_triggers_identify(channel):
-    action = channel._handle_payload({"op": 10, "d": {"heartbeat_interval": 41250}})
-    assert action == "identify"
+def test_hello_sets_heartbeat_interval(channel):
+    channel._handle_payload({"op": 10, "d": {"heartbeat_interval": 41250}})
     assert channel._heartbeat_interval == pytest.approx(41.25)
 
 
@@ -90,8 +89,7 @@ def test_identify_payload_shape(channel):
     assert identify["op"] == 2
     assert identify["d"]["token"] == "QQBot tok_x"
     assert identify["d"]["shard"] == [0, 1]
-    expected_intents = (1 << 25) | (1 << 30) | (1 << 12)
-    assert identify["d"]["intents"] == expected_intents
+    assert identify["d"]["intents"] == 1 << 25  # 只订阅群聊 @ 与单聊
 
 
 def test_ready_stores_session(channel):
@@ -154,6 +152,8 @@ def test_duplicate_message_dropped(channel):
     channel._handle_payload(_c2c_payload(msg_id="m_dup"))
     channel._handle_payload(_c2c_payload(msg_id="m_dup"))
     assert len(channel._gateway.events) == 1
+    assert channel.status["message_count"] == 2  # 平台推来两次
+    assert channel.status["inbound_event_count"] == 1  # 去重后只送出一次
 
 
 def test_seq_tracked_on_dispatch(channel):

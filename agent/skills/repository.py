@@ -22,66 +22,14 @@ import os
 import threading
 import uuid
 from pathlib import Path
-from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
 
-from .base import (
-    Skill,
-    SkillParseError,
-    SkillSource,
-    content_hash_of,
-    normalize_skill_name,
-)
+from agent.types.skills import Skill, content_hash_of, SkillChangeRequest, SkillChangeResult
+from agent.skills.base import SkillParseError, normalize_skill_name
+
+from agent.skills.base import load_skill
 
 logger = logging.getLogger(__name__)
-
-SkillChangeAction = Literal["create", "patch", "promote", "disable", "rollback"]
-
-
-class SkillDraft(BaseModel):
-    """一份待落盘的技能内容（领域载体，不是某个函数的参数包）。"""
-
-    model_config = ConfigDict(frozen=True)
-
-    name: str
-    description: str
-    body: str
-    source: SkillSource = "generated"
-    scope_key: str = ""
-    origin_turn_id: str = ""
-    required_tools: tuple[str, ...] = ()
-
-
-class SkillChangeRequest(BaseModel):
-    """一次技能变更请求。"""
-
-    model_config = ConfigDict(frozen=True)
-
-    action: SkillChangeAction
-    name: str = ""
-    draft: SkillDraft | None = None
-    old_string: str = ""
-    new_string: str = ""
-    expected_revision: int | None = None
-    target_revision: int | None = None
-    actor: str = "system"
-    reason: str = ""
-    turn_id: str | None = None
-
-
-class SkillChangeResult(BaseModel):
-    """变更结果；code 是稳定的机器可读原因，便于审计与测试断言。"""
-
-    model_config = ConfigDict(frozen=True)
-
-    ok: bool
-    code: str
-    name: str = ""
-    revision: int = 0
-    status: str = ""
-    path: str = ""
-    detail: str = ""
 
 
 class SkillRepository:
@@ -151,7 +99,7 @@ class SkillRepository:
         if path is None or not path.is_file():
             return None
         try:
-            return Skill.from_file(path)
+            return load_skill(path)
         except SkillParseError:
             logger.exception("技能解析失败 path=%s", path)
             return None
@@ -286,7 +234,7 @@ class SkillRepository:
             )
         backup = Path(current.path).with_name(f"SKILL.md.bak.{target}")
         try:
-            restored = Skill.from_file(backup)
+            restored = load_skill(backup)
         except SkillParseError as exc:
             return SkillChangeResult(
                 ok=False, code="no_backup", name=current.name,
@@ -361,7 +309,7 @@ class SkillRepository:
                 ok=False, code="not_found", name=name, detail="技能不存在"
             )
         try:
-            return Skill.from_file(path), None
+            return load_skill(path), None
         except SkillParseError as exc:
             return None, SkillChangeResult(
                 ok=False, code="unparsable", name=name, detail=str(exc)
@@ -381,7 +329,7 @@ class SkillRepository:
         target = content_hash_of(body.strip())
         for skill_file in sorted(self._root.glob("*/SKILL.md")):
             try:
-                existing = Skill.from_file(skill_file)
+                existing = load_skill(skill_file)
             except SkillParseError:
                 continue
             if existing.content_hash == target:
@@ -396,10 +344,10 @@ class SkillRepository:
         if self._audit is None:
             return
         try:
-            from ..evolution.audit import EvolutionAuditEntry
+            from agent.types.storage import AuditEntry
 
             self._audit.append(
-                EvolutionAuditEntry(
+                AuditEntry(
                     actor=request.actor,
                     op=f"skill_{request.action}",
                     target=f"skill:{result.name or request.name}",

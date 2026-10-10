@@ -5,21 +5,22 @@
 关联：memory_edit 只暂存修改；SessionStore 成功提交轮次时调用。
 """
 from __future__ import annotations
+from agent.types.memory.mutation import MemoryMutationItem
 
 import hashlib
 from datetime import datetime, timezone
 from typing import Mapping
 
-from ...core.memory.memory_item import content_sha256
+from agent.types.memory.items import content_sha256
 from ...core.memory.memory_claim_evidence import (
     explicit_user_statement, has_source_overlap, unsupported_anchors,
 )
-from ...core.memory.memory_scope import MemoryScope
+from agent.types.memory.scope import MemoryScope
 from ...core.memory.memory_validator import MemoryValidator
-from ...core.memory.types.card_types import UserCardKind, UserCardStatus
-from ...core.memory.types.extraction_types import MemoryProposal
-from ...core.memory.types.memory_source_types import EvidenceRef
-from ...core.types import Message
+from agent.types.memory.categories import UserCardKind, UserCardStatus
+from agent.types.memory.extraction import MemoryProposal
+from agent.types.memory.source import EvidenceRef
+from agent.types.conversation import Message
 from .errors import IntegrityError, RevisionConflictError
 from .memory_store import put_user_memory, read_user_memory
 from .memory_card_policy import authority_rank, source_is_not_older
@@ -36,11 +37,10 @@ class SqliteMemoryCardMutationService:
 
     def apply(
         self, conn, scope: MemoryScope, source_message_id: str,
-        payload: Mapping[str, object], *, source_authority: str | None = None,
+        payload: MemoryMutationItem, *, source_authority: str | None = None,
     ):
         """调用者已确认轮次成功；此处在同一事务内应用暂存的修改。"""
-        if not isinstance(payload, Mapping):
-            raise ValueError("memory mutation payload must be an object")
+        payload = payload.model_dump(mode="json", exclude_none=True, exclude_defaults=True)
         operation = payload.get("operation")
         allowed = {
             "update": {
@@ -158,6 +158,5 @@ class SqliteMemoryCardMutationService:
             excerpt=message.content_text,
             observed_at=datetime.fromtimestamp(row[1] / 1000, timezone.utc),
         )
-
 
 

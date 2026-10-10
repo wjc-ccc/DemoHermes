@@ -9,40 +9,43 @@ import threading
 import uuid
 
 from ..channel.channel_cli import CliChannel
-from ..core.event_bus import EventBus
 from ..core.agent_loop import AgentLoop
-from ..core.memory import (
-    MarkdownBook,
-    MemoryContextLoader,
-    MemoryManualEditor,
-    MemoryLayer,
-    MemoryScope,
-    MemoryValidator,
-    MemoryBatchReviewer,
-    MemoryReviewWorker,
-    build_memory_scope,
-    ensure_scope_dir,
-)
-from ..core.types import InboundEvent, SessionSource, ToolCall
-from ..evolution.skill_selector import SkillSelector
-from ..gateway import Gateway
+from agent.core.agent_loop_trace import AgentLoopTrace
+from agent.core.event_bus import EventBus
+from agent.core.precision.percision_anchor import ModelAnchorBuilder
+from agent.core.precision.percision_engine import PrecisionBuilder
+from agent.core.precision.percision_trace import PrecisionTrace
+from agent.core.tool_handler import ToolHandler
+from agent.core.tool_dispatch import ToolDispatch
+from agent.types.precision.admission import AdmissionPolicy
+from agent.types.precision.result import PrecisionConfig
+from agent.types.runtime import LoopConfig
+
+from agent.core.memory.memory_context_loader import MemoryContextLoader
+from agent.storage.sqlite.markdown_documents import MarkdownDocuments
+from agent.types.memory.scope import MemoryScope
+from agent.core.memory.memory_validator import MemoryValidator
+from agent.core.memory.memory_batch_reviewer import MemoryBatchReviewer
+from agent.core.memory.memory_review_worker import MemoryReviewWorker
+from agent.core.memory.memory_scope import build_memory_scope, ensure_scope_dir
+from agent.types.channel import InboundEvent, SessionSource
+from agent.types.conversation import ToolCall
+from agent.skills.selector import SkillSelector
+from agent.gateway.gateway import Gateway
 from ..gateway.session_key import build_session_key
-from ..storage.sqlite import RuntimeStorage
-from ..core.memory.memory_retrieval import MemoryRetriever
+from agent.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.storage.sqlite.memory_retrieval import MemoryRetriever
 from ..tools.memory_tools import MemoryReadTool, MemorySearchTool
 from ..tools.memory_edit_tool import MemoryEditTool
 from ..tools.registry import ToolRegistry
-from .types import (
-    EvalCase,
+from agent.types.eval.cases import EvalCase, EvalSuite, MemorySeed, TurnExpectation
+from agent.types.eval.reports import (
     EvalCaseResult,
     EvalFailure,
     EvalReport,
-    EvalSuite,
     EvalTurnResult,
-    MemorySeed,
     ModelCallEvidence,
     ToolCallEvidence,
-    TurnExpectation,
 )
 
 
@@ -137,7 +140,6 @@ class EvalRunner:
         skill_registry=None,
         skill_selector=None,
         tool_registry=None,
-        assembly_policy=None,
         context_budget=None,
         token_estimator=None,
         memory_extractor_factory=None,
@@ -153,7 +155,6 @@ class EvalRunner:
         self._skills = skill_registry
         self._selector = skill_selector
         self._tools = tool_registry
-        self._assembly_policy = assembly_policy
         self._context_budget = context_budget
         self._token_estimator = token_estimator
         self._memory_extractor_factory = memory_extractor_factory
@@ -218,9 +219,9 @@ class EvalRunner:
         extractor_version = getattr(extractor, "version", "eval-no-extractor")
         storage = RuntimeStorage.open(db_path, extractor_version=extractor_version)
         store = storage.sessions
-        manual_editor = MemoryManualEditor(case_root, storage.db)
+        markdown_documents = MarkdownDocuments(case_root, storage.db, policy_paths=(case_root / "POLICY.md",), project_paths=(case_root / "PROJECT.md",))
         retriever = MemoryRetriever(
-            storage.db, document_root=case_root,
+            storage.db, document_root=case_root, documents=markdown_documents,
             allowed_document_paths=(case_root / "POLICY.md", case_root / "PROJECT.md"),
         )
         memory_context = MemoryContextLoader(
@@ -228,7 +229,7 @@ class EvalRunner:
             policy_paths=(case_root / "POLICY.md",),
             project_paths=(case_root / "PROJECT.md",),
             document_registry=storage.documents,
-            manual_editor=manual_editor,
+            documents=markdown_documents,
             experience_retriever=retriever,
         )
         tools = ToolRegistry()
@@ -237,7 +238,7 @@ class EvalRunner:
                 tools.register(self._tools.get(name))
         tools.register(MemorySearchTool(retriever))
         tools.register(MemoryReadTool(retriever))
-        tools.register(MemoryEditTool(storage.memory, manual_editor))
+        tools.register(MemoryEditTool(storage.memory, markdown_documents))
         delegate = (
             self._model_factory() if self._model_factory is not None else self._model
         )
@@ -245,12 +246,18 @@ class EvalRunner:
         if self._skills is not None and hasattr(self._skills, "reload"):
             # 每个 case 从磁盘真相重新开始，避免上一 case 的写入影响下一 case
             self._skills.reload()
-        loop = AgentLoop(
-            model=model,
-            tool_registry=tools,
-            skill_registry=self._skills,
-            event_bus=EventBus(),
+        events, precision_trace = EventBus(), PrecisionTrace()
+        trace = AgentLoopTrace(events, precision_trace)
+        handler = ToolHandler(ToolDispatch(trace, registry=tools), registry=tools)
+        if self._skills is not None:
+            self._skills.selector = self._selector
+        precision = PrecisionBuilder(
+            trace=precision_trace, anchor_builder=ModelAnchorBuilder(model),
+            admission_policy=AdmissionPolicy(readback=tools.get("memory_read") is not None),
+            config=PrecisionConfig(budget=self._context_budget, token_estimator=self._token_estimator),
         )
+        loop = AgentLoop(model, precision=precision, tool_handler=handler,
+                         skills=self._skills, trace=trace, config=LoopConfig())
         on_turn_committed = None
         if extractor is not None:
             reviewer = MemoryBatchReviewer(
@@ -273,13 +280,10 @@ class EvalRunner:
             store=store,
             memory_context=memory_context,
             workers=1,
-            skill_selector=self._selector,
-            assembly_policy=self._assembly_policy,
-            context_budget=self._context_budget,
-            token_estimator=self._token_estimator,
             on_turn_committed=on_turn_committed,
+            event_bus=events, precision_trace=precision_trace,
         )
-        gateway.register_channel(CliChannel(quiet=True))
+        gateway.register_channel(CliChannel())
 
         source = SessionSource(
             channel=case.channel,
@@ -348,31 +352,15 @@ class EvalRunner:
     ) -> None:
         if seed.target == "policy":
             path = memory_root / "POLICY.md"
-            layer = MemoryLayer.POLICY
-            item_type = "compliance_rule"
-            book_scope = MemoryScope(organization_id=scope.organization_id)
         elif seed.target == "project":
             path = memory_root / "PROJECT.md"
-            layer = MemoryLayer.PROJECT
-            item_type = "project_rule"
-            book_scope = scope
         else:
             path = ensure_scope_dir(memory_root, scope) / "MEMORY.md"
-            layer = MemoryLayer.USER
-            item_type = "long_term_fact"
-            book_scope = scope
-        book = MarkdownBook(
-            path,
-            layer=layer,
-            type=item_type,
-            scope=book_scope,
-            writable=True,
-        )
-        current = book.read()
-        content = "\n\n".join(
-            part for part in (current.content.strip(), seed.content.strip()) if part
-        )
-        book.replace(content, expected_hash=current.content_hash)
+        # 考卷种子模拟管理员/人工建立文档，不经过 AI 的个人手册编辑接口。
+        previous = path.read_text(encoding="utf-8") if path.exists() else ""
+        content = "\n\n".join(part for part in (previous.strip(), seed.content.strip()) if part)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
 
     @staticmethod
     def _check_expectation(

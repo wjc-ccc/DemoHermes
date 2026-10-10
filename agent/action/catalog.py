@@ -2,7 +2,7 @@
 from copy import deepcopy
 from types import CodeType
 from jsonschema import Draft202012Validator
-from .ledger import digest
+from agent.types.action.execution import digest
 from .policy import RISK_ORDER
 
 

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from .replay import compare_reports
-from .types import AblationReport, AblationRequest, AblationResult
+from agent.types.eval.ablation import AblationReport, AblationRequest, AblationResult
 
 
 def run_ablation(request: AblationRequest) -> AblationReport:

@@ -1,4 +1,4 @@
-import type { LoopEvent } from '@/types'
+import type { LoopEvent } from '@/types/events'
 import { resolveEventsUrl } from './client'
 
 export interface EventStreamHandle {

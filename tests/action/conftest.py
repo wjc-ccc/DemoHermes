@@ -1,17 +1,20 @@
+from agent.types.tools import ToolInvocationContext
+from tests.loop_fakes import action_turn
 import threading
 import time
 import uuid
 import pytest
 from agent.action.catalog import ActionToolCatalog
-from agent.action.config import ActionConfig
-from agent.action.policy import ToolPolicy, Toolset
+from agent.types.action.config import ActionConfig
+from agent.types.action.policy import ToolPolicy, Toolset
 from agent.action.runtime import ActionRuntime
 from agent.action.adapters.builtin import BuiltinToolAdapter
 from agent.action.storage.migrations import schema_directory
-from agent.core.types import Session, Message
-from agent.model.baseStructure import ToolCallRequest
-from agent.tools.base import Tool, ToolCallResult
-from agent.storage.sqlite import RuntimeStorage
+from agent.types.conversation import Session, Message
+from agent.types.model import ToolCallRequest
+from agent.tools.base import Tool
+from agent.types.tools import ToolCallResult
+from agent.storage.sqlite.runtime_storage import RuntimeStorage
 
 
 class FakeBank:
@@ -34,7 +37,7 @@ class Pay(Tool):
     def __init__(self, bank):
         self.bank = bank
 
-    def execute(self, arguments):
+    def execute(self, arguments, *, context):
         time.sleep(self.bank.delay)
         with self.bank.lock:
             key = arguments["_idempotency_key"]
@@ -56,7 +59,7 @@ class Query(Tool):
     def __init__(self, bank):
         self.bank = bank
 
-    def execute(self, arguments):
+    def execute(self, arguments, *, context):
         receipt = self.bank.receipts.get(arguments["idempotency_key"])
         return ToolCallResult(data={"status": "succeeded", "result": receipt} if receipt else {"status": "not_found"})
 
@@ -68,7 +71,7 @@ class BankAdapter(BuiltinToolAdapter):
         return None, None
 
     def invoke(self, arguments, context, *, idempotency_key):
-        return self.tool.execute({**arguments, "_idempotency_key": idempotency_key})
+        return self.tool.execute({**arguments, "_idempotency_key": idempotency_key}, context=ToolInvocationContext())
 
 
 @pytest.fixture
@@ -88,7 +91,7 @@ def bank_runtime(tmp_path):
 
 
 def context(runtime, *, turn_id=None):
-    return runtime.begin_turn(Session(session_id="s", author_id="u"), Message(message_id=uuid.uuid4().hex),
+    return action_turn(runtime, Session(session_id="s", author_id="u"), Message(message_id=uuid.uuid4().hex),
                               turn_id=turn_id or uuid.uuid4().hex)
 
 

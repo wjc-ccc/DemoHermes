@@ -1,5 +1,6 @@
 """Replay Gate：逐 case 单调性比总通过率更严格。"""
-from agent.eval import EvalCaseResult, EvalReport, compare_reports
+from agent.types.eval.reports import EvalCaseResult, EvalReport
+from agent.eval.replay import compare_reports
 
 
 def _report(name: str, outcomes: dict[str, bool], *, version: str = "1") -> EvalReport:
@@ -51,7 +52,7 @@ def test_neutral_playbook_change_can_pass_no_regression_policy():
 
 
 def test_replay_rejects_behavior_regression_even_when_case_still_passes():
-    from agent.eval.types import EvalTurnResult, ToolCallEvidence
+    from agent.types.eval.reports import EvalTurnResult, ToolCallEvidence
 
     def _with_failures(case_id: str, failures: int) -> EvalCaseResult:
         tools = tuple(

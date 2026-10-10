@@ -4,10 +4,13 @@ QQChannel — QQ 官方机器人适配器（Hermes qqbot/adapter.py 的精简移
 协议（QQ Bot API v2，Discord 风格 wss 网关 + REST）：
     1. POST bots.qq.com/app/getAppAccessToken  → access_token（带过期缓存）
     2. GET  api.sgroup.qq.com/gateway          → wss 地址
-    3. wss：op10 Hello → op2 Identify（intents/shard）→ READY（session_id）
-            op1 心跳（带最新 seq）；op7/op9 → 重连（有会话走 op6 Resume）
-            op0 Dispatch：C2C_MESSAGE_CREATE（私聊）/ GROUP_AT_MESSAGE_CREATE（群@）
+    3. wss：op10 Hello → op2 Identify（只订阅群聊 @ 与单聊，频道消息不订阅）
+            → READY（session_id）；op1 心跳（带最新 seq，daemon 线程，不保留句柄）
+            op7/op9 → 重连（有会话走 op6 Resume）
+            op0 Dispatch：C2C_MESSAGE_CREATE / GROUP_AT_MESSAGE_CREATE
+            → _message_to_raw（chat_type 已是 dm / group）→ ingest，去重在入队前
     4. 出站 REST：/v2/users/{openid}/messages 或 /v2/groups/{group_openid}/messages
+                 被动回复带 source.reply_to_message_id 作为 msg_id
 
 配置（registry.py 解析 env 后注入）：
     app_id / client_secret   必需（env: QQ_APP_ID / QQ_CLIENT_SECRET）
@@ -35,9 +38,9 @@ import threading
 import time
 from typing import Any
 
-from ..core.types import ContentPart, InboundEvent, OutboundReply, SessionSource
+from agent.types.conversation import ContentPart
+from agent.types.channel import InboundEvent, OutboundReply, SessionSource
 from .baseChannel import BaseChannel
-from .dedup import TTLDedup
 from .media import download_media, save_media_bytes
 
 logger = logging.getLogger(__name__)
@@ -45,9 +48,10 @@ logger = logging.getLogger(__name__)
 TOKEN_URL = "https://bots.qq.com/app/getAppAccessToken"
 GATEWAY_URL = "https://api.sgroup.qq.com/gateway"
 API_BASE = "https://api.sgroup.qq.com"
+MEDIA_DOMAINS = ("qq.com", "qq.com.cn", "gtimg.cn", "qpic.cn")
 
-# C2C 群聊私域消息 | 公域频道消息 | 频道私信
-INTENTS = (1 << 25) | (1 << 30) | (1 << 12)
+# 只订阅群聊 @ 与单聊（C2C）；频道消息未实现处理，不订阅
+INTENTS = 1 << 25
 
 RECONNECT_BACKOFF = [2, 5, 10, 30, 60]  # 秒，对齐 Hermes
 _MAX_RECONNECT_ATTEMPTS = 100
@@ -57,88 +61,56 @@ _FATAL_CLOSE_CODES = {4914, 4915}
 
 _MENTION_RE = re.compile(r"<@!\S+>")
 
+# Dispatch 事件 → chat_type
+_MESSAGE_EVENTS = {"C2C_MESSAGE_CREATE": "dm", "GROUP_AT_MESSAGE_CREATE": "group"}
+
 
 class QQChannel(BaseChannel):
     name = "qq"
+    label = "QQ 机器人"
+    env_map = {"app_id": "QQ_APP_ID", "client_secret": "QQ_CLIENT_SECRET"}
+    deps = ("httpx", "websockets.sync.client")
+    install_hint = "pip install httpx websockets"
+    prompts = {
+        "dm": "当前通道：QQ 私聊。回答简洁即可。",
+        "group": "当前通道：QQ 群聊。回答简洁，不要用过多 Markdown 格式。",
+    }
 
     def __init__(self, config: dict | None = None) -> None:
         super().__init__(config)
-        section = self.config
-        self.app_id = str(section.get("app_id") or "").strip()
-        self.client_secret = str(
-            section.get("client_secret") or ""
-        ).strip()
+        self.app_id = str(self.config.get("app_id") or "").strip()
+        self.client_secret = str(self.config.get("client_secret") or "").strip()
 
-        self._dedup = TTLDedup()
         self._token = ""
         self._token_expire_at = 0.0
         self._session_id = ""
         self._last_seq = 0
         self._heartbeat_interval = 41.25  # 秒，Hello 下发后覆盖
-        self._running = False
-        self._stop_event = threading.Event()
         self._ws = None
-        self._thread: threading.Thread | None = None
-        self._hb_thread: threading.Thread | None = None
-        self._http = None  # httpx.Client，懒建
 
     # ================= 生命周期 =================
 
     def start(self) -> None:
-        self._stopping = False
-        self.status["enable"] = True
-        if not (self.app_id and self.client_secret):
-            raise RuntimeError("qq 凭据缺失（app_id/client_secret）")
-        try:
-            import httpx  # noqa: F401
-            import websockets.sync.client  # noqa: F401
-        except ImportError:
-            raise RuntimeError("qq 缺少依赖：pip install httpx websockets")
-        self._running = True
-        self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run, name="qq-ws", daemon=True)
-        self.status["start"] = True
-        try:
-            self._thread.start()
-        except Exception:
-            self.status["start"] = False
-            raise
+        self._require_credentials()
+        self._start_worker(self._run, "qq-ws")
         logger.info("qq wss 长连已启动")
 
-    def stop(self) -> None:
-        self.stop_inbound_work()
-        self._running = False
-        self._stop_event.set()
-        ws = self._ws
-        if ws is not None:
+    def _close_connection(self) -> None:
+        if self._ws is not None:
             try:
-                ws.close()
+                self._ws.close()
             except Exception:
                 logger.debug("qq ws 关闭异常（忽略）", exc_info=True)
-        self.status["start"] = False
-        self.status["connected"] = False
-        if self._http is not None:
-            self._http.close()
-            self._http = None
-        if self._thread is not None and self._thread is not threading.current_thread():
-            self._thread.join(timeout=1)
 
     # ================= HTTP 薄封装（测试可替换） =================
 
-    def _client(self):
-        if self._http is None:
-            import httpx
-
-            self._http = httpx.Client(timeout=15.0)
-        return self._http
-
     def _post(self, url: str, payload: dict, headers: dict | None = None) -> dict:
-        resp = self._client().post(url, json=payload, headers=headers or {})
+        resp = self._http_client().post(url, json=payload, headers=headers or {})
         resp.raise_for_status()
         return resp.json()
 
     def _get(self, url: str, headers: dict | None = None) -> dict:
-        resp = self._client().get(url, headers=headers or {})
+        resp = self._http_client().get(url, headers=headers or {})
         resp.raise_for_status()
         return resp.json()
 
@@ -187,7 +159,7 @@ class QQChannel(BaseChannel):
         return float(RECONNECT_BACKOFF[min(attempt, len(RECONNECT_BACKOFF) - 1)])
 
     def _handle_payload(self, payload: dict) -> str | None:
-        """处理一帧 wss 消息；返回动作信号：identify / reconnect / None。"""
+        """处理一帧 wss 消息；需要断开重连时返回 "reconnect"。"""
         op = payload.get("op")
         if op == 0:  # Dispatch
             if payload.get("s"):
@@ -198,14 +170,12 @@ class QQChannel(BaseChannel):
                 self._session_id = str(d.get("session_id", ""))
                 self.status["connected"] = True
                 logger.info("qq READY session_id=%s", self._session_id)
-            elif t == "C2C_MESSAGE_CREATE":
-                self._queue_ingest(self._c2c_to_raw(d))
-            elif t == "GROUP_AT_MESSAGE_CREATE":
-                self._queue_ingest(self._group_to_raw(d))
+            elif t in _MESSAGE_EVENTS:
+                self.ingest(self._message_to_raw(d, _MESSAGE_EVENTS[t]))
             return None
         if op == 10:  # Hello
             self._heartbeat_interval = (payload.get("d") or {}).get("heartbeat_interval", 41250) / 1000
-            return "identify"
+            return None
         if op in (7, 9):  # Reconnect / Invalid Session
             self.status["connected"] = False
             if op == 9 and not (payload.get("d") or {}).get("resumable", False):
@@ -220,7 +190,7 @@ class QQChannel(BaseChannel):
         from websockets.sync.client import connect
 
         attempt = 0
-        while self._running and attempt < _MAX_RECONNECT_ATTEMPTS:
+        while not self._stop_event.is_set() and attempt < _MAX_RECONNECT_ATTEMPTS:
             try:
                 self._connect_and_listen(connect)
                 attempt = 0  # 正常断开（对端要求重连）后重置退避
@@ -235,7 +205,7 @@ class QQChannel(BaseChannel):
                 if code == 4004:
                     self._token = ""  # token 失效，下轮强制刷新
                 logger.warning("qq wss 断开（code=%s）：%s", code, e)
-            if not self._running:
+            if self._stop_event.is_set():
                 break
             delay = self._next_backoff(attempt)
             attempt += 1
@@ -245,7 +215,6 @@ class QQChannel(BaseChannel):
         self.status["connected"] = False
 
     def _connect_and_listen(self, connect) -> None:
-        token = self._ensure_token()
         url = self._gateway_url()
         with connect(url) as ws:
             self._ws = ws
@@ -256,14 +225,14 @@ class QQChannel(BaseChannel):
             else:
                 ws.send(json.dumps(self._build_identify()))
             self._start_heartbeat(ws)
-            while self._running:
+            while not self._stop_event.is_set():
                 payload = json.loads(ws.recv())
                 if self._handle_payload(payload) == "reconnect":
                     return
 
     def _start_heartbeat(self, ws) -> None:
         def _beat() -> None:
-            while self._running and self._ws is ws:
+            while self._ws is ws:
                 if self._stop_event.wait(max(self._heartbeat_interval * 0.8, 1.0)):
                     return
                 try:
@@ -271,28 +240,20 @@ class QQChannel(BaseChannel):
                 except Exception:
                     return  # 连接已断，交给主循环重连
 
-        self._hb_thread = threading.Thread(target=_beat, name="qq-heartbeat", daemon=True)
-        self._hb_thread.start()
+        threading.Thread(target=_beat, name="qq-heartbeat", daemon=True).start()
 
     # ================= 入站归一化 =================
 
-    def _c2c_to_raw(self, d: dict) -> dict:
-        openid = str((d.get("author") or {}).get("user_openid", ""))
+    def _message_to_raw(self, d: dict, chat_type: str) -> dict:
+        """单聊用 user_openid 同时作会话与用户；群聊会话是 group_openid，发言人是 member_openid。"""
+        author = d.get("author") or {}
+        is_group = chat_type == "group"
+        user_id = str(author.get("member_openid" if is_group else "user_openid", ""))
         return {
             "message_id": str(d.get("id", "")),
-            "chat_id": openid,
-            "chat_type": "dm",
-            "user_id": openid,
-            "text": str(d.get("content", "")),
-            "attachments": self._attachments(d),
-        }
-
-    def _group_to_raw(self, d: dict) -> dict:
-        return {
-            "message_id": str(d.get("id", "")),
-            "chat_id": str(d.get("group_openid", "")),
-            "chat_type": "group",
-            "user_id": str((d.get("author") or {}).get("member_openid", "")),
+            "chat_id": str(d.get("group_openid", "")) if is_group else user_id,
+            "chat_type": chat_type,
+            "user_id": user_id,
             "text": str(d.get("content", "")),
             "attachments": self._attachments(d),
         }
@@ -304,50 +265,14 @@ class QQChannel(BaseChannel):
             result.extend(element.get("attachments") or [])
         return result
 
-    def _queue_ingest(self, raw: dict) -> None:
-        if raw.get("attachments"):
-            self.submit_inbound_work(self._ingest, raw)
-        else:
-            self._ingest(raw)
+    def _has_media(self, raw: dict) -> bool:
+        return bool(raw.get("attachments"))
 
-    def should_accept(self, raw: dict) -> bool:
-        return not self._dedup.is_dup(str(raw.get("message_id", "")))
-
-    def _ingest(self, raw: dict) -> None:
-        try:
-            if not self.should_accept(raw):
-                return
-            self.send_gateway(self.parse_to_InboundEvent(raw))
-        except Exception:
-            self.status["error_count"] += 1
-            logger.exception("qq 入站消息处理失败")
-
-    def parse_to_InboundEvent(self, raw: Any) -> InboundEvent:
-        if not isinstance(raw, dict):
-            raise TypeError(f"qq raw 必须是 dict，得到 {type(raw)}")
-        chat_type = "group" if raw.get("chat_type") == "group" else "dm"
-        text = _MENTION_RE.sub("", str(raw.get("text", ""))).strip()
-        parts: list[ContentPart] = []
-        for index, attachment in enumerate(raw.get("attachments") or [], start=1):
-            try:
-                url = str(attachment.get("url") or "")
-                if url.startswith("//"):
-                    url = "https:" + url
-                provided_name = str(attachment.get("filename") or "")
-                mime = str(attachment.get("content_type") or mimetypes.guess_type(provided_name)[0] or "application/octet-stream")
-                name = provided_name or f"attachment-{index}{mimetypes.guess_extension(mime.split(';', 1)[0]) or '.bin'}"
-                if mime.startswith(("audio/", "video/")):
-                    text = "\n".join(filter(None, [text, f"[暂不支持音视频附件: {name}]"]))
-                    continue
-                data = download_media(url, allowed_domains=("qq.com", "qq.com.cn", "gtimg.cn", "qpic.cn"))
-                parts.append(save_media_bytes(data, channel=self.name, file_name=name, mime_type=mime))
-            except Exception as exc:
-                self.status["error_count"] += 1
-                text = "\n".join(filter(None, [text, f"[附件读取失败: {exc}]"]))
-        prompt = (
-            "当前通道：QQ 私聊。回答简洁即可。"
-            if chat_type == "dm"
-            else "当前通道：QQ 群聊。回答简洁，不要用过多 Markdown 格式。"
+    def parse_to_InboundEvent(self, raw: dict) -> InboundEvent:
+        text, parts = self._collect_attachments(
+            _MENTION_RE.sub("", str(raw.get("text", ""))).strip(),
+            raw.get("attachments") or [],
+            self._load_attachment,
         )
         return InboundEvent(
             text=text,
@@ -355,12 +280,25 @@ class QQChannel(BaseChannel):
             source=SessionSource(
                 channel=self.name,
                 chat_id=str(raw.get("chat_id", "")),
-                chat_type=chat_type,
+                chat_type=raw["chat_type"],
                 user_id=str(raw.get("user_id", "")),
                 reply_to_message_id=raw.get("message_id") or None,
             ),
-            channel_prompt=prompt,
-            metadata={"message_id": raw.get("message_id", "")},
+            channel_prompt=self.prompts[raw["chat_type"]],
+        )
+
+    def _load_attachment(self, attachment: dict, index: int) -> ContentPart | str:
+        url = str(attachment.get("url") or "")
+        if url.startswith("//"):
+            url = "https:" + url
+        name = str(attachment.get("filename") or "")
+        content_type = str(attachment.get("content_type") or "")
+        if (content_type or mimetypes.guess_type(name)[0] or "").startswith(("audio/", "video/")):
+            return f"[暂不支持音视频附件: {name or f'attachment-{index}'}]"
+        data = download_media(url, client=self._http_client(), allowed_domains=MEDIA_DOMAINS)
+        return save_media_bytes(
+            data, channel=self.name, file_name=name, mime_type=content_type,
+            fallback_name=f"attachment-{index}",
         )
 
     # ================= 出站 =================
@@ -374,7 +312,7 @@ class QQChannel(BaseChannel):
         else:
             url = f"{API_BASE}/v2/users/{chat_id}/messages"
         payload: dict[str, Any] = {"content": reply.text, "msg_type": 0}
-        msg_id = reply.reply_to or reply.source.reply_to_message_id
+        msg_id = reply.source.reply_to_message_id
         if msg_id:
             payload["msg_id"] = msg_id  # 被动回复带 msg_id，免主动消息频次限制
         result = self._post(url, payload, headers={"Authorization": f"QQBot {token}"})

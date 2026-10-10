@@ -1,7 +1,7 @@
 """
 后端装配与启动逻辑
 
-build_gateway() 把各层组装成可运行的 Gateway：
+build_runtime() 装配 AgentRuntime，模块职责见 agent/runtime.py：
     ModelRegistry（provider 访问入口）
     ToolRegistry + calculator + use_skill
     SkillRegistry（扫描 builtin 技能）
@@ -14,329 +14,69 @@ main() 提供两种运行模式：
 
 记忆开关：
     --use-memory / --no-use-memory（默认开启）
+    控制记忆快照、工具与后台提炼；会话始终保存到 SQLite。
+只读观察：
+    --enable-memory-debug / --no-enable-memory-debug（默认开启）
 """
 from __future__ import annotations
 
 import argparse
 import logging
-import os
 from pathlib import Path
 
 from .channel.channel_cli import CliChannel
-from .channel.channel_frontier import FrontierChannel
 from .channel.registry import autostart_channels
-from .core.event_bus import default_event_bus
-from .core.agent_loop import AgentLoop
-from .core.context_budget import ContextBudget
-from .gateway import FrontierHttpServer, Gateway
-from .model.registry import ModelRegistry
-from .skills import SkillManageTool, SkillRegistry, UseSkillTool
-from .tools.calculator_tools import CalculatorTool
-from .tools.registry import ToolRegistry
+from agent.gateway.http_api import FrontierHttpServer
+from agent.runtime import AgentRuntime, build_runtime
+from agent.types.runtime import RuntimeConfig
 
 logger = logging.getLogger(__name__)
 
 
-def _memory_paths(root: Path | None = None) -> tuple[Path, Path]:
-    """返回 (memory_root, agent.db)。root 默认取项目根下 data/。"""
-    if root is None:
-        from .provider import ROOT
-
-        root = ROOT / "data"
-    memory_root = root / "memory"
-    db_path = root / "agent.db"
-    return memory_root, db_path
-
-
-def build_gateway(*, workers: int = 2, use_memory: bool = True,
-                  data_root: Path | None = None,
-                  model_registry: ModelRegistry | None = None,
-                  use_action: bool = False, action_config=None) -> Gateway:
-    """组装后端：注册表 → Loop → Gateway → Channel。
-
-    use_memory=True 时：
-      - SqliteSessionStore 持久化 transcript
-      - MemoryContextLoader 冻结 Policy / Project / User Markdown 快照
-      - MemoryReviewWorker 后台处理提炼作业，MemoryBatchReviewer 审查提案，Committer 原子写入卡片
-    use_memory=False 时：保持原 DictSessionStore 内存路径。
-    data_root 用于隔离评测的数据、用户手册和技能产物；默认使用项目 data 目录。
-    """
-    # ---- provider / 模型 ----
-    model_registry = model_registry if model_registry is not None else ModelRegistry.default()
-
-    # ---- 技能 + 工具（use_skill / skill_manage 是技能体系入口）----
-    from .provider import ROOT as _ROOT
-    from .skills.repository import SkillRepository
-
-    skill_registry = SkillRegistry()
-    skills_root = (Path(data_root) if data_root is not None else _ROOT / "data") / "skills"
-    skills_root.mkdir(parents=True, exist_ok=True)
-    skill_repository = SkillRepository(skills_root, registry=skill_registry)
-    tool_registry = ToolRegistry()
-    tool_registry.register(CalculatorTool())
-    tool_registry.register(UseSkillTool(skill_registry))
-    tool_registry.register(SkillManageTool(skill_repository))
-
-    store = None
-    memory_context = None
-    reviewer_worker = None
-    on_turn_committed = None
-    on_session_end = None
-    signal_collector = None
-    assembly_policy = None
-    assembly_recorder = None
-    skill_selector = None
-    observe_databases = None
-    storage = None
-    action_runtime = None
-    # ACTION-HOOK-08：可选模块在启动装配处注入；关闭时不导入 action。
-    # action-only 仍持久记账，但会话/Memory 保持原关闭行为。
-    if use_memory or use_action:
-        from .storage.sqlite import RuntimeStorage
-        memory_root, db_path = _memory_paths(Path(data_root)) if data_root is not None else _memory_paths()
-        extra_schema_dirs = ()
-        if use_action:
-            from .action.storage.migrations import schema_directory
-            extra_schema_dirs = (schema_directory(),)
-        storage = RuntimeStorage.open(db_path, extra_schema_dirs=extra_schema_dirs)
-        observe_databases = {"agent": db_path}
-    if use_memory:
-        from .evolution.scheduler import EvolutionScheduler
-        from .evolution.signals import EvolutionSignalCollector
-        from .evolution.skill_creator import SkillCreator
-        from .evolution.skill_evolution import SkillEvolution
-        from .evolution.skill_gate import SkillLifecycleGate
-        from .evolution.skill_optimizer import SkillOptimizer
-        from .core.memory import (
-            MemoryContextLoader,
-            MemoryManualEditor,
-            MemoryValidator,
-            MemoryExtractor,
-            MemoryBatchReviewer,
-            MemoryReviewWorker,
-        )
-        from .core.memory.memory_retrieval import MemoryRetriever
-        from .tools.memory_tools import MemorySearchTool, MemoryReadTool
-        from .tools.memory_edit_tool import MemoryEditTool
-        from .storage.sqlite import RuntimeStorage
-
-        memory_root, db_path = _memory_paths(Path(data_root)) if data_root is not None else _memory_paths()
-        memory_root.mkdir(parents=True, exist_ok=True)
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-
-        store = storage.sessions
-        try:
-            memory_model = model_registry.get()
-        except Exception:
-            memory_model = None
-        extractor = MemoryExtractor(memory_model, storage.memory)
-        project_books = tuple(
-            path
-            for path in (_ROOT / "project.md", _ROOT / "AGENTS.md", _ROOT / "CLAUDE.md")
-            if path.exists()
-        )
-        manual_editor = MemoryManualEditor(
-            memory_root, storage.db,
-            max_tokens=int(os.getenv("AGENT_MEMORY_MANUAL_TOKENS", "1200")),
-        )
-        retriever = MemoryRetriever(
-            storage.db, document_root=memory_root,
-            allowed_document_paths=(memory_root / "POLICY.md", *project_books),
-        )
-        tool_registry.register(MemorySearchTool(retriever))
-        tool_registry.register(MemoryReadTool(retriever))
-        tool_registry.register(MemoryEditTool(storage.memory, manual_editor))
-        memory_context = MemoryContextLoader(
-            root=memory_root,
-            policy_paths=(memory_root / "POLICY.md",),
-            project_paths=project_books,
-            document_registry=storage.documents,
-            manual_editor=manual_editor,
-            experience_retriever=retriever,
-            experience_token_budget=int(os.getenv("AGENT_MEMORY_EXPERIENCE_TOKENS", "600")),
-        )
-        reviewer = MemoryBatchReviewer(
-            extractor,
-            validator=MemoryValidator(),
-        )
-        reviewer_worker = MemoryReviewWorker(
-            store,
-            reviewer,
-            storage.review_committer,
-            extractor_version=extractor.version,
-        )
-
-        # 8.04：旁路进化保留 Skill 产物；旧 marker playbook 写入链已移除。
-        from .evolution.assembly import AssemblyPolicy, AssemblyRecorder
-        from .evolution.env_snapshot import EnvironmentSnapshotter
-        from .evolution.llm_reflector import LlmEvolutionReflector
-        from .evolution.skill_distiller import TrajectorySkillDistiller
-        from .evolution.skill_selector import SkillSelector
-
-        signal_collector = EvolutionSignalCollector(default_event_bus)
-        try:
-            llm_reflector = LlmEvolutionReflector(model_registry.get())
-        except Exception:
-            llm_reflector = None
-            logger.warning("LLM Reflector 未启用（无可用模型）")
-        skill_distiller = TrajectorySkillDistiller(min_tools=5, frequency_threshold=3)
-        skill_selector = SkillSelector()
-        audit_log = storage.audit
-        skill_repository._audit = audit_log
-        env_snapshotter = EnvironmentSnapshotter(storage.executions)
-        skill_creator = SkillCreator(
-            skills_root, frequency_threshold=2, registry=skill_registry,
-            repository=skill_repository,
-        )
-        skill_optimizer = SkillOptimizer(skill_registry)
-        skill_gate = SkillLifecycleGate(
-            skill_registry, repository=skill_repository,
-        )
-        skill_evolution = SkillEvolution(
-            jobs=storage.jobs,
-            store=store,
-            creator=skill_creator,
-            distiller=skill_distiller,
-            optimizer=skill_optimizer,
-            gate=skill_gate,
-            repository=skill_repository,
-            llm_reflector=llm_reflector,
-        )
-        evolution = EvolutionScheduler()
-        evolution.register(reviewer_worker.notify)
-
-        def _evolve_skills(turn) -> None:
-            skill_evolution.consider(turn)
-
-        def _capture_env(turn) -> None:
-            try:
-                import os
-
-                from .provider import SYSTEM_PROMPT_PATH
-
-                skill_versions = {
-                    name: (
-                        skill_registry.get(name).status
-                        if skill_registry.get(name) else "unknown"
-                    )
-                    for name in skill_registry.list_skills()
-                }
-                tool_schemas = tool_registry.get_schemas()
-                env_snapshotter.capture(
-                    session_id=turn.session_id,
-                    turn_id=turn.turn_id,
-                    cwd=os.getcwd(),
-                    model_name=None,
-                    system_prompt_path=SYSTEM_PROMPT_PATH,
-                    tool_schemas=tool_schemas,
-                    skill_versions=skill_versions,
-                )
-            except Exception:
-                logger.exception("env snapshot 失败 turn_id=%s", turn.turn_id)
-
-        evolution.register(_evolve_skills)
-        evolution.register(_capture_env)
-        on_turn_committed = evolution.notify
-        memory_reviewer = reviewer_worker
-        on_session_end = memory_reviewer.notify
-
-        class _LifecycleBundle:
-            def start(_self) -> None:
-                memory_reviewer.start()
-                skill_evolution.worker.start()
-
-            def stop(_self) -> None:
-                skill_evolution.worker.stop()
-                storage.review_scheduler.flush_all()
-                memory_reviewer.stop(timeout=30)
-                memory_reviewer.process_pending()
-
-        reviewer_worker = _LifecycleBundle()
-        assembly_policy = AssemblyPolicy()
-        assembly_recorder = AssemblyRecorder()
-        observe_databases = {"agent": db_path}
-        logger.info(
-            "记忆已启用 root=%s db=%s reviewer=%s "
-            "evolution=hermes-skills+assembly+audit+envsnap",
-            memory_root, db_path, extractor.version,
-        )
-
-    if use_action:
-        from .action import build_action_runtime
-        action_runtime = build_action_runtime(storage, tool_registry, config=action_config,
-            event_bus=default_event_bus, skill_repository=skill_repository)
-
-    # ---- 对话核心 ----
-    loop = AgentLoop(
-        model_registry=model_registry,
-        tool_registry=tool_registry,
-        skill_registry=skill_registry,
-        event_bus=default_event_bus,
-        action_runtime=action_runtime,
-    )
-
-    # ---- 消息枢纽 ----
-    gateway = Gateway(
-        loop=loop,
-        store=store,
-        memory_context=memory_context,
-        context_budget=(
-            ContextBudget(
-                model_context_tokens=int(os.getenv("AGENT_MODEL_CONTEXT_TOKENS", "32768")),
-                reserved_output_tokens=int(os.getenv("AGENT_RESERVED_OUTPUT_TOKENS", "4096")),
-            ) if use_memory else None
-        ),
-        workers=workers,
-        on_turn_committed=on_turn_committed,
-        on_session_end=on_session_end,
-        reviewer_worker=reviewer_worker,
-        event_bus=default_event_bus,
-        signal_collector=signal_collector,
-        assembly_policy=assembly_policy,
-        assembly_recorder=assembly_recorder,
-        skill_selector=skill_selector,
-        observe_databases=observe_databases,
-        action_runtime=action_runtime,
-    )
-    gateway.register_channel(FrontierChannel())
-    return gateway
-
-
-def _print_memory_banner(use_memory: bool) -> None:
-    if not use_memory:
-        print("[memory] 已关闭（--no-use-memory）；会话仅存内存，重启即丢")
-        return
-    memory_root, db_path = _memory_paths()
-    print("[memory] 已启用")
-    print(f"[memory] Markdown 分册目录: {memory_root}")
-    print(f"[memory] SQLite 数据库: {db_path}")
-    print("[memory] Reviewer: 按 1/2/3/4/5 轮渐进批处理；有效卡片直接入库")
-    print("[memory] Evolution: Hermes 式 Skill distill/select/manage")
-    print("[memory] MEMORY.md 有界常驻；经验关键词最多召回 3 张；其余内容按工具检索")
+def _print_runtime_banner(runtime: AgentRuntime) -> None:
+    description = runtime.describe()
+    print(f"[runtime] model={description.model} memory={description.memory} action={description.action} storage={description.storage}")
+    print(f"[runtime] tools={', '.join(description.tools)}")
+    if description.database is not None:
+        print(f"[storage] SQLite 数据库: {description.database}")
+    if description.memory:
+        print(f"[memory] Markdown 分册目录: {Path(description.database).parent / 'memory'}")
+        print("[memory] Reviewer: 按 1/2/3/4/5 轮渐进批处理；有效卡片直接入库")
+        print("[memory] MEMORY.md 有界常驻；经验关键词最多召回 3 张；其余内容按工具检索")
+    else:
+        print("[memory] 已关闭")
 
 
 def _run_http(port: int, *, use_memory: bool, enable_memory_debug: bool, use_action: bool = False) -> None:
     """HTTP 模式：Gateway + FrontierHttpServer，供 frontier 前端调用。"""
-    gateway = build_gateway(use_memory=use_memory, use_action=use_action)
-    gateway.start()
+    from .provider import AGENT_HTTP_ALLOWED_ORIGINS, AGENT_HTTP_TOKEN
+
+    runtime = build_runtime(RuntimeConfig(use_memory=use_memory, use_action=use_action))
+    gateway = runtime.gateway
+    runtime.start()
     autostart_channels(gateway)
     for ch in (gateway.get_channel("frontier"),):
         ch and ch.start()
     server = FrontierHttpServer(
-        gateway, port=port, enable_memory_debug=enable_memory_debug
+        gateway, port=port, enable_memory_debug=enable_memory_debug,
+        observe_databases={"agent": runtime.storage.db.path},
+        api_token=AGENT_HTTP_TOKEN,
+        allowed_origins=AGENT_HTTP_ALLOWED_ORIGINS,
     )
     print(f"[backend] HTTP API 已启动: http://127.0.0.1:{port}")
+    if AGENT_HTTP_TOKEN is None:
+        print("[backend] 未配置 AGENT_HTTP_TOKEN：仅限本机访问，浏览器 Origin 白名单仍生效")
     print("[backend] 前端开发: cd frontier && npm run dev")
     if enable_memory_debug:
         print("[backend] Memory Debug API 已开启（/api/debug/memory/*）")
-    _print_memory_banner(use_memory)
+    _print_runtime_banner(runtime)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
         server.server_close()
-        gateway.stop()
+        runtime.stop()
         print("[backend] 已停止")
 
 
@@ -350,16 +90,16 @@ def _run_cli(*, use_memory: bool, use_action: bool = False) -> None:
     if not sys.stdout.isatty():
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-    gateway = build_gateway(use_memory=use_memory, use_action=use_action)
-    # quiet=True：出站投递不打印 —— CLI 模式用 ask() 的同步返回值自己打印，
-    # 否则 Gateway 出站分发 + 手动打印会重复输出
-    cli = CliChannel(quiet=True)
+    runtime = build_runtime(RuntimeConfig(use_memory=use_memory, use_action=use_action))
+    gateway = runtime.gateway
+    # CliChannel 的出站投递不打印：CLI 模式用 ask() 的同步返回值自己打印
+    cli = CliChannel()
     gateway.register_channel(cli)
-    gateway.start()
+    runtime.start()
     autostart_channels(gateway)
     cli.start()
     print("[cli] 已进入对话模式，/new 重开会话，Ctrl+C 退出")
-    _print_memory_banner(use_memory)
+    _print_runtime_banner(runtime)
     try:
         while True:
             try:
@@ -376,11 +116,11 @@ def _run_cli(*, use_memory: bool, use_action: bool = False) -> None:
             else:
                 print(f"ai  > {reply.text}")
             if persistence:
-                print(f"[memory] persistence_error: {persistence}")
+                print(f"[storage] persistence_error: {persistence}")
     except KeyboardInterrupt:
         pass
     finally:
-        gateway.stop()
+        runtime.stop()
         print("\n[cli] 已退出")
 
 
@@ -396,13 +136,13 @@ def main() -> None:
         "--use-memory",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="启用记忆系统（分层 Markdown + SQLite；默认开；用 --no-use-memory 关闭）",
+        help="启用记忆快照、工具与后台提炼（默认开；用 --no-use-memory 关闭；会话始终保存到 SQLite）",
     )
     parser.add_argument(
         "--enable-memory-debug",
-        action="store_true",
-        default=False,
-        help="开启只读 Memory Debug HTTP（/api/debug/memory/*；默认关）",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="开启只读 Memory Debug HTTP（/api/debug/memory/*；默认开；用 --no-enable-memory-debug 关闭）",
     )
     parser.add_argument("--use-action", action=argparse.BooleanOptionalAction, default=False,
                         help="启用 action 执行账本、工具集与 PRE/POST（默认关闭）")

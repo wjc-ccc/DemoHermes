@@ -10,43 +10,28 @@ import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
 
-from pydantic import BaseModel, ConfigDict
 
-from ..types import Session
+from agent.types.conversation import Session
 from .memory_extractor import MemoryExtractor
 from .memory_claim_evidence import (
-    experience_outcome_signals, explicit_user_statement, has_source_overlap, unsupported_anchors,
+    experience_outcome_signals,
+    explicit_user_statement,
+    has_source_overlap,
+    unsupported_anchors,
 )
-from .memory_layer import MemoryLayer
-from .memory_trace import (
+from agent.types.memory.layers import MemoryLayer
+from agent.types.memory.trace import (
     MemoryAiTraceFields,
     MemoryItemTrace,
     MemoryRuntimeTraceFields,
     MemoryTrace,
-    MemoryTraceDecision,
-    MemoryTraceOperation,
 )
+from agent.types.memory.trace_categories import MemoryTraceDecision, MemoryTraceOperation
 from .memory_validator import MemoryValidator
-from .types.extraction_types import (
-    MemoryExtractionIssue,
-    MemoryEvidence,
-    MemoryProposal,
-    MemoryValidationResult,
-)
-from .types.memory_source_types import TurnRecord
-from .memory_item import UserMemoryItem
+from agent.types.memory.extraction import MemoryEvidence, MemoryValidationResult, MemoryReviewResult
+from agent.types.memory.source import TurnRecord
+from agent.types.memory.items import UserMemoryItem
 
-
-class MemoryReviewResult(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    input_hash: str
-    proposals: tuple[MemoryProposal, ...]
-    extraction_issues: tuple[MemoryExtractionIssue, ...] = ()
-    validations: tuple[MemoryValidationResult, ...]
-    user_items: tuple[UserMemoryItem, ...]
-    evidence: tuple[MemoryEvidence, ...]
-    trace: MemoryTrace
 
 ### 对给定批次的 proposal 做证据审查；提交由下游 Committer 负责
 class MemoryBatchReviewer:

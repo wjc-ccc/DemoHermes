@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { FilterValue } from '@/types'
+import type { FilterValue } from '@/types/tables'
 
 const props = defineProps<{
   name: string

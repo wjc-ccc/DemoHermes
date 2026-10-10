@@ -3,11 +3,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent.core.context_budget import ContextBudget, ContextBudgetExceededError
-from agent.core.precision import PrecisionBuilder, PrecisionTrace
-from agent.core.precision.percision_anchor import render_anchor
-from agent.core.precision.percision_types import Priority
-from agent.core.types import Message, Session
+from agent.types.context import ContextBudget, render_anchor
+from agent.core.precision.errors import ContextBudgetExceededError
+from agent.core.precision.percision_engine import PrecisionBuilder
+from agent.core.precision.percision_trace import PrecisionTrace
+from agent.types.precision.priority import Priority
+from agent.types.conversation import Message, Session
 from tests.anchor_fakes import DeterministicAnchorBuilder
 
 
@@ -128,7 +129,7 @@ def test_trace_counts_one_real_turn_across_react_rebuilds():
     engine.build(session, memory_snapshot=snapshot, token_estimator=_PerMessage(), trace_id="hit1")
     session.add_message(Message(role="assistant", content_text="再想一步"))
     engine.build(session, memory_snapshot=snapshot, token_estimator=_PerMessage(), trace_id="hit1")
-    assert trace.record_memory_read("hit1", {"reference": "card:old"}) == ()
+    assert trace.record_memory_read("hit1", "card:old") == ()
     snap = trace.snapshot()
     assert snap.n == 1
     assert snap.p3_hit_rate == 0.0
@@ -145,5 +146,5 @@ def test_ordinary_memory_search_does_not_create_a_lazy_handle():
     )
     assert result.exposed_refs == ()
     assert trace.record_memory_read(
-        "experience-turn", {"reference": "card:anything"}
+        "experience-turn", "card:anything"
     ) == ()

@@ -3,15 +3,17 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-from agent.core.memory import (
-    MemoryContextLoader, MemoryManualEditor, MemoryScope, MemoryExtractor,
-    MemoryBatchReviewer, MemoryReviewWorker,
-)
-from agent.core.memory.memory_retrieval import MemoryRetriever
-from agent.core.precision import PrecisionBuilder
-from agent.core.memory.types import TurnRecord
-from agent.core.types import Message
-from agent.storage.sqlite import RuntimeStorage
+from agent.core.memory.memory_context_loader import MemoryContextLoader
+from agent.storage.sqlite.markdown_documents import MarkdownDocuments
+from agent.types.memory.scope import MemoryScope
+from agent.core.memory.memory_extractor import MemoryExtractor
+from agent.core.memory.memory_batch_reviewer import MemoryBatchReviewer
+from agent.core.memory.memory_review_worker import MemoryReviewWorker
+from agent.storage.sqlite.memory_retrieval import MemoryRetriever
+from agent.core.precision.percision_engine import PrecisionBuilder
+from agent.types.memory.source import TurnRecord
+from agent.types.conversation import Message
+from agent.storage.sqlite.runtime_storage import RuntimeStorage
 
 
 class _ExperienceModel:
@@ -66,7 +68,7 @@ def test_completed_turn_extraction_is_recalled_in_new_session(tmp_path):
     new_session = storage.sessions.get_or_create("second", scope=scope)
     retriever = MemoryRetriever(storage.db)
     loader = MemoryContextLoader(
-        tmp_path / "memory", manual_editor=MemoryManualEditor(tmp_path / "memory", storage.db),
+        tmp_path / "memory", documents=MarkdownDocuments(tmp_path / "memory", storage.db),
         experience_retriever=retriever,
     )
     snapshot = loader.freeze(scope, session_id=new_session.session_id,

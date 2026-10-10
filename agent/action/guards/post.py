@@ -1,5 +1,5 @@
 from jsonschema import Draft202012Validator
-from ..decision import GateDecision
+from agent.types.action.execution import GateDecision
 
 
 class PostGuard:

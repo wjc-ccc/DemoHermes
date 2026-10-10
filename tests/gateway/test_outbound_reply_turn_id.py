@@ -5,10 +5,10 @@ import time
 
 from agent.channel.channel_cli import CliChannel
 from agent.core.event_bus import EventBus
-from agent.core.agent_loop import AgentLoop
-from agent.core.types import InboundEvent, SessionSource
-from agent.gateway import Gateway
-from agent.model.baseStructure import ModelResponse
+from tests.loop_fakes import make_loop
+from agent.types.channel import InboundEvent, SessionSource
+from agent.gateway.gateway import Gateway
+from agent.types.model import ModelResponse
 
 
 class _MockModel:
@@ -24,9 +24,9 @@ class _MockModel:
 def test_outbound_reply_event_shares_turn_id_with_loop():
     bus = EventBus()
     q = bus.subscribe(maxsize=200)
-    loop = AgentLoop(model=_MockModel([ModelResponse(text="pong")]), event_bus=bus)
+    loop = make_loop(model=_MockModel([ModelResponse(text="pong")]), event_bus=bus)
     gw = Gateway(loop=loop, event_bus=bus, workers=1)
-    gw.register_channel(CliChannel(quiet=True))
+    gw.register_channel(CliChannel())
     gw.start()
     try:
         reply = gw.ask(

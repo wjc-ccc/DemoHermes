@@ -8,7 +8,7 @@ from tests.storage.sqlite.test_memory_eval_store import _dataset
 
 
 def test_question_cannot_cite_a_later_session():
-    from agent.eval.datasets.types.memory_eval_types import MemoryEvalDataset
+    from agent.types.eval.datasets import MemoryEvalDataset
     data = _dataset().model_dump(mode="json")
     case = data["cases"][0]
     case["history"].append({"session_id": "s2", "occurred_at": "2026-10-03T09:00:00+08:00",
@@ -73,7 +73,7 @@ def test_optional_card_layout_still_rejects_forbidden_facts():
 def test_keyword_success_does_not_mark_a_golden_question_semantically_passed(tmp_path, monkeypatch):
     from agent.eval.memory_behavior import run_suite
     from agent.model.registry import ModelRegistry
-    from agent.model.baseStructure import ModelResponse
+    from agent.types.model import ModelResponse
 
     class Model:
         name = "boundary_fixture"
@@ -99,9 +99,9 @@ def test_keyword_success_does_not_mark_a_golden_question_semantically_passed(tmp
 
 def test_publishing_both_versions_does_not_expose_answers_as_user_memories(tmp_path):
     from agent.eval.datasets.memory_dataset import publish_defaults
-    from agent.storage.sqlite import RuntimeStorage
-    from agent.core.memory import MemoryScope
-    from agent.core.memory.memory_retrieval import MemoryRetriever
+    from agent.storage.sqlite.runtime_storage import RuntimeStorage
+    from agent.types.memory.scope import MemoryScope
+    from agent.storage.sqlite.memory_retrieval import MemoryRetriever
     path = tmp_path / "agent.db"
     first = publish_defaults(path)
     second = publish_defaults(path)

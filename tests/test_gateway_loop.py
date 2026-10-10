@@ -3,7 +3,7 @@ Gateway / AgentLoop / Tool / Skill 全链路测试
 
 用 MockModel 替代真实 LLM，覆盖：
     1. session_key 构建公式
-    2. DictSessionStore 上下文寻找 / 重开
+    2. DictSessionStore 上下文寻找 / 重开（与 SqliteSessionStore 同接口）
     3. 消息构建函数（user / assistant+tool_calls / tool）
     4. calculator 工具（含安全拦截）
     5. SkillRegistry + use_skill 工具
@@ -15,9 +15,12 @@ Gateway / AgentLoop / Tool / Skill 全链路测试
 运行：.venv/Scripts/python.exe -m pytest tests/test_gateway_loop.py -v
 """
 from __future__ import annotations
+from agent.types.tools import ToolInvocationContext
 
 import sys
+import threading
 import time
+import uuid
 from pathlib import Path
 
 import pytest
@@ -28,17 +31,23 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agent.core.event_bus import EventBus
-from agent.core.agent_loop import AgentLoop
+from tests.loop_fakes import make_loop
 from agent.core.building_messages import (
     build_assistant_message,
     build_tool_message,
     build_user_message,
 )
-from agent.core.types import InboundEvent, Session, SessionSource, ToolCall
-from agent.core.precision import PrecisionBuilder
-from agent.gateway import DictSessionStore, Gateway, build_session_key
-from agent.model.baseStructure import BaseModel, ModelResponse, ToolCallRequest
-from agent.skills import SkillRegistry, UseSkillTool
+from agent.types.memory.scope import MemoryScope
+from agent.types.channel import InboundEvent, SessionSource
+from agent.types.conversation import Session, ToolCall, TurnResult
+from agent.core.precision.percision_engine import PrecisionBuilder
+from agent.gateway.session_store import DictSessionStore
+from agent.gateway.gateway import Gateway
+from agent.gateway.session_key import build_session_key
+from agent.model.baseStructure import BaseModel
+from agent.types.model import ModelResponse, ToolCallRequest
+from agent.skills.registry import SkillRegistry
+from agent.skills.skill_tool import UseSkillTool
 from agent.tools.calculator_tools import CalculatorTool
 from agent.tools.registry import ToolRegistry
 
@@ -71,7 +80,14 @@ def make_event(text: str, channel: str = "cli", chat_id: str = "local") -> Inbou
 # ================= 1. session_key =================
 def test_session_key_dm():
     src = SessionSource(channel="cli", chat_id="local", chat_type="dm", user_id="u1")
-    assert build_session_key(src, agent_id="main") == "agent:main:cli:dm:local"
+    assert build_session_key(src, agent_id="main") == "agent:main:cli:dm:local:user:u1"
+
+
+def test_session_key_dm_maps_to_one_memory_scope():
+    """同一 DM chat 下不同 user 必须落在不同槽位：DM scope 按 user 归属。"""
+    a = SessionSource(channel="frontier", chat_id="web", chat_type="dm", user_id="alice")
+    b = SessionSource(channel="frontier", chat_id="web", chat_type="dm", user_id="bob")
+    assert build_session_key(a) != build_session_key(b)
 
 
 def test_session_key_group_with_user():
@@ -85,20 +101,32 @@ def test_session_key_thread():
 
 
 # ================= 2. DictSessionStore =================
+_STORE_SCOPE = MemoryScope(tenant_id="cli", user_id="u1")
+
+
 def test_store_get_or_create_and_find():
     store = DictSessionStore()
-    s1 = store.get_or_create("k1", channel="cli", author_id="u1")
+    s1 = store.get_or_create("k1", scope=_STORE_SCOPE, channel="cli", author_id="u1")
     assert store.find("k1") is s1
-    assert store.get_or_create("k1") is s1  # 同 key 复用上下文
+    assert store.get_or_create("k1", scope=_STORE_SCOPE) is s1  # 同 key 复用上下文
     assert store.find("不存在") is None
 
 
-def test_store_reset_new_session_id():
+def test_store_rejects_scope_change_on_same_key():
     store = DictSessionStore()
-    s1 = store.get_or_create("k1")
-    s2 = store.reset("k1")
-    assert s2.session_id != s1.session_id
-    assert store.find("k1") is s2
+    store.get_or_create("k1", scope=_STORE_SCOPE)
+    with pytest.raises(ValueError):
+        store.get_or_create("k1", scope=MemoryScope(tenant_id="cli", user_id="u2"))
+
+
+def test_store_close_and_reset_new_session_id():
+    store = DictSessionStore()
+    s1 = store.get_or_create("k1", scope=_STORE_SCOPE)
+    reset = store.close_and_reset("k1", s1, scope=_STORE_SCOPE)
+    assert reset.closed_session.session_id == s1.session_id
+    assert reset.closed_session.status == "completed"
+    assert reset.new_session.session_id != s1.session_id
+    assert store.find("k1") is reset.new_session
 
 
 # ================= 3. 消息构建函数 =================
@@ -126,26 +154,26 @@ def test_build_tool_message():
 # ================= 4. calculator 工具 =================
 def test_calculator_basic():
     tool = CalculatorTool()
-    r = tool.execute({"expression": "(3+5)*2"})
+    r = tool.execute({"expression": "(3+5)*2"}, context=ToolInvocationContext())
     assert r.ok and r.data["value"] == 16
 
 
 def test_calculator_functions():
     tool = CalculatorTool()
-    assert tool.execute({"expression": "sqrt(16)+2**3"}).data["value"] == 12
-    assert tool.execute({"expression": "max(1,9,3)"}).data["value"] == 9
+    assert tool.execute({"expression": "sqrt(16)+2**3"}, context=ToolInvocationContext()).data["value"] == 12
+    assert tool.execute({"expression": "max(1,9,3)"}, context=ToolInvocationContext()).data["value"] == 9
 
 
 def test_calculator_rejects_injection():
     tool = CalculatorTool()
-    r = tool.execute({"expression": "__import__('os').system('echo hi')"})
+    r = tool.execute({"expression": "__import__('os').system('echo hi')"}, context=ToolInvocationContext())
     assert not r.ok  # 白名单外节点必须被拒绝
 
 
 def test_calculator_bad_expression():
     tool = CalculatorTool()
-    assert not tool.execute({"expression": "1+++"}).ok
-    assert not tool.execute({}).ok
+    assert not tool.execute({"expression": "1+++"}, context=ToolInvocationContext()).ok
+    assert not tool.execute({}, context=ToolInvocationContext()).ok
 
 
 # ================= 5. Skill 体系 =================
@@ -159,9 +187,9 @@ def test_skill_registry_loads_builtin():
 def test_use_skill_tool():
     registry = SkillRegistry()
     tool = UseSkillTool(registry)
-    r = tool.execute({"skill_name": "weekly_report"})
+    r = tool.execute({"skill_name": "weekly_report"}, context=ToolInvocationContext())
     assert r.ok and "周报" in r.result_text
-    assert not tool.execute({"skill_name": "不存在"}).ok
+    assert not tool.execute({"skill_name": "不存在"}, context=ToolInvocationContext()).ok
 
 
 # ================= 6. PrecisionBuilder 协议映射 =================
@@ -203,10 +231,10 @@ def _make_loop(script) -> tuple[AgentLoop, EventBus]:
     tools.register(CalculatorTool())
     tools.register(UseSkillTool(SkillRegistry()))
     bus = EventBus()
-    loop = AgentLoop(
+    loop = make_loop(
         model=MockModel(script),
-        tool_registry=tools,
-        skill_registry=SkillRegistry(),
+        tools=tools,
+        skills=SkillRegistry(),
         event_bus=bus,
     )
     return loop, bus
@@ -319,7 +347,7 @@ def _make_gateway(script) -> Gateway:
     loop, _ = _make_loop(script)
     from agent.channel.channel_cli import CliChannel
     gateway = Gateway(loop=loop, store=DictSessionStore())
-    gateway.register_channel(CliChannel(quiet=True))
+    gateway.register_channel(CliChannel())
     gateway.start()
     return gateway
 
@@ -374,6 +402,105 @@ def test_gateway_same_session_key_serialized():
         assert session.message_count == 4  # 两轮完整落进同一 session，无交叉
     finally:
         gateway.stop()
+
+
+class _ScriptedLoop:
+    """按文本回显的 Loop；gated 文本会卡住，直到测试放行。"""
+
+    agent_id = "main"
+    action = None
+    model = None
+    tools = None
+    skills = None
+
+    def __init__(self, *, gated: str | None = None, delay: float = 0.0):
+        self.gated = gated
+        self.delay = delay
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.order: list[str] = []
+        self._lock = threading.Lock()
+
+    def run_turn(self, session, user_message, **kwargs):
+        user_message.trajectory_id = uuid.uuid4().hex[:12]
+        session.add_message(user_message)
+        if user_message.content_text == self.gated:
+            self.entered.set()
+            self.release.wait(5)
+        time.sleep(self.delay)
+        with self._lock:
+            self.order.append(user_message.content_text)
+        return TurnResult(
+            final_text=f"reply:{user_message.content_text}",
+            session_id=session.session_id,
+            turn_id=user_message.trajectory_id,
+        )
+
+
+def _user_event(text: str, user: str) -> InboundEvent:
+    return InboundEvent(
+        text=text, source=SessionSource(channel="cli", chat_id=user, chat_type="dm", user_id=user),
+    )
+
+
+def _start(loop, *, workers: int) -> Gateway:
+    from agent.channel.channel_cli import CliChannel
+    gateway = Gateway(loop=loop, workers=workers)
+    gateway.register_channel(CliChannel())
+    gateway.start()
+    return gateway
+
+
+def test_concurrent_ask_each_caller_gets_its_own_reply():
+    gateway = _start(_ScriptedLoop(delay=0.05), workers=4)
+    replies: dict[str, str] = {}
+
+    def ask(user: str) -> None:
+        replies[user] = gateway.ask(_user_event(user, user), timeout=5).text
+
+    try:
+        threads = [threading.Thread(target=ask, args=(f"user{i}",)) for i in range(6)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        gateway.stop()
+    assert replies == {f"user{i}": f"reply:user{i}" for i in range(6)}
+
+
+def test_queued_turn_does_not_block_other_sessions_and_keeps_order():
+    loop = _ScriptedLoop(gated="A1")
+    gateway = _start(loop, workers=2)
+    replies: dict[str, str] = {}
+
+    def ask(text: str, user: str) -> None:
+        replies[text] = gateway.ask(_user_event(text, user), timeout=5).text
+
+    try:
+        first = threading.Thread(target=ask, args=("A1", "alice"))
+        first.start()
+        assert loop.entered.wait(2)
+        second = threading.Thread(target=ask, args=("A2", "alice"))
+        second.start()
+        deadline = time.time() + 2
+        while gateway.status()["turns"]["queued"] < 1 and time.time() < deadline:
+            time.sleep(0.01)
+        assert gateway.status()["turns"]["queued"] == 1
+
+        other = threading.Thread(target=ask, args=("B", "bob"))
+        other.start()
+        other.join(3)
+        assert replies.get("B") == "reply:B"  # alice 排队的消息不占 worker
+
+        loop.release.set()
+        first.join(5)
+        second.join(5)
+    finally:
+        loop.release.set()
+        gateway.stop()
+    assert loop.order == ["B", "A1", "A2"]
+    assert replies["A2"] == "reply:A2"
 
 
 # ================= 10. ClaudeModel 协议转换（纯本地，不发请求） =================

@@ -2,7 +2,7 @@
 一键启动后端进程
 
 用法：
-    python main.py            # HTTP 模式：作为 frontier 前端的后端（:8000）
+    python main.py            # HTTP 模式：作为 frontier 前端的后端（:8000；只读观察默认开）
     python main.py --cli      # 终端对话模式
     python main.py --port 9000
 

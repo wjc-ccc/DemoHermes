@@ -1,4 +1,5 @@
-import type { FilterValue, TraceModule, TraceSheet } from '@/types'
+import type { FilterValue } from '@/types/tables'
+import type { PrecisionTraceDetail, TraceModule, TraceSheet } from '@/types/traces'
 import { request } from './client'
 
 /**
@@ -19,5 +20,11 @@ export async function listTraces(
 ) {
   return request<TraceSheet>('/api/debug/traces', {
     query: { module, limit, offset, filters: JSON.stringify(filters) },
+  })
+}
+
+export function getPrecisionContext(turnId: string, iteration?: number) {
+  return request<PrecisionTraceDetail>('/api/debug/memory/trace', {
+    query: { turn_id: turnId, iteration },
   })
 }

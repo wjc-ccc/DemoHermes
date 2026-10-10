@@ -5,7 +5,7 @@ FrontierHttpServer — 可视化前端的 HTTP / SSE 入口（仅标准库实现
     POST /api/chat      : 发送消息，同步获取 Agent 回复（走完整 MessageBus 链路）
     GET  /api/events    : SSE 实时事件流（turn_start / llm_response / tool_call ...）
     GET  /api/status    : Gateway 运行状态（channel / 队列 / 会话 / 模型 / 工具）
-    GET  /api/sessions  : 当前内存中的会话列表
+    GET  /api/sessions  : 当前会话列表
     POST /api/reset     : 重开指定会话（等同 /new）
     GET  /api/debug/memory/session :（flag）当前用户 SQLite 会话只读视图
     GET  /api/debug/memory/sessions :（flag）当前用户全部 session（含已结束）
@@ -20,19 +20,29 @@ FrontierHttpServer — 可视化前端的 HTTP / SSE 入口（仅标准库实现
 
 不引入 fastapi/flask：ThreadingHTTPServer 每个连接一个线程，
 与 Gateway 的线程模型天然匹配；SSE 长连接就是一个阻塞读队列的线程。
+
+访问控制（每个请求先过 _authorized）：
+    - 带 Origin 且不在 allowed_origins 的请求直接 403：CORS 只拦浏览器读响应，
+      拦不住跨站「简单请求」本身被执行
+    - 配置 api_token 后，请求必须带 Authorization: Bearer <token>
+    - 监听非本机地址时必须配置 api_token
+这是操作者接口：body 中的 user_id / chat_id 由调用方指定（评测会用多身份）。
 """
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import queue
+from collections.abc import Iterable, Mapping
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from ..core.event_bus import LoopEvent
-from ..core.types import SessionSource
+from ..channel.channel_frontier import FrontierChannel
+from agent.types.events import LoopEvent
 from ..gateway.session_key import build_session_key
-from ..core.memory import build_memory_scope
+from agent.core.memory.memory_scope import build_memory_scope
 from ..storage.sqlite.catalog import CatalogError, list_catalog, read_table_page
 from .gateway import Gateway
 from .trace_modules import list_modules, list_traces
@@ -41,6 +51,9 @@ logger = logging.getLogger(__name__)
 
 # SSE 心跳间隔（秒）：防止代理/浏览器静默断连
 _SSE_HEARTBEAT = 15.0
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
 def _event_to_json(event: LoopEvent) -> str:
     return event.model_dump_json()
 
@@ -60,9 +73,32 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _send_cors(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", "*")
+        origin = self.headers.get("Origin")
+        if not origin or origin not in self.server.allowed_origins:
+            return
+        self.send_header("Access-Control-Allow-Origin", origin)
+        self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+    def _origin_allowed(self) -> bool:
+        origin = self.headers.get("Origin")
+        if origin and origin not in self.server.allowed_origins:
+            self._send_json({"error": "origin not allowed"}, status=403)
+            return False
+        return True
+
+    def _authorized(self) -> bool:
+        if not self._origin_allowed():
+            return False
+        token = self.server.api_token
+        if token is None:
+            return True
+        supplied = self.headers.get("Authorization", "").encode("utf-8")
+        if hmac.compare_digest(supplied, f"Bearer {token}".encode("utf-8")):
+            return True
+        self._send_json({"error": "unauthorized"}, status=401)
+        return False
 
     def _read_json_body(self) -> dict:
         length = int(self.headers.get("Content-Length") or 0)
@@ -87,11 +123,16 @@ class _Handler(BaseHTTPRequestHandler):
         logger.debug("http %s", fmt % args)
 
     def do_OPTIONS(self) -> None:
+        # 预检请求不带 Authorization，只校验 Origin
+        if not self._origin_allowed():
+            return
         self.send_response(204)
         self._send_cors()
         self.end_headers()
 
     def do_GET(self) -> None:
+        if not self._authorized():
+            return
         path, query = self._parse_path()
         if path == "/api/status":
             self._send_json(self.server.gateway.status())
@@ -123,6 +164,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json({"error": f"unknown path: {path}"}, status=404)
 
     def do_POST(self) -> None:
+        if not self._authorized():
+            return
         path, _query = self._parse_path()
         if path == "/api/chat":
             self._handle_chat()
@@ -133,20 +176,15 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _handle_chat(self) -> None:
         body = self._read_json_body()
-        text = str(body.get("text", "")).strip()
-        if not text:
-            self._send_json({"error": "text 不能为空"}, status=400)
-            return
         gateway = self.server.gateway
         channel = gateway.get_channel("frontier")
         if channel is None:
             self._send_json({"error": "frontier channel 未注册"}, status=500)
             return
-        event = channel.parse_to_InboundEvent({
-            "text": text,
-            "chat_id": body.get("chat_id") or "web",
-            "user_id": body.get("user_id") or "web-user",
-        })
+        event = channel.parse_to_InboundEvent(body)
+        if not event.text:
+            self._send_json({"error": "text 不能为空"}, status=400)
+            return
         reply = gateway.ask(event)
         self._send_json({
             "reply": reply.text,
@@ -157,12 +195,10 @@ class _Handler(BaseHTTPRequestHandler):
         body = self._read_json_body()
         gateway = self.server.gateway
         channel = gateway.get_channel("frontier")
-        event = channel.parse_to_InboundEvent({
-            "text": "/new",
-            "chat_id": body.get("chat_id") or "web",
-            "user_id": body.get("user_id") or "web-user",
-        })
-        reply = gateway.ask(event)
+        if channel is None:
+            self._send_json({"error": "frontier channel 未注册"}, status=500)
+            return
+        reply = gateway.ask(channel.parse_to_InboundEvent({**body, "text": "/new"}))
         self._send_json({"reply": reply.text})
 
     def _require_debug(self) -> bool:
@@ -171,19 +207,11 @@ class _Handler(BaseHTTPRequestHandler):
             return False
         return True
 
-    def _frontier_source(self, query: dict) -> SessionSource:
-        return SessionSource(
-            channel="frontier",
-            chat_id=str(query.get("chat_id") or "web"),
-            chat_type="dm",
-            user_id=str(query.get("user_id") or "web-user"),
-        )
-
     def _handle_debug_session(self, query: dict) -> None:
         if not self._require_debug():
             return
         gateway = self.server.gateway
-        source = self._frontier_source(query)
+        source = FrontierChannel.build_source(query)
         session_key = build_session_key(source, agent_id=gateway.agent_id)
         requested_session_id = str(query.get("session_id") or "")
         session = (
@@ -221,14 +249,14 @@ class _Handler(BaseHTTPRequestHandler):
                 for m in session.messages
             ],
             "tool_calls": [
-                tc.model_dump(mode="json") for tc in session.tool_calls
+                tc.observation_payload() for tc in session.tool_calls
             ],
         })
 
     def _handle_debug_sessions(self, query: dict) -> None:
         if not self._require_debug():
             return
-        source = self._frontier_source(query)
+        source = FrontierChannel.build_source(query)
         scope = build_memory_scope(source)
         store = self.server.gateway.store
         reader = getattr(store, "list_debug_sessions", None)
@@ -260,22 +288,48 @@ class _Handler(BaseHTTPRequestHandler):
         if not self._require_debug():
             return
         turn_id = str(query.get("turn_id") or "")
+        raw_iteration = query.get("iteration")
+        iteration = None
+        if raw_iteration is not None:
+            try:
+                iteration = int(str(raw_iteration))
+                if iteration < 1:
+                    raise ValueError()
+            except ValueError:
+                self._send_json({"error": "iteration must be a positive integer"}, status=400)
+                return
         store = self.server.gateway.store
         reader = getattr(getattr(store, "executions", None), "get_turn", None)
         persisted_turn = reader(turn_id) if turn_id and reader else None
         persisted = persisted_turn.get("precision_trace") if persisted_turn else None
-        trace = getattr(self.server.gateway.loop, "precision_trace", None)
+        trace = self.server.gateway.precision_trace
         latest = trace.get(turn_id) if trace and turn_id else (trace.latest() if trace else None)
+        payload = persisted or (latest.model_dump(mode="json") if latest else None)
+        builds = payload.get("builds", []) if isinstance(payload, dict) else []
+        builds = [build for build in builds if isinstance(build, dict)]
+        selected = (next((build for build in builds if build.get("iteration") == iteration), None)
+                    if iteration is not None else builds[-1] if builds else None)
+        reason = None
+        if not builds:
+            reason = "full_context_not_saved"
+        elif selected is None:
+            reason = "iteration_not_found"
+        elif selected.get("messages") is None:
+            reason = "context_build_failed"
         self._send_json({
             "turn_id": turn_id or (latest.trace_id if latest else None),
-            "trace": persisted or (latest.model_dump(mode="json") if latest else None),
+            "trace": {key: value for key, value in payload.items() if key != "builds"} if isinstance(payload, dict) else None,
             "window": trace.snapshot().model_dump(mode="json") if trace else None,
+            "iterations": [{"iteration": build.get("iteration"), "available": build.get("messages") is not None,
+                            "error": build.get("error")} for build in builds],
+            "build": selected,
+            "unavailable_reason": reason,
         })
 
     def _handle_debug_tables(self) -> None:
         if not self._require_debug():
             return
-        self._send_json(list_catalog(self.server.gateway.observe_databases))
+        self._send_json(list_catalog(self.server.observe_databases))
 
     def _handle_debug_table_rows(self, query: dict) -> None:
         if not self._require_debug():
@@ -291,7 +345,7 @@ class _Handler(BaseHTTPRequestHandler):
             if not isinstance(filters, dict):
                 raise ValueError("filters must be an object")
             page = read_table_page(
-                self.server.gateway.observe_databases,
+                self.server.observe_databases,
                 str(query.get("database") or ""),
                 str(query.get("table") or ""),
                 limit=limit,
@@ -322,7 +376,7 @@ class _Handler(BaseHTTPRequestHandler):
             if not isinstance(filters, dict):
                 raise ValueError("filters must be an object")
             payload = list_traces(
-                self.server.gateway.observe_databases,
+                self.server.observe_databases,
                 str(query.get("module") or ""),
                 session_id=str(query.get("session_id") or "") or None,
                 limit=limit,
@@ -344,7 +398,7 @@ class _Handler(BaseHTTPRequestHandler):
                 "error": "memory not enabled",
             })
             return
-        source = self._frontier_source(query)
+        source = FrontierChannel.build_source(query)
         scope = build_memory_scope(source)
         snapshot = memory_context.freeze(
             scope, session_id=str(query.get("session_id") or "debug-preview"), persist=False
@@ -395,13 +449,23 @@ class FrontierHttpServer(ThreadingHTTPServer):
         port: int = 8000,
         *,
         enable_memory_debug: bool = False,
+        observe_databases: Mapping[str, Path] | None = None,
+        api_token: str | None = None,
+        allowed_origins: Iterable[str] = (),
     ):
+        if host not in _LOOPBACK_HOSTS and not api_token:
+            raise ValueError(f"监听非本机地址 {host} 时必须配置 api_token")
         self.gateway = gateway
         self.enable_memory_debug = enable_memory_debug
+        self.observe_databases = dict(observe_databases or {})
+        self.api_token = api_token or None
+        self.allowed_origins = frozenset(allowed_origins)
         super().__init__((host, port), _Handler)
         logger.info(
-            "HTTP API 就绪: http://%s:%d (memory_debug=%s)",
+            "HTTP API 就绪: http://%s:%d (memory_debug=%s token=%s origins=%s)",
             host,
             port,
             enable_memory_debug,
+            self.api_token is not None,
+            sorted(self.allowed_origins),
         )

@@ -12,7 +12,7 @@ import sqlite3
 import uuid
 from pathlib import Path
 
-from .types.memory_eval_types import MemoryEvalDataset
+from agent.types.eval.datasets import MemoryEvalDataset
 
 
 _FIXTURES = Path(__file__).resolve().parents[3] / "tests" / "eval" / "datasets"
@@ -87,7 +87,7 @@ def to_behavior_suite(dataset: MemoryEvalDataset) -> dict:
 
 
 def publish_defaults(db_path: Path) -> dict:
-    from ...storage.sqlite import RuntimeStorage
+    from agent.storage.sqlite.runtime_storage import RuntimeStorage
 
     definitions = load_defaults()  # 完整验证后才对现有库进行任何写入。
     target = Path(db_path).resolve()

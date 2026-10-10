@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { formatClock } from '@/utils/format'
 import StepItem from './StepItem.vue'
-import type { LoopTurnCard } from '@/types'
+import type { LoopTurnCard } from '@/types/events'
 
 defineProps<{
   turn: LoopTurnCard

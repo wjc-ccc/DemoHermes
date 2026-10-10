@@ -1,11 +1,10 @@
 import pytest
-from agent.action.context import ToolContext
-from agent.action.ledger import ActionItem, digest
-from agent.action.policy import Toolset
+from agent.types.action.execution import ToolContext, ActionItem, digest
+from agent.types.action.policy import Toolset
 from agent.action.storage.migrations import schema_directory
 from agent.action.storage.tool_store import SqliteToolLedgerStore, ActionConflictError
-from agent.model.baseStructure import ToolCallRequest
-from agent.storage.sqlite import RuntimeStorage
+from agent.types.model import ToolCallRequest
+from agent.storage.sqlite.runtime_storage import RuntimeStorage
 
 
 def test_ledger_claims_are_persistent_and_success_cannot_be_reset(tmp_path):

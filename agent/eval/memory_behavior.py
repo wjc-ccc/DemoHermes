@@ -2,9 +2,11 @@
 
 职责：用可复查的独立样例评估生产链路，保存原文、卡片、作业和检索证据。
 边界：关键词断言只是语义检查的近似；单次通过不代表所有自然语言都正确。
-关联：通过 main.build_gateway 启动 HTTP 后端，用公开 Memory 工具核对读取。
+关联：通过 runtime.build_runtime 启动 HTTP 后端，用公开 Memory 工具核对读取。
 """
 from __future__ import annotations
+from agent.types.tools import ToolInvocationContext
+from agent.types.runtime import RuntimeConfig
 
 import argparse
 import json
@@ -18,8 +20,10 @@ from datetime import datetime, timezone
 from http.client import HTTPConnection
 from pathlib import Path
 
-from ..core.memory import MemoryContextLoader, MemoryExtractor, MemoryScope
-from ..core.memory.memory_retrieval import MemoryRetriever
+from agent.core.memory.memory_context_loader import MemoryContextLoader
+from agent.core.memory.memory_extractor import MemoryExtractor
+from agent.types.memory.scope import MemoryScope
+from agent.storage.sqlite.memory_retrieval import MemoryRetriever
 from ..gateway.http_api import FrontierHttpServer
 from ..storage.sqlite.database import Database
 from ..storage.sqlite.memory_store import SqliteMemoryStore
@@ -165,7 +169,7 @@ def _wait_for_extraction(db: Database, scope: MemoryScope, expected_turns: int, 
 def _read_full(tool: MemoryReadTool, scope: MemoryScope, reference: str) -> str | None:
     content, offset = [], 0
     for _ in range(32):
-        result = tool.execute(dict(_scope=scope, reference=reference, offset=offset, limit=4000))
+        result = tool.execute(dict(reference=reference, offset=offset, limit=4000), context=ToolInvocationContext(memory_scope=scope))
         if not result.ok:
             return None
         content.append(result.data["content"])
@@ -184,7 +188,7 @@ def _check_retrieval(specs, score, cards, db, scope, root) -> tuple[list[dict], 
                   no_irrelevant_recall=not retriever.recall(scope, "zzunrelatedquasarxyz"))
     rows = []
     for index, spec in enumerate(specs):
-        result = search.execute(dict(_scope=scope, query=spec["query"], source="card", kind=spec["kind"]))
+        result = search.execute(dict(query=spec["query"], source="card", kind=spec["kind"]), context=ToolInvocationContext(memory_scope=scope))
         hits = result.data["hits"] if result.ok else []
         identity = score["matched"].get(index)
         reference = f"card:{identity}" if identity else None
@@ -195,7 +199,7 @@ def _check_retrieval(specs, score, cards, db, scope, root) -> tuple[list[dict], 
         should_recall = spec["kind"] == "reusable_experience"
         recall_ok = (any(hit.reference == reference for hit in recalled)
                      and reference in (snapshot.experience_prompt or "")) if should_recall else not recalled
-        foreign = search.execute(dict(_scope=other, query=spec["query"], source="card"))
+        foreign = search.execute(dict(query=spec["query"], source="card"), context=ToolInvocationContext(memory_scope=other))
         checks["scope_isolation"] &= bool(foreign.ok and not foreign.data["hits"])
         rows.append(dict(query=spec["query"], kind=spec["kind"], hits=hits,
                          expected_reference=reference, found_expected_card=expected_found,
@@ -370,7 +374,7 @@ def audit_database(output_dir: Path) -> dict:
         raw_checks = []
         for message in sources:
             ref = f"message:{message['message_id']}"
-            result = search.execute(dict(_scope=scope, query=message["content_text"][:32], source="history"))
+            result = search.execute(dict(query=message["content_text"][:32], source="history"), context=ToolInvocationContext(memory_scope=scope))
             raw_checks.append(dict(reference=ref,
                 readable=_read_full(read, scope, ref) == message["content_text"],
                 searchable=result.ok and any(hit["reference"] == ref for hit in result.data["hits"])))
@@ -408,7 +412,7 @@ def audit_database(output_dir: Path) -> dict:
 
 def run_suite(suite: dict, output_dir: Path, *, wait_seconds: float = 180, progress=print) -> dict:
     """使用当前配置的真实模型；测试可在 ModelRegistry 这个外部边界提供 fixture。"""
-    from ..main import build_gateway
+    from agent.runtime import build_runtime
 
     root = Path(output_dir).resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -416,18 +420,18 @@ def run_suite(suite: dict, output_dir: Path, *, wait_seconds: float = 180, progr
         raise ValueError("评测目录已存在 agent.db，请使用新的目录，以免历史记忆污染结果")
     registry = ModelRegistry.default()
     registry.register(_RecordedModel(registry.get(), root / "model_calls.jsonl"), as_default=True)
-    gateway = build_gateway(data_root=root, model_registry=registry)
+    runtime = build_runtime(RuntimeConfig(data_root=root), model_registry=registry)
     server = None
     report = dict(suite=suite["name"], suite_version=suite["version"],
                   started_at=datetime.now(timezone.utc).isoformat(),
-                  model=getattr(gateway.loop.model, "model_name", gateway.loop.model.name),
-                  provider=gateway.loop.model.name, extractor_version=MemoryExtractor.version, cases=[])
+                  model=getattr(runtime.gateway.loop.model, "model_name", runtime.gateway.loop.model.name),
+                  provider=runtime.gateway.loop.model.name, extractor_version=MemoryExtractor.version, cases=[])
     for name in ("dataset_id", "dataset_version", "dataset_hash", "schema_version"):
         if name in suite:
             report[name] = suite[name]
     try:
-        gateway.start()
-        server = FrontierHttpServer(gateway, host="127.0.0.1", port=0, enable_memory_debug=True)
+        runtime.start()
+        server = FrontierHttpServer(runtime.gateway, host="127.0.0.1", port=0, enable_memory_debug=True)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         port = server.server_address[1]
@@ -453,7 +457,7 @@ def run_suite(suite: dict, output_dir: Path, *, wait_seconds: float = 180, progr
         if server is not None:
             server.shutdown()
             server.server_close()
-        gateway.stop()
+        runtime.stop()
     report["finished_at"] = datetime.now(timezone.utc).isoformat()
     _save_report(report, root)
     report["database_audit_passed"] = audit_database(root)["passed"]
@@ -478,7 +482,7 @@ def main() -> int:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(filename=args.output_dir / "backend.log", level=logging.WARNING, encoding="utf-8")
     from .datasets.memory_dataset import to_behavior_suite
-    from .datasets.types.memory_eval_types import MemoryEvalDataset
+    from agent.types.eval.datasets import MemoryEvalDataset
     if args.dataset_db or args.dataset_version:
         if not args.dataset_db or not args.dataset_version:
             parser.error("--dataset-db 和 --dataset-version 必须一起提供")

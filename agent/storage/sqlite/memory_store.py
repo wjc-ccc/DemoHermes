@@ -9,10 +9,10 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-from ...core.memory.memory_item import UserMemoryItem
-from ...core.memory.memory_scope import MemoryScope
-from ...core.memory.types.memory_source_types import EvidenceRef
-from ...core.memory.types.card_types import ExperienceOutcome, UserCardKind, UserCardStatus
+from agent.types.memory.items import UserMemoryItem
+from agent.types.memory.scope import MemoryScope
+from agent.types.memory.source import EvidenceRef
+from agent.types.memory.categories import ExperienceOutcome, UserCardKind, UserCardStatus
 from .database import Database
 from .codec import milliseconds, utcnow, dumps
 from .errors import RevisionConflictError, IntegrityError

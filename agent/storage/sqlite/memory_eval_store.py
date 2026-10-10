@@ -52,7 +52,7 @@ class SqliteMemoryEvalStore:
 
     def get_dataset(self, dataset_id: str, version: str):
         # 在方法内导入领域类型，避免 RuntimeStorage 与 eval 包装配产生循环依赖。
-        from ...eval.datasets.types.memory_eval_types import MemoryEvalDataset
+        from agent.types.eval.datasets import MemoryEvalDataset
         with self.db.read() as connection:
             connection.execute("BEGIN")
             row = connection.execute(

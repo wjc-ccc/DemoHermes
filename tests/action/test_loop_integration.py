@@ -1,16 +1,18 @@
+from agent.types.runtime import RuntimeConfig
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from agent.action.bootstrap import build_action_runtime
-from agent.action.config import ActionConfig
-from agent.action.policy import Toolset
+from agent.types.action.config import ActionConfig
+from agent.types.action.policy import Toolset
 from agent.action.storage.migrations import schema_directory
-from agent.core.agent_loop import AgentLoop
-from agent.core.types import Session, Message, InboundEvent, SessionSource
-from agent.core.memory import MemoryScope
-from agent.evolution.assembly import AssemblyPolicy
-from agent.main import build_gateway
-from agent.model.baseStructure import ModelResponse, ToolCallRequest
-from agent.storage.sqlite import RuntimeStorage
+from tests.loop_fakes import make_loop
+from agent.types.conversation import Session, Message
+from agent.types.channel import InboundEvent, SessionSource
+from agent.types.memory.scope import MemoryScope
+from agent.types.action.policy import AssemblyPolicy
+from agent.runtime import build_runtime
+from agent.types.model import ModelResponse, ToolCallRequest
+from agent.storage.sqlite.runtime_storage import RuntimeStorage
 from agent.tools.calculator_tools import CalculatorTool
 from agent.tools.registry import ToolRegistry
 
@@ -36,11 +38,11 @@ def test_loop_uses_action_and_explicit_empty_toolset(tmp_path):
     config = ActionConfig(toolsets=(Toolset(tools=("calculator",)), Toolset(name="empty")))
     runtime = build_action_runtime(storage, registry, config=config)
     model = CalculatorModel()
-    loop = AgentLoop(model=model, tool_registry=registry, action_runtime=runtime)
+    loop = make_loop(model=model, tools=registry, action=runtime)
     try:
         session = Session(author_id="u")
         assert loop.run_turn(session, Message(role="user", content_text="计算")).completed
-        assert session.tool_calls[0].metadata["action"]["effect_state"] == "succeeded"
+        assert session.tool_calls[0].action_evidence.effect_state == "succeeded"
         assert len(runtime.ledger.attempts()) == 1
         model.tools_seen.clear()
         loop.run_turn(Session(), Message(role="user", content_text="空工具"),
@@ -54,14 +56,14 @@ def test_enabled_gateway_without_memory_still_persists_ledger(tmp_path):
     class Models:
         def get(self, *args):
             return CalculatorModel()
-    gateway = build_gateway(use_memory=False, use_action=True, data_root=tmp_path, model_registry=Models())
-    gateway.start()
+    runtime = build_runtime(RuntimeConfig(use_memory=False, use_action=True, data_root=tmp_path), model_registry=Models())
+    runtime.start()
     try:
-        reply = gateway.ask(InboundEvent(text="计算", source=SessionSource(user_id="u")), timeout=10)
+        reply = runtime.gateway.ask(InboundEvent(text="计算", source=SessionSource(user_id="u")), timeout=10)
         assert reply.text == "16" and "error" not in reply.metadata
-        assert len(gateway._action.ledger.list()) == 1
+        assert len(runtime.action.ledger.list()) == 1
     finally:
-        gateway.stop()
+        runtime.stop()
     assert RuntimeStorage.open(tmp_path / "agent.db").db.path.exists()
 
 
@@ -70,7 +72,7 @@ def test_two_users_share_loop_without_sharing_action_context(tmp_path):
     registry = ToolRegistry()
     registry.register(CalculatorTool())
     runtime = build_action_runtime(storage, registry)
-    loop = AgentLoop(model=CalculatorModel(), tool_registry=registry, action_runtime=runtime)
+    loop = make_loop(model=CalculatorModel(), tools=registry, action=runtime)
     def run(user):
         return loop.run_turn(Session(author_id=user), Message(role="user", content_text="计算"),
                              memory_scope=MemoryScope(tenant_id="cli", user_id=user))

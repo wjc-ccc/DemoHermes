@@ -4,10 +4,11 @@ import json
 
 import pytest
 
-from agent.core.memory import MemoryExtractor, MemoryExtractionError, MemoryScope
-from agent.core.memory.memory_item import UserMemoryItem, content_sha256
-from agent.core.memory.types import TurnRecord
-from agent.core.types import Message, Session, ToolCall
+from agent.core.memory.memory_extractor import MemoryExtractor, MemoryExtractionError
+from agent.types.memory.scope import MemoryScope
+from agent.types.memory.items import UserMemoryItem, content_sha256
+from agent.types.memory.source import TurnRecord
+from agent.types.conversation import Message, Session, ToolCall
 
 
 class _Cards:

@@ -1,7 +1,8 @@
 """A completed turn yields an experience card used in the next real model call."""
-from agent.eval import EvalCase, EvalRunner, EvalSuite, EvalTurn, TurnExpectation
-from agent.core.memory.types import MemoryProposal, MemoryExtractionBatch
-from agent.model.baseStructure import ModelResponse
+from agent.types.eval.cases import EvalCase, EvalSuite, EvalTurn, TurnExpectation
+from agent.eval.runner import EvalRunner
+from agent.types.memory.extraction import MemoryProposal, MemoryExtractionBatch
+from agent.types.model import ModelResponse
 
 
 class _ScriptModel:

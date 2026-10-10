@@ -1,5 +1,5 @@
 import config from '@/config'
-import type { ApiResult } from '@/types'
+import type { ApiResult } from '@/types/api'
 
 function buildUrl(path: string, query?: Record<string, string | number | undefined | null>): string {
   const base = config.apiBaseUrl || ''

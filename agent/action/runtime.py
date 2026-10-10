@@ -1,15 +1,13 @@
-"""Loop 的小接口：begin_turn → get_schemas → execute_batch。"""
-import time
-import uuid
+"""Action 的账本、授权上下文、计划和恢复装配。"""
 import json
-from concurrent.futures import ThreadPoolExecutor
-from ..core.types import ToolCall
-from ..core.event_bus import LoopEvent
-from .config import ActionConfig
-from .context import ToolContext
-from .executor import ToolExecutor
-from .ledger import digest
-from .policy import Toolset
+from agent.types.action.config import ActionConfig
+from agent.types.action.execution import ToolContext, digest
+from agent.core.tool_handler import ToolHandler
+from agent.core.tool_dispatch import ToolDispatch
+from agent.core.agent_loop_trace import AgentLoopTrace
+from agent.core.event_bus import EventBus
+from agent.core.precision.percision_trace import PrecisionTrace
+from agent.types.action.policy import Toolset
 from .storage.tool_store import SqliteToolLedgerStore
 from .adapters.turn_commit import ActionTurnCommitHook
 from .recovery import ActionRecovery
@@ -18,15 +16,14 @@ from .storage.artifact_store import SqliteArtifactStore
 from .chain.gates import ChainGates
 from .plan.validator import PlanValidator
 from .plan.runner import PlanRunner
-from .action_trace import ActionTrace
 
 
 class ActionRuntime:
-    def __init__(self, database, catalog, *, config=None, event_bus=None):
+    def __init__(self, database, catalog, *, config=None, event_bus=None, trace=None):
         self.config = config or ActionConfig()
         self.catalog = catalog
         self.ledger = SqliteToolLedgerStore(database)
-        self.events = event_bus
+        self.trace = trace or AgentLoopTrace(event_bus if event_bus is not None else EventBus(), PrecisionTrace())
         default = Toolset(tools=catalog.names())
         self.toolsets = {item.name: item for item in self.config.toolsets or (default,)}
         if self.config.default_toolset not in self.toolsets:
@@ -35,7 +32,6 @@ class ActionRuntime:
             catalog.validate(toolset)
         if any(name not in self.toolsets for names in self.config.agent_toolsets.values() for name in names):
             raise ValueError("Agent 绑定了不存在的工具集")
-        self.executor = ToolExecutor(catalog, self.ledger, self.config)
         self.commit_hook = ActionTurnCommitHook(self.ledger)
         self.recovery = ActionRecovery(self)
         self.plans = SqlitePlanStore(database)
@@ -43,22 +39,24 @@ class ActionRuntime:
         self.gates = ChainGates(database, self.ledger, self.artifacts)
         self.plan_validator = PlanValidator()
         self.plan_runner = PlanRunner(self)
-        self.executor.plan_guard = self.plans.require_step
+        self.dispatch = ToolDispatch(self.trace, catalog=catalog, ledger=self.ledger, config=self.config)
+        self.handler = ToolHandler(self.dispatch, action=self, plan_guard=self.plans.require_step)
 
-    def begin_turn(self, session, user_message, *, turn_id, session_key="", memory_scope=None,
-                   assembly_policy=None, agent_id="main"):
+    def create_context(self, turn):
+        memory_scope, assembly_policy = turn.memory_scope, turn.assembly_policy
+        turn_id, session_key, agent_id = turn.turn_id, turn.session_key, turn.agent_id
         name = getattr(assembly_policy, "toolset", None) or self.config.default_toolset
         if name not in self.toolsets:
             raise ValueError("toolset_not_found")
         if self.config.agent_toolsets and name not in self.config.agent_toolsets.get(agent_id, ()):
             raise ValueError("agent_toolset_not_allowed")
         toolset = self.toolsets[name].model_copy(deep=True)
-        actor = getattr(memory_scope, "user_id", None) or session.author_id
-        scope = getattr(memory_scope, "storage_key", None) or digest({"channel": session.channel, "actor": actor,
-                                                                      "session": session.session_id if not actor else None})
+        actor = getattr(memory_scope, "user_id", None) or turn.author_id
+        scope = getattr(memory_scope, "storage_key", None) or digest({"channel": turn.channel, "actor": actor,
+                                                                      "session": turn.session_id if not actor else None})
         context = ToolContext(agent_id=agent_id, actor_id=actor or "", scope_key=scope,
-            session_id=session.session_id, session_key=session_key, turn_id=turn_id,
-            source_message_id=user_message.message_id, toolset=toolset, memory_scope=memory_scope,
+            session_id=turn.session_id, session_key=session_key, turn_id=turn_id,
+            source_message_id=turn.source_message_id, toolset=toolset, memory_scope=memory_scope,
             memory_identity=memory_scope.identity_payload() if memory_scope else {},
             contract_hashes={name: self.catalog.contract_hash(name) for name in toolset.tools},
             contracts={name: self.catalog.contract(name) for name in toolset.tools},
@@ -80,62 +78,9 @@ class ActionRuntime:
         self.ledger.freeze_contracts(context, context.contracts)
         return context
 
-    def get_schemas(self, context):
-        return self.catalog.schemas(context)
-
-    def _execute(self, request, context):
-        started = time.time()
-        tool_call_id = uuid.uuid4().hex
-        if self.events:
-            self.events.publish(LoopEvent(type="tool_call_start", turn_id=context.turn_id, session_id=context.session_id,
-                session_key=context.session_key, data={"tool_call_id": tool_call_id, "name": request.name,
-                                                      "arguments": request.arguments}))
-        result, item, attempt, replayed = self.executor.execute(request, context)
-        record = ToolCall(tool_call_id=tool_call_id, session_id=context.session_id,
-            trajectory_id=context.turn_id, tool_name=request.name, arguments=request.arguments,
-            arguments_raw=request.arguments_raw, status="success" if result.ok else "error",
-            created_at=started, finished_at=time.time(), durations_ms=int((time.time() - started) * 1000),
-            tool_call_result=result.data, result_text=result.result_text, error=result.error,
-            metadata={"provider_tool_call_id": request.id or attempt.tool_call_id,
-                "action": {"ledger_entry_id": item.entry_id, "attempt_id": attempt.attempt_id,
-                "status": item.status, "effect_state": item.effect_state, "publish_state": item.publish_state,
-                "deferred_commit": item.phase == "prepared", "lease_token": item.lease_token, "replayed": replayed,
-                "source_message_id": context.source_message_id},
-                "action_trace": ActionTrace(trace_id=item.entry_id, ledger_entry_ids=(item.entry_id,),
-                    attempt_ids=(attempt.attempt_id,), decisions=tuple(value for value in (item.pre_decision, item.post_decision)
-                                                                    if value is not None)).model_dump(mode="json")})
-        if self.events:
-            self.events.publish(LoopEvent(type="tool_call_result", turn_id=context.turn_id, session_id=context.session_id,
-                session_key=context.session_key, data={"tool_call_id": record.tool_call_id, "name": request.name,
-                    "ok": result.ok, "result_preview": result.result_text[:100], "error": result.error,
-                    "duration_ms": record.durations_ms, "ledger_entry_id": item.entry_id, "action_status": item.status}))
-        return record
-
-    def execute_batch(self, requests, context):
-        requests = tuple(requests)
-        records = []
-        reads = []
-        def flush():
-            if reads:
-                with ThreadPoolExecutor(max_workers=self.config.max_read_workers, thread_name_prefix="action-read") as pool:
-                    records.extend(pool.map(lambda req: self._execute(req, context), reads))
-                reads.clear()
-        for request in requests:
-            entry = self.catalog.get(request.name)
-            try:
-                is_read = entry and self.catalog.policy_for(request.name, request.arguments).effect == "read"
-            except TypeError:
-                is_read = False
-            if is_read:
-                reads.append(request)
-            else:
-                flush()
-                records.append(self._execute(request, context))
-        flush()
-        return tuple(records)
 
     def stop(self):
-        self.executor.stop()
+        self.dispatch.stop()
 
     def recover(self, *, scope_key=None):
         return self.recovery.recover(scope_key=scope_key)
@@ -200,4 +145,3 @@ class ActionRuntime:
             raise ValueError("没有等待审批的执行参数")
         self.ledger.approve(scope_key=item.scope_key, tool_name=item.tool_name, binding_hash=binding,
                             actor_id=actor_id, expires_at=expires_at)
-

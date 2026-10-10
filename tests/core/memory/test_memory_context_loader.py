@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from agent.core.memory import MemoryContextLoader, MemoryLayer, MemoryScope
+from agent.core.memory.memory_context_loader import MemoryContextLoader
+from agent.types.memory.layers import MemoryLayer
+from agent.types.memory.scope import MemoryScope
 
 
 class _Registry:

@@ -1,15 +1,9 @@
 """Eval 公共 seam：类型化 case 经真实 Gateway turn 产出实际模型上下文证据。"""
 from __future__ import annotations
 
-from agent.eval import (
-    EvalCase,
-    EvalRunner,
-    EvalTurn,
-    EvalSuite,
-    MemorySeed,
-    TurnExpectation,
-)
-from agent.model.baseStructure import ModelResponse
+from agent.types.eval.cases import EvalCase, EvalTurn, EvalSuite, MemorySeed, TurnExpectation
+from agent.eval.runner import EvalRunner
+from agent.types.model import ModelResponse
 
 
 class _FakeModel:

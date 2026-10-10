@@ -1,6 +1,6 @@
 import uuid
-from ..chain.chain import Artifact
-from ..ledger import now_ms, digest
+from agent.types.action.chain import Artifact
+from agent.types.action.execution import now_ms, digest
 
 
 class SqliteArtifactStore:

@@ -17,18 +17,20 @@ import pytest
 
 from agent.channel.baseChannel import BaseChannel
 from agent.channel.registry import (
-    CHANNEL_ENTRIES,
-    ChannelEntry,
+    PLATFORM_CHANNELS,
     autostart_channels,
     resolve_channel_credentials,
 )
-from agent.core.types import InboundEvent, OutboundReply
+from agent.types.channel import InboundEvent, OutboundReply
 
 
 class FakeChannel(BaseChannel):
     """不连任何平台的假 channel，只记录生命周期。"""
 
     name = "fake"
+    label = "FAKE"
+    env_map = {"api_key": "FAKE_API_KEY"}
+    install_hint = "pip install fake"
 
     def __init__(self, config=None) -> None:
         super().__init__(config)
@@ -37,7 +39,6 @@ class FakeChannel(BaseChannel):
 
     def start(self) -> None:
         self.started = True
-        self.status["enable"] = True
         self.status["start"] = True
 
     def stop(self) -> None:
@@ -78,17 +79,12 @@ class FakeGateway:
         pass
 
 
-def _entry(name: str = "fake", *, required=("api_key",), check_deps=lambda: True,
-           factory=None) -> ChannelEntry:
-    return ChannelEntry(
-        name=name,
-        label=name.upper(),
-        factory=factory or FakeChannel,
-        required_keys=required,
-        env_map={"api_key": "FAKE_API_KEY"},
-        check_deps=check_deps,
-        install_hint="pip install fake",
-    )
+class MissingDepsChannel(FakeChannel):
+    deps = ("module_that_does_not_exist_for_tests",)
+
+
+class OptionalEnvChannel(FakeChannel):
+    optional_env_map = {"base_url": "WEIXIN_BASE_URL"}
 
 
 @pytest.fixture(autouse=True)
@@ -100,24 +96,34 @@ def _clean_env(monkeypatch):
 
 def test_resolve_credentials_from_env(monkeypatch):
     monkeypatch.setenv("FAKE_API_KEY", "k1")
-    entry = _entry()
-    assert resolve_channel_credentials(entry) == {"api_key": "k1"}
+    assert resolve_channel_credentials(FakeChannel) == {"api_key": "k1"}
 
 
 def test_optional_env_is_injected_with_credentials(monkeypatch):
     monkeypatch.setenv("FAKE_API_KEY", "k1")
     monkeypatch.setenv("WEIXIN_BASE_URL", "https://regional.weixin.qq.com")
-    entry = _entry()
-    entry.optional_env_map = {"base_url": "WEIXIN_BASE_URL"}
-    assert resolve_channel_credentials(entry) == {
+    assert resolve_channel_credentials(OptionalEnvChannel) == {
         "api_key": "k1",
         "base_url": "https://regional.weixin.qq.com",
     }
 
 
+def test_wechat_account_id_is_optional(monkeypatch):
+    from agent.channel.channel_wechat import WechatChannel
+
+    monkeypatch.setenv("WEIXIN_TOKEN", "tok")
+    monkeypatch.delenv("WEIXIN_ACCOUNT_ID", raising=False)
+    monkeypatch.delenv("WEIXIN_BASE_URL", raising=False)
+    assert resolve_channel_credentials(WechatChannel) == {"token": "tok"}
+
+
 def test_resolve_credentials_missing_returns_none():
-    entry = _entry()
-    assert resolve_channel_credentials(entry) is None
+    assert resolve_channel_credentials(FakeChannel) is None
+
+
+def test_start_rejects_missing_credentials_from_env_map():
+    with pytest.raises(RuntimeError, match="api_key"):
+        FakeChannel({})._require_credentials()
 
 
 # ---- 自动启动矩阵 ----
@@ -125,7 +131,7 @@ def test_resolve_credentials_missing_returns_none():
 def test_autostart_with_env_credentials(monkeypatch):
     monkeypatch.setenv("FAKE_API_KEY", "k1")
     gw = FakeGateway()
-    started = autostart_channels(gw, config={"fake": {}}, entries={"fake": _entry()})
+    started = autostart_channels(gw, config={"fake": {}}, channels=(FakeChannel,))
     assert [c.name for c in started] == ["fake"]
     ch = gw.get_channel("fake")
     assert ch is not None and ch.started
@@ -136,21 +142,21 @@ def test_autostart_with_env_credentials(monkeypatch):
 def test_autostart_skips_when_enable_false(monkeypatch):
     monkeypatch.setenv("FAKE_API_KEY", "k1")
     gw = FakeGateway()
-    started = autostart_channels(gw, config={"fake": {"enable": False}}, entries={"fake": _entry()})
+    started = autostart_channels(gw, config={"fake": {"enable": False}}, channels=(FakeChannel,))
     assert started == []
     assert gw.get_channel("fake") is None
 
 
 def test_autostart_skips_silently_without_credentials():
     gw = FakeGateway()
-    started = autostart_channels(gw, config={"fake": {}}, entries={"fake": _entry()})
+    started = autostart_channels(gw, config={"fake": {}}, channels=(FakeChannel,))
     assert started == []
 
 
 def test_autostart_warns_when_enabled_but_missing_credentials(caplog):
     gw = FakeGateway()
     with caplog.at_level(logging.WARNING):
-        started = autostart_channels(gw, config={"fake": {"enable": True}}, entries={"fake": _entry()})
+        started = autostart_channels(gw, config={"fake": {"enable": True}}, channels=(FakeChannel,))
     assert started == []
     assert any("fake" in r.message for r in caplog.records)
 
@@ -158,8 +164,7 @@ def test_autostart_warns_when_enabled_but_missing_credentials(caplog):
 def test_autostart_skips_when_deps_missing(monkeypatch):
     monkeypatch.setenv("FAKE_API_KEY", "k1")
     gw = FakeGateway()
-    entry = _entry(check_deps=lambda: False)
-    started = autostart_channels(gw, config={"fake": {}}, entries={"fake": entry})
+    started = autostart_channels(gw, config={"fake": {}}, channels=(MissingDepsChannel,))
     assert started == []
 
 
@@ -167,7 +172,7 @@ def test_autostart_rejects_json_credentials(monkeypatch):
     """密钥只从 env 读取，避免把 JSON 中的旧密钥误用作有效凭据。"""
     gw = FakeGateway()
     started = autostart_channels(
-        gw, config={"fake": {"api_key": "json-key"}}, entries={"fake": _entry()}
+        gw, config={"fake": {"api_key": "json-key"}}, channels=(FakeChannel,)
     )
     assert started == []
 
@@ -175,23 +180,18 @@ def test_autostart_rejects_json_credentials(monkeypatch):
 def test_one_channel_failure_does_not_block_others(monkeypatch):
     monkeypatch.setenv("FAKE_API_KEY", "k1")
     gw = FakeGateway()
-    entries = {
-        "boom": ChannelEntry(
-            name="boom", label="BOOM", factory=BoomChannel,
-            required_keys=("api_key",), env_map={"api_key": "FAKE_API_KEY"},
-        ),
-        "fake": _entry(),
-    }
-    started = autostart_channels(gw, config={"boom": {}, "fake": {}}, entries=entries)
+    started = autostart_channels(
+        gw, config={"boom": {}, "fake": {}}, channels=(BoomChannel, FakeChannel),
+    )
     assert [c.name for c in started] == ["fake"]
     # boom 启动失败后注销，不影响 fake
     assert gw.get_channel("fake") is not None
     assert gw.get_channel("boom") is None
 
 
-def test_builtin_entries_cover_feishu_qq_wechat():
-    assert set(CHANNEL_ENTRIES) >= {"feishu", "qq", "wechat"}
-    for name in ("feishu", "qq", "wechat"):
-        entry = CHANNEL_ENTRIES[name]
-        assert entry.required_keys, name
-        assert entry.env_map, name
+def test_builtin_channels_cover_feishu_qq_wechat():
+    assert {cls.name for cls in PLATFORM_CHANNELS} >= {"feishu", "qq", "wechat"}
+    for cls in PLATFORM_CHANNELS:
+        assert cls.label, cls.name
+        assert cls.env_map, cls.name
+        assert cls.deps, cls.name

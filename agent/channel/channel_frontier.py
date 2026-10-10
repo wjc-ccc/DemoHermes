@@ -4,18 +4,18 @@ FrontierChannel — 可视化前端适配器
 前端（frontier/）经 HTTP API 与后端交互：
     入站：POST /api/chat 的 JSON body 就是 raw，这里归一化为 InboundEvent
     出站：HTTP 层用 gateway.ask 同步拿回复直接返回；
-          deliver_to_OutboundEvent 仅做计数与日志（保持 Channel 契约完整）
+          deliver_to_OutboundEvent 仅做日志（保持 Channel 契约完整）
 
 raw 约定（dict）：
     {"text": "...", "chat_id": "web", "user_id": "web-user"}
+    debug 接口只需要会话来源，直接用 build_source(query)。
 """
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from .baseChannel import BaseChannel
-from ..core.types import InboundEvent, OutboundReply, SessionSource
+from agent.types.channel import InboundEvent, OutboundReply, SessionSource
 
 logger = logging.getLogger(__name__)
 
@@ -23,22 +23,19 @@ logger = logging.getLogger(__name__)
 class FrontierChannel(BaseChannel):
     name = "frontier"
 
-    def parse_to_InboundEvent(self, raw: Any) -> InboundEvent:
-        if isinstance(raw, dict):
-            text = str(raw.get("text", "")).strip()
-            chat_id = str(raw.get("chat_id") or "web")
-            user_id = str(raw.get("user_id") or "web-user")
-        else:
-            # 兼容直接传字符串
-            text, chat_id, user_id = str(raw).strip(), "web", "web-user"
+    @staticmethod
+    def build_source(raw: dict) -> SessionSource:
+        return SessionSource(
+            channel=FrontierChannel.name,
+            chat_id=str(raw.get("chat_id") or "web"),
+            chat_type="dm",
+            user_id=str(raw.get("user_id") or "web-user"),
+        )
+
+    def parse_to_InboundEvent(self, raw: dict) -> InboundEvent:
         return InboundEvent(
-            text=text,
-            source=SessionSource(
-                channel=self.name,
-                chat_id=chat_id,
-                chat_type="dm",
-                user_id=user_id,
-            ),
+            text=str(raw.get("text", "")).strip(),
+            source=self.build_source(raw),
             channel_prompt="当前通道：Web 可视化前端。回答可使用 Markdown 格式。",
         )
 
@@ -52,10 +49,5 @@ class FrontierChannel(BaseChannel):
             logger.info("frontier 出站: %s", reply.text[:80])
 
     def start(self) -> None:
-        self.status["enable"] = True
         self.status["start"] = True
         self.status["connected"] = True
-
-    def stop(self) -> None:
-        self.status["start"] = False
-        self.status["connected"] = False

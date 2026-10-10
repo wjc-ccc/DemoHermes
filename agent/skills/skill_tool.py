@@ -9,12 +9,15 @@ Loop 无需为 Skill 单开分支。
 可加载范围严格等于本 turn 冻结的 SkillSelection：
     - 模型猜到 draft 名称也加载不到，绕不过质量门
     - 同 turn 内发生的写盘/晋升不改变本 turn 已冻结的正文
-Loop 通过内部参数 `_skills` 注入该快照（与 memory 工具注入 `_scope` 同一机制）。
+ToolInvocationContext 传入本轮冻结的技能快照。
 """
 from __future__ import annotations
 
-from ..tools.base import Tool, ToolCallResult
-from .registry import SkillRegistry, SkillSelection
+from agent.tools.base import Tool
+from agent.types.action.policy import ToolPolicy
+from agent.types.tools import ToolCallResult, ToolInvocationContext
+from agent.skills.registry import SkillRegistry
+from agent.types.skills import SkillSelection
 
 
 class UseSkillTool(Tool):
@@ -33,16 +36,17 @@ class UseSkillTool(Tool):
         },
         "required": ["skill_name"],
     }
+    action_policy = ToolPolicy(when_to_use=description, when_not_to_use="不用于产生业务写入")
 
     def __init__(self, registry: SkillRegistry):
         self._registry = registry
 
-    def execute(self, arguments: dict) -> ToolCallResult:
+    def execute(self, arguments: dict, *, context: ToolInvocationContext) -> ToolCallResult:
         skill_name = str(arguments.get("skill_name", "")).strip()
         if not skill_name:
             return ToolCallResult(ok=False, error="缺少参数 skill_name")
 
-        selection = arguments.get("_skills")
+        selection = context.skills
         if isinstance(selection, SkillSelection):
             ref = selection.load(skill_name)
             if ref is None:

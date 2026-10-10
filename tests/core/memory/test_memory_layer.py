@@ -2,13 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from agent.core.memory import (
-    MemoryLayer,
-    MemoryScope,
-    UserMemoryItem,
-    authority_rank,
-    content_sha256,
-)
+from agent.types.memory.layers import MemoryLayer, authority_rank
+from agent.types.memory.scope import MemoryScope
+from agent.types.memory.items import UserMemoryItem, content_sha256
 
 
 def test_five_layers_have_stable_authority_order() -> None:

@@ -12,18 +12,13 @@ LLM 通过 to_openai_schema() 生成的 schema 决定何时、如何调用工具
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-
-from pydantic import BaseModel as PydanticModel
-from pydantic import Field
+from typing import TYPE_CHECKING
 
 
-class ToolCallResult(PydanticModel):
-    """工具执行的统一结果。ok=False 时 error 会被回注给 LLM 让其自我修正。"""
+from agent.types.tools import ToolCallResult, ToolInvocationContext
 
-    ok: bool = Field(default=True, description="是否执行成功")
-    result_text: str = Field(default_factory=str, description="文本结果（回注 LLM 用）")
-    data: dict | None = Field(default=None, description="结构化结果（前端展示 / 程序消费用）")
-    error: str | None = Field(default=None, description="失败原因")
+if TYPE_CHECKING:
+    from agent.types.action.policy import ToolPolicy
 
 
 class Tool(ABC):
@@ -33,8 +28,14 @@ class Tool(ABC):
     description: str = ""
     parameters: dict = {"type": "object", "properties": {}}
 
+    # action 控制层的定级由工具自己声明，装配处只做校验不代写：
+    # 未声明 action_policy 的工具不能进入受控执行路径。
+    action_policy: ToolPolicy | None = None
+    # 按 operation/action 细分的定级；键与参数里的 operation/action 取值一致。
+    action_operations: dict[str, ToolPolicy] | None = None
+
     @abstractmethod
-    def execute(self, arguments: dict) -> ToolCallResult:
+    def execute(self, arguments: dict, *, context: ToolInvocationContext) -> ToolCallResult:
         """执行工具。实现内部应自行捕获预期内异常并返回 ToolCallResult(ok=False)。"""
         pass
 

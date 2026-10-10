@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-from agent.storage.sqlite import RuntimeStorage
-from agent.core.memory import (
-    MemoryScope,
-    UserMemoryItem,
-    content_sha256,
-)
-from agent.storage.sqlite import SqliteMemoryStore
+from agent.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.types.memory.scope import MemoryScope
+from agent.types.memory.items import UserMemoryItem, content_sha256
+from agent.storage.sqlite.memory_store import SqliteMemoryStore
 
 
 def test_user_memory_store_preserves_item_and_keywords(tmp_path) -> None:

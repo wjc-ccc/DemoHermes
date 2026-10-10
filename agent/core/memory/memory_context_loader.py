@@ -8,12 +8,20 @@ import time
 from collections.abc import Callable, Iterable
 from html import escape
 from pathlib import Path
-from typing import Protocol
 
-from .markdown_book import MarkdownBook, MarkdownBookSnapshot, estimate_markdown_tokens
-from .memory_layer import MemoryLayer
-from .memory_scope import MemoryScope, ensure_scope_dir
-from .memory_snapshot import DocumentRevision, MemoryDiagnostic, MemorySnapshot
+from agent.storage.sqlite.markdown_documents import MarkdownDocuments
+from agent.types.memory.document import MemoryManualError
+from agent.core.memory.document_text import estimate_markdown_tokens
+from agent.types.memory.snapshot import (
+    MarkdownBookSnapshot,
+    DocumentRevision,
+    MemoryDiagnostic,
+    MemorySnapshot,
+)
+from agent.types.memory.layers import MemoryLayer
+from agent.types.memory.scope import MemoryScope
+
+from agent.types.memory.protocols import DocumentRegistry, ExperienceRetriever
 
 
 _MEMORY_NOTE = (
@@ -26,19 +34,6 @@ _MEMORY_NOTE = (
     "card_update 或 card_delete，item_id 和 expected_revision 取自命中结果。"
     "卡片更正和删除在本轮正常提交后才生效。]"
 )
-
-
-class DocumentRegistry(Protocol):
-    def register(self, snapshot: MarkdownBookSnapshot) -> str: ...
-
-
-class ManualEditor(Protocol):
-    def read(self, scope: MemoryScope): ...
-    def peek(self, scope: MemoryScope): ...
-
-
-class ExperienceRetriever(Protocol):
-    def recall(self, scope: MemoryScope, query: str, *, limit: int = 3, token_budget: int = 600): ...
 
 
 def _sanitize(text: str) -> str:
@@ -60,20 +55,15 @@ class MemoryContextLoader:
         policy_paths: Iterable[str | Path] = (),
         project_paths: Iterable[str | Path] = (),
         document_registry: DocumentRegistry | None = None,
-        manual_editor: ManualEditor | None = None,
+        documents: MarkdownDocuments | None = None,
         experience_retriever: ExperienceRetriever | None = None,
         experience_token_budget: int = 600,
-        user_filename: str = "MEMORY.md",
         clock: Callable[[], float] = time.time,
     ) -> None:
-        self._root = Path(root)
-        self._policy_paths = tuple(Path(path) for path in policy_paths)
-        self._project_paths = tuple(Path(path) for path in project_paths)
+        self._documents = documents or MarkdownDocuments(root, policy_paths=policy_paths, project_paths=project_paths)
         self._registry = document_registry
-        self._manual_editor = manual_editor
         self._experience_retriever = experience_retriever
         self._experience_token_budget = experience_token_budget
-        self._user_filename = user_filename
         self._clock = clock
 
     ## 核心 获取memory当前快照
@@ -84,72 +74,21 @@ class MemoryContextLoader:
         loaded: list[tuple[str, MarkdownBookSnapshot]] = []
         diagnostics: list[MemoryDiagnostic] = []
 
-        ### 从对应的path列表中 加载对应的文件类  policy和project 这两个是管理员权限的
-        books = [
-            *(
-                (
-                    f"policy:{path.name}",
-                    MarkdownBook(
-                        path,
-                        layer=MemoryLayer.POLICY,
-                        type="compliance_rule",
-                        scope=MemoryScope(organization_id=scope.organization_id),
-                    ),
-                )
-                for path in self._policy_paths
-            ),
-            *(
-                (
-                    f"project:{path.name}",
-                    MarkdownBook(
-                        path,
-                        layer=MemoryLayer.PROJECT,
-                        type="project_rule",
-                        scope=MemoryScope(
-                            organization_id=scope.organization_id,
-                            tenant_id=scope.tenant_id,
-                            project_id=scope.project_id,
-                        ),
-                    ),
-                )
-                for path in self._project_paths
-            ),
+        sources = [
+            *((f"policy:{path.name}", MemoryLayer.POLICY, path) for path in self._documents.policy_paths),
+            *((f"project:{path.name}", MemoryLayer.PROJECT, path) for path in self._documents.project_paths),
         ]
-        ### 加载用户Memory.md 每个用户一个
-        if self._manual_editor is None:
-            books.append((
-                "user:MEMORY.md",
-                MarkdownBook(
-                    (ensure_scope_dir(self._root, scope) if persist else self._root / scope.storage_key) / self._user_filename,
-                    layer=MemoryLayer.USER,
-                    type="long_term_fact",
-                    scope=scope,
-                    writable=True,
-                ),
-            ))
-
-
-        for source, book in books:
+        if scope.scope_kind == "personal":
+            sources.append(("user:MEMORY.md", MemoryLayer.USER, None))
+        for source, layer, path in sources:
             try:
-                snapshot = book.read()
+                current = self._documents.read(scope, layer, path, persist=persist)
+                loaded.append((source, current.snapshot))
+                diagnostics.extend(current.diagnostics)
                 if persist and self._registry is not None:
-                    self._registry.register(snapshot)
-                loaded.append((source, snapshot))
-            except OSError as exc:
-                diagnostics.append(
-                    MemoryDiagnostic(
-                        code="memory_document_unreadable",
-                        message=f"{source}: {exc!r}",
-                    )
-                )
-        ### 加载用户手册
-        if self._manual_editor is not None and scope.scope_kind == "personal":
-            manual = (self._manual_editor.read(scope) if persist
-                      else self._manual_editor.peek(scope))
-            loaded.append(("user:MEMORY.md", manual.snapshot))
-            diagnostics.extend(manual.diagnostics)
-            if persist and self._registry is not None:
-                self._registry.register(manual.snapshot)
+                    self._registry.register(current.snapshot)
+            except (OSError, UnicodeError, MemoryManualError) as exc:
+                diagnostics.append(MemoryDiagnostic(code="memory_document_unreadable", message=f"{source}: {exc!r}"))
 
         ### 构建成为所有的memory信息加载snapshot
         sections = [
@@ -167,7 +106,6 @@ class MemoryContextLoader:
         if sections:
             prompt += "\n\n" + "\n\n".join(sections)
         prompt += "\n</memory-context>"
-
 
 
         ### 关键词匹配经验卡片自动加载逻辑
@@ -192,7 +130,6 @@ class MemoryContextLoader:
                         selected.append(entry)
                 if selected:
                     experience_prompt = opening + "\n\n".join(selected) + "\n</memory-experiences>"
-
 
 
         ### 返回memory快照

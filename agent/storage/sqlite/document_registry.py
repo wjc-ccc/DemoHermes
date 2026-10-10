@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 
-from ...core.memory.markdown_book import MarkdownBookSnapshot
+from agent.types.memory.snapshot import MarkdownBookSnapshot
 from .database import Database
 from .codec import milliseconds
 

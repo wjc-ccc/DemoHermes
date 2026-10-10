@@ -3,14 +3,15 @@ import json
 
 import pytest
 
-from agent.core.context_budget import ContextBudget, ContextBudgetExceededError
-from agent.core.precision import (
+from agent.types.context import ContextBudget, render_anchor, Anchor
+from agent.core.precision.errors import (
+    AnchorBuildError,
     AnchorCompactionError,
-    ModelAnchorBuilder,
-    PrecisionBuilder,
+    ContextBudgetExceededError,
 )
-from agent.core.precision.percision_anchor import AnchorBuildError, render_anchor
-from agent.core.types import Anchor, Message, Session
+from agent.core.precision.percision_anchor import ModelAnchorBuilder
+from agent.core.precision.percision_engine import PrecisionBuilder
+from agent.types.conversation import Message, Session
 from tests.anchor_fakes import DeterministicAnchorBuilder
 
 
@@ -78,7 +79,7 @@ def test_valid_anchor_is_reused_below_threshold_without_builder_call():
     ])
     builder = DeterministicAnchorBuilder()
     first = _build(session, cap=8, builder=builder)
-    session.context_anchor = first.context_anchor_payload
+    session.context_anchor = first.anchor.model_dump(mode="json")
 
     second = _build(session, cap=100, builder=builder)
     users = [m.get("content") for m in second.messages if m.get("role") == "user"]
@@ -100,7 +101,7 @@ def test_valid_legacy_dict_is_restored_as_global_anchor_type():
 
     restored = Session.model_validate({
         **session.model_dump(mode="json", exclude={"context_anchor"}),
-        "context_anchor": created.context_anchor_payload,
+        "context_anchor": created.anchor.model_dump(mode="json"),
     })
 
     assert isinstance(restored.context_anchor, Anchor)
@@ -140,7 +141,7 @@ def test_anchor_extension_sends_only_uncovered_turns_to_builder():
     ])
     builder = DeterministicAnchorBuilder()
     first = _build(session, cap=8, builder=builder)
-    session.context_anchor = first.context_anchor_payload
+    session.context_anchor = first.anchor.model_dump(mode="json")
     session.add_message(Message(role="assistant", content_text="a4"))
     session.add_message(Message(role="user", content_text="u5"))
     session.add_message(Message(role="assistant", content_text="a5"))
@@ -277,7 +278,7 @@ def test_digest_mismatch_restores_raw_history():
     """覆盖原文被修改后旧 Anchor 失效，构建恢复全量原文。"""
     session = _history([("u1", "a1"), ("u2", "a2"), ("u3", "a3")])
     first = _build(session, cap=8)
-    session.context_anchor = first.context_anchor_payload
+    session.context_anchor = first.anchor.model_dump(mode="json")
     session.messages[0].content_text = "u1 已修改"
 
     second = _build(session, cap=100)
@@ -304,8 +305,9 @@ def test_legacy_anchor_never_filters_raw_before_v2_migration():
 
 def test_agent_loop_persists_structured_anchor_on_session():
     """AgentLoop 只写 context_anchor，不再依赖 summary 字符串。"""
-    from agent.core.agent_loop import AgentLoop
-    from agent.model.baseStructure import BaseModel, ModelResponse
+    from tests.loop_fakes import make_loop
+    from agent.model.baseStructure import BaseModel
+    from agent.types.model import ModelResponse
 
     class _Model(BaseModel):
         name = "fake"
@@ -318,13 +320,13 @@ def test_agent_loop_persists_structured_anchor_on_session():
         ("第2轮问题", "第2轮回答"),
         ("第3轮问题", "第3轮回答"),
     ])
-    result = AgentLoop(
-        model=_Model(), anchor_builder=DeterministicAnchorBuilder()
+    result = make_loop(
+        model=_Model(), anchor_builder=DeterministicAnchorBuilder(),
+        budget=ContextBudget(model_context_tokens=18, reserved_output_tokens=10),
+        token_estimator=_PerMessage(),
     ).run_turn(
         session,
         Message(role="user", content_text="最新问题"),
-        context_budget=ContextBudget(model_context_tokens=18, reserved_output_tokens=10),
-        token_estimator=_PerMessage(),
     )
 
     assert result.completed
@@ -370,8 +372,9 @@ def test_model_anchor_builder_uses_no_tools_and_strict_prompt():
 
 def test_agent_loop_maps_closed_compaction_failure_without_main_model_call():
     """失败关闭由 Loop 映射成稳定错误，且不会调用主模型。"""
-    from agent.core.agent_loop import AgentLoop
-    from agent.model.baseStructure import BaseModel, ModelResponse
+    from tests.loop_fakes import make_loop
+    from agent.model.baseStructure import BaseModel
+    from agent.types.model import ModelResponse
 
     class _MainModel(BaseModel):
         name = "main"
@@ -388,11 +391,13 @@ def test_agent_loop_maps_closed_compaction_failure_without_main_model_call():
             raise AnchorBuildError("anchor_model_error", "offline")
 
     model = _MainModel()
-    result = AgentLoop(model=model, anchor_builder=_FailingBuilder()).run_turn(
+    result = make_loop(
+        model=model, anchor_builder=_FailingBuilder(),
+        budget=ContextBudget(model_context_tokens=16, reserved_output_tokens=10),
+        token_estimator=_PerMessage(),
+    ).run_turn(
         _history([("u1", "a1"), ("u2", "a2"), ("u3", "a3")]),
         Message(role="user", content_text="新的当前问题"),
-        context_budget=ContextBudget(model_context_tokens=16, reserved_output_tokens=10),
-        token_estimator=_PerMessage(),
     )
 
     assert result.error == "anchor_compaction_failed"

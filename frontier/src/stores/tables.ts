@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { getTableRows, listTables } from '@/api/tables'
 import config from '@/config'
-import type { DatabaseCatalog, FilterValue, TablePage, TableSummary } from '@/types'
+import type { DatabaseCatalog, FilterValue, TablePage, TableSummary } from '@/types/tables'
 
 const DISABLED = 'memory debug disabled'
 

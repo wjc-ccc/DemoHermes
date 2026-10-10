@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from agent.core.memory import MemoryScope, MemoryValidator, MemoryBatchReviewer
-from agent.core.memory.types import MemoryProposal, TurnRecord, MemoryExtractionBatch
-from agent.core.types import Message, Session
+from agent.types.memory.scope import MemoryScope
+from agent.core.memory.memory_validator import MemoryValidator
+from agent.core.memory.memory_batch_reviewer import MemoryBatchReviewer
+from agent.types.memory.extraction import MemoryProposal, MemoryExtractionBatch
+from agent.types.memory.source import TurnRecord
+from agent.types.conversation import Message, Session
 
 
 class _Extractor:

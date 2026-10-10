@@ -1,12 +1,13 @@
+from agent.types.runtime import RuntimeConfig
 import pytest
-from agent.action.chain.chain import ChainSegment, Artifact
-from agent.action.decision import GateDecision
-from agent.action.plan.plan import Plan, PlanStep, PlanPatch
+from agent.types.action.chain import ChainSegment, Artifact
+from agent.types.action.execution import GateDecision
+from agent.types.action.plan import Plan, PlanStep, PlanPatch
 from agent.action.plan.validator import PlanValidator
-from agent.core.types import SessionSource
-from agent.core.memory import build_memory_scope
-from agent.main import build_gateway
-from agent.model.baseStructure import ModelResponse
+from agent.types.channel import SessionSource
+from agent.core.memory.memory_scope import build_memory_scope
+from agent.runtime import build_runtime
+from agent.types.model import ModelResponse
 
 
 def test_patch_preserves_done_outside_dependencies_and_cap():
@@ -51,35 +52,35 @@ def test_rejected_artifact_stops_chain_and_resume_skips_accepted_segment(tmp_pat
     class Models:
         def get(self, *args):
             return model
-    gateway = build_gateway(use_action=True, use_memory=True, data_root=tmp_path, model_registry=Models())
+    runtime = build_runtime(RuntimeConfig(use_action=True, use_memory=True, data_root=tmp_path), model_registry=Models())
     source = SessionSource(user_id="u")
     scope = build_memory_scope(source)
-    runtime = gateway._action
-    runtime.gates.register("balanced", lambda artifact: GateDecision(
+    action = runtime.action
+    action.gates.register("balanced", lambda artifact: GateDecision(
         verdict="accept" if artifact.body["total"] == 100 else "block", layer="semantics", reasons=("total_mismatch",)))
     schema = {"type": "object", "properties": {"total": {"type": "integer"}}, "required": ["total"], "additionalProperties": False}
     step = PlanStep(step_id="calculate", goal="核算", chain=(
         ChainSegment(segment_id="first", prompt="first", output_schema=schema),
         ChainSegment(segment_id="second", prompt="second", output_schema=schema, semantic_gates=("balanced",)),
         ChainSegment(segment_id="publish", prompt="publish", output_schema=schema)))
-    plan = runtime.create_plan(Plan(scope_key=scope.storage_key, actor_id="u", goal="核算", steps=(step,)))
+    plan = action.create_plan(Plan(scope_key=scope.storage_key, actor_id="u", goal="核算", steps=(step,)))
     try:
-        failed = gateway.run_plan(plan.plan_id, source)
+        failed = runtime.gateway.run_plan(plan.plan_id, source)
         assert failed.steps[0].status == "failed" and model.calls == ["first", "second"]
-        with runtime.ledger.db.read() as conn:
+        with action.ledger.db.read() as conn:
             assert conn.execute("SELECT COUNT(*) FROM action_artifacts WHERE status='rejected'").fetchone()[0] == 1
         model.bad_second = False
-        patched = runtime.apply_patch(plan.plan_id, PlanPatch(base_revision=failed.revision,
+        patched = action.apply_patch(plan.plan_id, PlanPatch(base_revision=failed.revision,
             affected_steps=("calculate",), replace_steps=(step,), reason="修复核算"))
-        done = gateway.run_plan(plan.plan_id, source)
+        done = runtime.gateway.run_plan(plan.plan_id, source)
         assert done.status == "done" and model.calls.count("first") == 1
         assert model.calls == ["first", "second", "second", "second"]
         assert done.steps[0].attempt == 2
         with pytest.raises(ValueError, match="plan_revision_conflict"):
-            runtime.apply_patch(plan.plan_id, PlanPatch(base_revision=patched.revision,
+            action.apply_patch(plan.plan_id, PlanPatch(base_revision=patched.revision,
                 affected_steps=("calculate",), replace_steps=(step,), reason="过期补丁"))
     finally:
-        gateway.stop()
+        runtime.stop()
 
 
 def test_artifact_hash_scope_and_sources_are_checked(bank_runtime):

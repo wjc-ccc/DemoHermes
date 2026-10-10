@@ -13,28 +13,10 @@ agent/skills 包 — 技能系统（程序性资产）
     agent/skills/builtin/<skill_name>/SKILL.md   # 内置，人工维护
     data/skills/<skill_name>/SKILL.md            # 运行期沉淀的候选
 """
-from .base import Skill, SkillParseError, normalize_skill_name
-from .registry import SkillRef, SkillRegistry, SkillSelection
-from .repository import (
-    SkillChangeRequest,
-    SkillChangeResult,
-    SkillDraft,
-    SkillRepository,
-)
+from agent.skills.base import SkillParseError, normalize_skill_name
+from agent.skills.registry import SkillRegistry
+from agent.skills.repository import SkillRepository
 from .skill_manage_tool import SkillManageTool
 from .skill_tool import UseSkillTool
 
-__all__ = [
-    "Skill",
-    "SkillChangeRequest",
-    "SkillChangeResult",
-    "SkillDraft",
-    "SkillManageTool",
-    "SkillParseError",
-    "SkillRef",
-    "SkillRegistry",
-    "SkillRepository",
-    "SkillSelection",
-    "UseSkillTool",
-    "normalize_skill_name",
-]
+__all__ = ['SkillManageTool', 'SkillParseError', 'SkillRegistry', 'SkillRepository', 'UseSkillTool', 'normalize_skill_name']

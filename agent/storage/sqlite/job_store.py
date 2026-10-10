@@ -4,7 +4,7 @@ import json
 import uuid
 from .codec import dumps, milliseconds
 from .errors import LeaseLostError, RevisionConflictError, IntegrityError
-from .types import Job
+from agent.types.storage import Job
 
 _FIELDS = ('id,job_type,handler_version,session_id,turn_id,dedupe_key,input_hash,input_json,'
            'status,revision,attempt_count,created_at,available_at,lease_owner,lease_token,'

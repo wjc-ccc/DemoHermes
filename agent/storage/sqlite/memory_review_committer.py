@@ -6,28 +6,25 @@
 """
 from __future__ import annotations
 import hashlib
-from dataclasses import dataclass
-from ...core.memory.memory_trace import MemoryItemTrace, MemoryTraceDecision, MemoryTraceOperation
-from ...core.memory.memory_batch_reviewer import MemoryReviewResult
-from ...core.memory.types.memory_source_types import EvidenceRef
-from ...core.memory.memory_item import UserMemoryItem
-from ...core.memory.types.card_types import UserCardKind, UserCardStatus
-from .codec import milliseconds, utcnow
+from agent.types.memory.trace import MemoryItemTrace
+from agent.types.memory.trace_categories import MemoryTraceDecision, MemoryTraceOperation
+from agent.types.memory.extraction import MemoryReviewResult
+from agent.types.memory.source import EvidenceRef
+from agent.types.memory.items import UserMemoryItem
+from agent.types.memory.categories import UserCardKind, UserCardStatus
+from .codec import milliseconds
 from .errors import IntegrityError, LeaseLostError
 from .job_store import read_job, require_lease, complete_job
 from .memory_store import put_user_memory, query_user_memories
 from .trace_store import put_trace
 from .memory_card_policy import (
-    can_restore_after_delete, stronger_or_newer, is_explicit_correction, merge_card_evidence,
+    can_restore_after_delete,
+    stronger_or_newer,
+    is_explicit_correction,
+    merge_card_evidence,
 )
 
-
-@dataclass(frozen=True)
-class MemoryReviewCommitResult:
-    job_id: str
-    trace_id: str
-    user_item_count: int
-    idempotent: bool = False
+from agent.types.storage import MemoryReviewCommitResult
 
 
 class SqliteMemoryReviewCommitter:

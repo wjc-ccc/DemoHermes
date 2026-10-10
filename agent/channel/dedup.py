@@ -3,6 +3,9 @@ TTL 消息去重 — Hermes helpers.MessageDeduplicator 的精简移植
 
 平台重推同一条消息（webhook 重试 / ws 重连重放）时防止 Agent 重复处理。
 key 首次见到返回 False 并记录；TTL 内再次见到返回 True。
+
+BaseChannel 持有一份，should_accept 默认按 message_id 调用；
+ingest 在入队前去重，重放的带附件消息不会占线程池名额。
 """
 from __future__ import annotations
 
@@ -38,6 +41,3 @@ class TTLDedup:
         expired = [k for k, ts in self._seen.items() if now - ts > self.ttl]
         for k in expired:
             self._seen.pop(k, None)
-
-    def __len__(self) -> int:
-        return len(self._seen)

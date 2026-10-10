@@ -1,11 +1,7 @@
 """Memory/Skill 消融：关闭资产后以任务回退和成本变化判断贡献。"""
-from agent.eval import (
-    AblationRequest,
-    AblationVariant,
-    EvalCaseResult,
-    EvalReport,
-    run_ablation,
-)
+from agent.types.eval.ablation import AblationRequest, AblationVariant
+from agent.types.eval.reports import EvalCaseResult, EvalReport
+from agent.eval.ablation import run_ablation
 
 
 def _report(outcomes: dict[str, bool]) -> EvalReport:

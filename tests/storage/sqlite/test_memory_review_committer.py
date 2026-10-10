@@ -1,19 +1,17 @@
 from __future__ import annotations
+from agent.types.memory.mutation import MemoryMutationItem
 
-from agent.storage.sqlite import RuntimeStorage
-from agent.core.memory import (
-    MemoryScope,
-    MemoryValidator,
-    MemoryBatchReviewer,
-    MemoryReviewWorker,
-)
-from agent.core.memory.types import MemoryProposal, TurnRecord, MemoryExtractionBatch
-from agent.core.types import Message
-from agent.storage.sqlite import (
-    SqliteMemoryReviewCommitter,
-    SqliteSessionStore,
-    connect,
-)
+from agent.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.types.memory.scope import MemoryScope
+from agent.core.memory.memory_validator import MemoryValidator
+from agent.core.memory.memory_batch_reviewer import MemoryBatchReviewer
+from agent.core.memory.memory_review_worker import MemoryReviewWorker
+from agent.types.memory.extraction import MemoryProposal, MemoryExtractionBatch
+from agent.types.memory.source import TurnRecord
+from agent.types.conversation import Message
+from agent.storage.sqlite.memory_review_committer import SqliteMemoryReviewCommitter
+from agent.storage.sqlite.session_store import SqliteSessionStore
+from agent.storage.sqlite.database import connect
 from agent.storage.sqlite.memory_card_mutation import SqliteMemoryCardMutationService
 
 
@@ -178,10 +176,10 @@ def test_deleted_fact_is_not_restored_by_old_extraction_job(tmp_path):
         text="忘掉这个偏好")
     service = SqliteMemoryCardMutationService(runtime.db)
     with runtime.db.write() as conn:
-        service.apply(conn, scope, "message-2", {
+        service.apply(conn, scope, "message-2", MemoryMutationItem.model_validate({
             "operation": "delete", "item_id": card.item_id,
             "expected_revision": card.revision,
-        })
+        }))
     runtime.sessions.jobs.enqueue(
         job_type="memory.extract", handler_version="extractor-v1",
         input={"turn_ids": ("turn-1",)}, dedupe_key="deleted-replay:turn-1",

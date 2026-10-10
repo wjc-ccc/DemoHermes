@@ -1,6 +1,6 @@
 """短 SQLite 事务：业务去重、尝试、CAS、资源占用和证据在一个入口维护。"""
 import uuid
-from ..ledger import ActionItem, ActionAttemptItem, canonical, now_ms
+from agent.types.action.execution import ActionItem, ActionAttemptItem, canonical, now_ms
 
 
 class ActionConflictError(ValueError):

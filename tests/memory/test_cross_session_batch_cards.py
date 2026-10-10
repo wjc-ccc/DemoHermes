@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 
-from agent.core.memory import MemoryExtractor, MemoryScope, MemoryBatchReviewer, MemoryReviewWorker
-from agent.core.memory.types import TurnRecord
-from agent.core.types import Message
-from agent.storage.sqlite import RuntimeStorage
+from agent.core.memory.memory_extractor import MemoryExtractor
+from agent.types.memory.scope import MemoryScope
+from agent.core.memory.memory_batch_reviewer import MemoryBatchReviewer
+from agent.core.memory.memory_review_worker import MemoryReviewWorker
+from agent.types.memory.source import TurnRecord
+from agent.types.conversation import Message
+from agent.storage.sqlite.runtime_storage import RuntimeStorage
 
 
 class _Model:

@@ -1,7 +1,7 @@
 """Anchor Builder Callable 的确定性测试 Adapter。"""
 from __future__ import annotations
 
-from agent.core.types import AnchorFact
+from agent.types.context import AnchorFact
 
 _SLOTS = ("intent", "changes", "decisions", "next_steps", "excluded")
 

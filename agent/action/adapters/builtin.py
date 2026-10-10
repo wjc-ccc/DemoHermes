@@ -1,6 +1,7 @@
 """适配现有 Tool，不绕过业务模块的最终权限/版本校验。"""
 import json
 from .resources import card_in_scope, resource_for
+from agent.types.tools import ToolInvocationContext
 
 
 class BuiltinToolAdapter:
@@ -23,14 +24,11 @@ class BuiltinToolAdapter:
 
     def invoke(self, arguments, context, *, idempotency_key):
         values = dict(arguments)
-        if self.tool.name in {"memory_search", "memory_read", "memory_edit"}:
-            values["_scope"] = context.memory_scope
-        if self.tool.name == "memory_edit":
-            values["_source_message_id"] = context.source_message_id
-        if self.tool.name == "use_skill":
-            values["_skills"] = context.skills
         before = self.resource(arguments, context)
-        result = self.tool.execute(values)
+        result = self.tool.execute(values, context=ToolInvocationContext(
+            session_id=context.session_id, turn_id=context.turn_id, session_key=context.session_key,
+            source_message_id=context.source_message_id, memory_scope=context.memory_scope, skills=context.skills,
+        ))
         # 整段读前后版本一致才补充 read 的版本；不把新版本盖到旧内容上。
         if result.ok and result.data is not None and before == self.resource(arguments, context):
             if self.tool.name == "memory_read" and before[0] and before[1]:

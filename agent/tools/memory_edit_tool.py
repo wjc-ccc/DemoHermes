@@ -2,17 +2,21 @@
 
 职责：校验操作参数和运行时 scope；卡片修改暂存，手册修改交给受约束编辑器。
 边界：不直接决定后台提炼内容；卡片暂存结果须由 SessionStore 随轮次提交。
-关联：AgentLoop 注入当前用户消息 ID，MemoryCardMutationService 与 MemoryManualEditor 执行写入。
+关联：AgentLoop 注入当前用户消息 ID，MemoryCardMutationService 与 MarkdownDocuments 执行写入。
 """
 from __future__ import annotations
 
 import json
 
-from ..core.memory.markdown_book import MarkdownRevisionConflictError
-from ..core.memory.markdown_editor import MemoryManualError, MemoryManualEditor
-from ..core.memory.memory_scope import MemoryScope
+from agent.types.memory.document import MarkdownRevisionConflictError
+from agent.types.memory.document import MemoryManualError
+from agent.storage.sqlite.markdown_documents import MarkdownDocuments
+from agent.types.memory.scope import MemoryScope
 from ..storage.sqlite.memory_store import SqliteMemoryStore
-from .base import Tool, ToolCallResult
+from agent.tools.base import Tool
+from agent.types.action.policy import ToolPolicy
+from agent.types.tools import ToolCallResult, ToolInvocationContext
+from agent.types.memory.mutation import MemoryMutationItem
 
 
 _EXPERIENCE_FIELDS = ("applicability", "action", "outcome", "limitations", "outcome_status")
@@ -50,17 +54,33 @@ class MemoryEditTool(Tool):
         },
         "required": ["operation"],
     }
+    action_policy = ToolPolicy(when_to_use="用户明确更正已有记忆或个人手册",
+        when_not_to_use="不用于创建事实卡或改变类别",
+        effect="write", risk="medium", permission="user", idempotency="keyed",
+        key_fields=("operation", "item_id", "expected_revision", "expected_hash", "revision"))
+    # 卡片改动随本轮提交一起落库；手册改动按 hash 前置条件，即时生效。
+    _card = action_policy.model_copy(update={"precondition_field": "expected_revision", "deferred_commit": True})
+    _manual = action_policy.model_copy(update={"precondition_field": "expected_hash"})
+    action_operations = {
+        "manual_get": ToolPolicy(when_to_use=description, when_not_to_use="不用于产生业务写入"),
+        "card_update": _card, "card_delete": _card,
+        "manual_replace": _manual, "manual_restore": _manual,
+    }
 
-    def __init__(self, cards: SqliteMemoryStore, manual: MemoryManualEditor) -> None:
+    def __init__(self, cards: SqliteMemoryStore, manual: MarkdownDocuments) -> None:
         self._cards = cards
         self._manual = manual
 
-    def execute(self, arguments: dict) -> ToolCallResult:
-        scope = arguments.get("_scope")
-        source_message_id = arguments.get("_source_message_id")
+    def execute(self, arguments: dict, *, context: ToolInvocationContext) -> ToolCallResult:
+        scope = context.memory_scope
+        source_message_id = context.source_message_id
         if not isinstance(scope, MemoryScope) or scope.user_id is None:
             return ToolCallResult(ok=False, error="缺少当前用户的 memory scope")
         operation = arguments.get("operation")
+        if isinstance(operation, str) and operation.startswith("manual_"):
+            unsupported = set(arguments) - set(self.parameters["properties"])
+            if unsupported:
+                return ToolCallResult(ok=False, error="个人手册不接受路径、目标身份或其他未声明参数")
         if operation in {"card_update", "card_delete"}:
             if not isinstance(source_message_id, str) or not source_message_id:
                 return ToolCallResult(ok=False, error="缺少当前用户消息引用")
@@ -71,7 +91,7 @@ class MemoryEditTool(Tool):
             return ToolCallResult(
                 ok=True,
                 result_text="卡片修改已接收，将在本轮对话提交时确认。",
-                data={"memory_mutation": payload},
+                pending_mutation=MemoryMutationItem.model_validate(payload),
             )
         try:
             if operation == "manual_get":
@@ -91,7 +111,7 @@ class MemoryEditTool(Tool):
                     or not isinstance(expected_hash, str) or not expected_hash
                     or not isinstance(reason, str) or not reason):
                     raise ValueError("manual_replace 需要 content、expected_hash 和 reason")
-                snapshot = self._manual.replace(
+                snapshot = self._manual.replace_user(
                     scope, content, expected_hash=expected_hash,
                     actor="model", reason=reason,
                     source_ref=f"message:{source_message_id}" if source_message_id else None,
@@ -105,7 +125,7 @@ class MemoryEditTool(Tool):
                     raise ValueError("manual_restore 需要 expected_hash")
                 if not isinstance(reason, str) or not reason:
                     raise ValueError("manual_restore 需要 reason")
-                snapshot = self._manual.restore(
+                snapshot = self._manual.restore_user(
                     scope, int(revision), expected_hash=expected_hash,
                     actor="model", reason=reason,
                     source_ref=f"message:{source_message_id}" if source_message_id else None,

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useTableStore } from '@/stores/tables'
-import type { TableSummary } from '@/types'
+import type { TableSummary } from '@/types/tables'
 import { formatCell } from '@/utils/format'
 import ColumnFilter from '@/components/ColumnFilter.vue'
 

@@ -13,13 +13,13 @@ from .memory_review_committer import SqliteMemoryReviewCommitter
 from .memory_review_scheduler import SqliteMemoryReviewScheduler
 from .memory_card_mutation import SqliteMemoryCardMutationService
 from .memory_eval_store import SqliteMemoryEvalStore
-from ...core.memory.memory_extractor import MemoryExtractor
+from agent.types.memory.extraction import MEMORY_EXTRACTOR_VERSION
 
 
 class RuntimeStorage:
     @classmethod
     def open(cls, db_path, *, id_factory=None, extractor_version=None, extra_schema_dirs=()):
-        extractor_version = extractor_version or MemoryExtractor.version
+        extractor_version = extractor_version or MEMORY_EXTRACTOR_VERSION
         database=Database(db_path)
         conn=connect(database.path)
         try:
@@ -29,7 +29,7 @@ class RuntimeStorage:
         return cls(database,id_factory=id_factory,extractor_version=extractor_version)
 
     def __init__(self, database, *, id_factory=None, extractor_version=None):
-        extractor_version = extractor_version or MemoryExtractor.version
+        extractor_version = extractor_version or MEMORY_EXTRACTOR_VERSION
         self.db=database
         self.observe=ObserveQueries(database)
         self.executions=SqliteExecutionStore(database)

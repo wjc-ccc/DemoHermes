@@ -9,10 +9,12 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 
-from ..core.memory.markdown_book import estimate_markdown_tokens
-from ..core.memory.memory_retrieval import MemoryRetriever
-from ..core.memory.memory_scope import MemoryScope
-from .base import Tool, ToolCallResult
+from agent.core.memory.document_text import estimate_markdown_tokens
+from agent.storage.sqlite.memory_retrieval import MemoryRetriever
+from agent.types.memory.scope import MemoryScope
+from agent.tools.base import Tool
+from agent.types.action.policy import ToolPolicy
+from agent.types.tools import ToolCallResult, ToolInvocationContext
 
 
 class MemorySearchTool(Tool):
@@ -37,12 +39,13 @@ class MemorySearchTool(Tool):
         },
         "required": ["query"],
     }
+    action_policy = ToolPolicy(when_to_use=description, when_not_to_use="不用于产生业务写入")
 
     def __init__(self, retriever: MemoryRetriever) -> None:
         self.retriever = retriever
 
-    def execute(self, arguments: dict) -> ToolCallResult:
-        scope = arguments.get("_scope")
+    def execute(self, arguments: dict, *, context: ToolInvocationContext) -> ToolCallResult:
+        scope = context.memory_scope
         if not isinstance(scope, MemoryScope):
             return ToolCallResult(ok=False, error="缺少运行时 memory scope")
         if arguments.get("mode", "keyword") != "keyword":
@@ -97,12 +100,13 @@ class MemoryReadTool(Tool):
         },
         "required": ["reference"],
     }
+    action_policy = ToolPolicy(when_to_use=description, when_not_to_use="不用于产生业务写入")
 
     def __init__(self, retriever: MemoryRetriever) -> None:
         self.retriever = retriever
 
-    def execute(self, arguments: dict) -> ToolCallResult:
-        scope = arguments.get("_scope")
+    def execute(self, arguments: dict, *, context: ToolInvocationContext) -> ToolCallResult:
+        scope = context.memory_scope
         if not isinstance(scope, MemoryScope):
             return ToolCallResult(ok=False, error="缺少运行时 memory scope")
         reference = str(arguments.get("reference") or "")
@@ -115,4 +119,4 @@ class MemoryReadTool(Tool):
         if page is None:
             return ToolCallResult(ok=False, error="引用不存在或当前用户无权读取")
         data = asdict(page)
-        return ToolCallResult(ok=True, result_text=json.dumps(data, ensure_ascii=False), data=data)
+        return ToolCallResult(ok=True, result_text=json.dumps(data, ensure_ascii=False), data=data, readback_reference=reference)

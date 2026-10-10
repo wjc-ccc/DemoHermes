@@ -1,20 +1,17 @@
 """
 ToolRegistry — 工具注册表
 
-管理所有可用工具的注册、schema 收集与调用分发：
+管理可用工具的注册与 schema；执行由 ToolDispatch 负责：
     register(tool)       : 注册工具实例
     get_schemas()        : 返回所有工具的 OpenAI function calling schema（随请求发给 LLM）
-    dispatch(name, args) : 按名称分发执行；任何异常都兜底成 ToolCallResult(ok=False)，绝不抛给 Loop
     list_tools()         : 列出已注册工具名
 
-core/loop 在 think 阶段把 schemas 传给 LLM，在 act 阶段通过 dispatch 执行。
+ToolHandler 从本注册表读取普通模式的工具定义。
 """
 from __future__ import annotations
-
 import logging
-import time
+from agent.tools.base import Tool
 
-from .base import Tool, ToolCallResult
 
 logger = logging.getLogger(__name__)
 
@@ -40,20 +37,3 @@ class ToolRegistry:
         return [tool.to_openai_schema() for tool in self._tools.values()]
 
     # ---- 分发执行（容错兜底核心）----
-    def dispatch(self, name: str, arguments: dict) -> ToolCallResult:
-        started = time.time()
-        tool = self._tools.get(name)
-        if tool is None:
-            logger.warning("调用了未注册的工具: %s", name)
-            return ToolCallResult(ok=False, error=f"工具不存在: {name}（可用: {self.list_tools()}）")
-        try:
-            result = tool.execute(arguments or {})
-        except Exception as e:
-            # 工具内部 bug 不打断 Loop；作为失败结果回注，让 LLM 看到并换思路
-            logger.exception("工具执行异常 tool=%s args=%s", name, arguments)
-            return ToolCallResult(ok=False, error=f"工具执行异常: {e}")
-        elapsed = (time.time() - started) * 1000
-        logger.info(
-            "工具执行完成 tool=%s ok=%s 耗时=%.0fms", name, result.ok, elapsed
-        )
-        return result

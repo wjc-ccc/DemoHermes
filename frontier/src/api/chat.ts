@@ -1,5 +1,5 @@
 import config from '@/config'
-import type { ChatReply } from '@/types'
+import type { ChatReply } from '@/types/chat'
 import { request } from './client'
 
 /**

@@ -4,14 +4,13 @@ from __future__ import annotations
 from agent.channel import media
 from agent.core.building_messages import build_user_message
 from agent.core.precision.percision_engine import PrecisionBuilder
-from agent.core.types import InboundEvent, SessionSource
+from agent.types.channel import InboundEvent, SessionSource
 from agent.model.claude import ClaudeModel
 from agent.model.media_messages import prepare_model_messages
 
 
 def test_image_model_mapping_and_text_fallback(tmp_path, monkeypatch):
     monkeypatch.setattr(media, "MEDIA_ROOT", tmp_path / "media")
-    monkeypatch.setattr("agent.model.media_messages.MEDIA_ROOT", tmp_path / "media")
     part = media.save_media_bytes(b"image bytes", channel="qq", file_name="x.png", mime_type="image/png")
     event = InboundEvent(text="这是什么？", content=[part], source=SessionSource(channel="qq", chat_id="u"))
     message = build_user_message(event)

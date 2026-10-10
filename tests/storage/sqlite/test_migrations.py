@@ -4,10 +4,11 @@ import hashlib
 import json
 from pathlib import Path
 
-from agent.core.memory import MemoryScope, UserMemoryItem
-from agent.core.memory.memory_item import content_sha256
-from agent.core.memory.types.memory_source_types import EvidenceRef
-from agent.storage.sqlite import RuntimeStorage, connect
+from agent.types.memory.scope import MemoryScope
+from agent.types.memory.items import UserMemoryItem, content_sha256
+from agent.types.memory.source import EvidenceRef
+from agent.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.storage.sqlite.database import connect
 from agent.storage.sqlite.migrations import migrate
 from agent.storage.sqlite.memory_store import put_user_memory
 from agent.storage.sqlite.job_store import enqueue_job

@@ -1,6 +1,7 @@
 """Turn 与不可变消息/工具事实。提交时机仍由现有 Gateway 决定。"""
+from agent.types.conversation import ToolCall
 import json
-from ...core.memory.types.memory_source_types import TurnRecord
+from agent.types.memory.source import TurnRecord
 from .codec import milliseconds, dumps
 from .errors import IntegrityError, AuditConflictError
 
@@ -92,7 +93,7 @@ class SqliteExecutionStore:
                 return None
             messages = [json.loads(r[0]) for r in conn.execute(
                 'SELECT payload_json FROM messages WHERE turn_id=? ORDER BY seq_id',(turn_id,))]
-            calls = [json.loads(r[0]) for r in conn.execute(
+            calls = [ToolCall.model_validate_json(r[0]).observation_payload() for r in conn.execute(
                 'SELECT payload_json FROM tool_calls WHERE turn_id=? ORDER BY created_at,tool_call_id',(turn_id,))]
         return dict(turn_id=row[0],session_id=row[1],sequence_no=row[2],status=row[3],
                     started_at=row[4]/1000,completed_at=row[5]/1000,error=row[6],

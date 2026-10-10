@@ -5,10 +5,15 @@
 
 ## 1. 模块边界
 
-- `core/types.py` 定义全局 `Anchor` 和 `AnchorFact`，只保存数据。
-- `precision/percision_engine.py` 负责 load → grade → build、预算和 Anchor 覆盖。
-- `precision/percision_anchor.py` 负责模型 Adapter、提示词和 Anchor 渲染。
+- `agent/types/context.py` 定义全局 `Anchor` 和 `AnchorFact`，并提供纯文本投影。
+- `precision/percision_engine.py` 负责 load → grade → build、预算与阶段编排。
+- `precision/percision_anchor.py` 负责模型 Adapter、五槽内容、覆盖/digest 校验、生成重试和 Anchor 投影。
+- `precision/errors.py` 集中定义预算、Anchor 构建/压缩和判官错误；原 `core/context_budget.py` 已移除。
+- `precision/context_item.py` 保存内部条目与共享加载状态；`priority.py` 保持轻量枚举入口。
 - `precision/percision_trace.py` 只记录观测，不参与分级决策。
+- `precision/percision_admission.py` 负责条目级上下文准入（规则、相关度、分档、投影），见 §7。
+- `precision/percision_judge.py` 定义 `ContextJudge` 协议和通用 System One Adapter（端点、模型、密钥全部注入）。
+- `agent/provider.py` 的 `build_context_judge` / `build_admission_policy` 决定用哪个判官 provider 和准入模式。
 
 `Session.messages` 是历史事实来源；`Session.context_anchor` 是可重建的压缩缓存。`Session.summary` 只给旧五槽文本做迁移提示，不能声明覆盖范围。
 
@@ -24,12 +29,13 @@ PrecisionBuilder.build(
     budget=None,
     token_estimator=None,
     trace_id="context",
+    iteration=None,
 ) -> PrecisionResult
 ```
 
 Engine 构造时可注入 `anchor_builder`。AgentLoop 默认用 `ModelAnchorBuilder(anchor_model or self.model)`，无工具、单次 JSON 调用。
 
-`PrecisionResult` 保留 `messages`、`metrics`、`records`、`exposed_refs`、`anchor`、`anchor_updated`。Engine 不修改 Session；AgentLoop 只在 `anchor_updated=True` 时把 `result.anchor` 写回 `Session.context_anchor`。`summary` 属性只是只读渲染，新代码不要靠它持久化。
+`PrecisionResult` 保留 `messages`、`metrics`、`records`、`exposed_refs`、`anchor`、`anchor_updated`。Engine 不修改 Session；AgentLoop 只在 `anchor_updated=True` 时把 `result.anchor` 写回 `Session.context_anchor`。旧 `summary` 与 `context_anchor_payload` 便利属性已删除；直接使用结构化 `anchor`。
 
 失败分两条路径，都发生在主模型调用之前：
 
@@ -101,7 +107,9 @@ PrecisionResult → Trace → AgentLoop 写回 context_anchor → Gateway 持久
 
 `PrecisionMetrics` 在原有预算/丢弃/P3 指标之外，增加 `anchor_status`（`not_needed` / `reused` / `created` / `extended` / `raw_fallback`）、`anchor_covered_turns`、`anchor_tokens`、`anchor_builder_attempts`、`anchor_error_code`。
 
-Trace 仍是旁路滚动窗口：同一 `turn_id` 的多次 ReAct 构建只占一条；`memory_read` 成功才记 P3 hit。
+Trace 仍是旁路滚动窗口：同一 `turn_id` 只占一轮，但 `builds` 保留每个 `iteration` 的完整 messages、实际工具定义、records 和指标。快照在模型调用前深拷贝，重试复用；构建失败的迭代 messages 为 None，并保存错误码。成功 `memory_read` 仍记录 P3 hit。
+
+Gateway 将完整 builds 写入现有 Turn payload。`/api/debug/memory/trace?turn_id=...&iteration=...` 按需返回该次全文与迭代摘要，列表不返回 messages。旧记录明确返回 `full_context_not_saved`；构建失败不使用上一迭代全文。Loop 的调用大模型步骤和 Precision Trace 表都可打开全文，切换文本/JSON 并复制；沿用 `--enable-memory-debug` 与 HTTP 认证。多媒体保留附件引用，不在快照写入 base64。
 
 `Session.context_anchor` 接受 `Anchor | dict | None`：
 
@@ -110,3 +118,33 @@ Trace 仍是旁路滚动窗口：同一 `turn_id` 的多次 ReAct 构建只占�
 - 损坏字典保留给 Precision 识别和降级，不阻断 Session 构造。
 
 SQLite 的 Session payload 自动序列化 Anchor，不需要新表。原始 messages 始终单独持久化，因此 Anchor 丢失、损坏或版本不兼容时都可重建。
+
+## 7. 条目级上下文准入（第一级压缩）
+
+Anchor 之前先对 P2 历史中的工具结果逐条定案 keep / trim / defer；仍超阈值才由 Anchor 做整轮语义压缩。
+
+**资格**：只判未被 Anchor 覆盖、`role=tool`、非报错、至少隔一个 user 轮次、长度 ≥ `min_chars`（2000 字）的结果。用户消息、assistant 消息、P0/P1 一律不碰。
+
+**打分**（0–1，越高越需要全文）：
+
+1. 规则：之后同一调用重跑、同一文件重读或被修改 → 0 分，不问判官。
+2. 相关度：调用参数中的词项（文件名、标识符、检索词）在之后对话里出现的比例。
+3. 判官：每条两题——`kind`（error / listing / content / log / data / other）与 `still_needed`（P）；分数 `0.8·P + 0.2·相关度`。
+4. 判官缺席或失败：`0.6·kind 先验 + 0.4·相关度`，kind 由工具名推断。
+
+**分档**（按本次用量，`AdmissionPolicy.bands`）：
+
+| 用量 | defer | trim |
+| --- | --- | --- |
+| < 50% | 不产生新定案 | |
+| ≥ 50% | score ≤ 0.15 | score < 0.50 |
+| ≥ 70% | score ≤ 0.25 | score < 0.60 |
+| ≥ 85% | score ≤ 0.35 | score < 0.70 |
+
+**投影**：trim 保留首尾各 600 字；defer 换成一行占位符。两者都带 `memory_read(reference="tool:<id>")`（没注册 memory_read 时提示重新执行）。只改发给模型的消息副本，`tool_call_id` 不变；`ContextItem.raw_message` 保留原文，Anchor digest 只按原文计算。
+
+**粘住与反馈**：定案按 message_id 存进 `Session.context_verdicts`，随 Session payload 持久化；已定案条目不重判，用量升档时只按原分数升级。模型 `memory_read` 读回被 trim/defer 的结果即判错：AgentLoop 将其钉住为全文（`missed=True`）并发 `context_admission_miss` 事件。
+
+**模式**：`off` 与未接入完全一致；`shadow` 照常判、写定案和 `PrecisionRecord.admission_*`，但不改消息；`active` 生效。生产由 `agent/provider.py` 按 `CONTEXT_ADMISSION_MODE`（默认 shadow）与 `JEVMODEL_API_KEY` / `JEV_BASE_URL`（默认 `https://jevmodel.org/v1/systemone`）/ `JEV_MODEL`（默认 `jev-latest`）/ `JEV_TIMEOUT` / `JEV_BATCH_SIZE` 装配；换 provider 只改 `build_context_judge`。
+
+**指标**：`admission_candidates / judged_count / judge_failures / judge_latency_ms / rule_count / trimmed_count / deferred_count / saved_tokens / missed_count`。shadow 下 trimmed / deferred / saved 是"若生效"的值。

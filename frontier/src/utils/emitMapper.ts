@@ -1,4 +1,4 @@
-import type { EmitStepView, LoopEvent } from '@/types'
+import type { EmitStepView, LoopEvent } from '@/types/events'
 
 interface EmitMeta {
   icon: string
@@ -70,5 +70,6 @@ export function mapEmit(event: Partial<LoopEvent> | null | undefined): EmitStepV
     title: meta.title,
     cls,
     detail: formatDetail(type, data),
+    ...(type === 'llm_request' ? { turnId: event?.turn_id, iteration: Number(data.iteration) || undefined } : {}),
   }
 }

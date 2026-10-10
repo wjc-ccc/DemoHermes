@@ -14,8 +14,8 @@ class SqliteAuditStore:
         return entry.audit_id
 
     def list_recent(self, n=20):
-        from ...evolution.audit import EvolutionAuditEntry
+        from agent.types.storage import AuditEntry
         with self.db.read() as conn:
             rows=conn.execute("SELECT payload_json FROM audit_events ORDER BY created_at DESC,id DESC LIMIT ?",
                               (max(1,min(n,500)),)).fetchall()
-        return [EvolutionAuditEntry.model_validate_json(r[0]) for r in rows]
+        return [AuditEntry.model_validate_json(r[0]) for r in rows]

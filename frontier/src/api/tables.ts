@@ -1,4 +1,4 @@
-import type { FilterValue, TableCatalog, TablePage } from '@/types'
+import type { FilterValue, TableCatalog, TablePage } from '@/types/tables'
 import { request } from './client'
 
 /**

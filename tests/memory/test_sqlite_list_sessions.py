@@ -1,9 +1,9 @@
 """SqliteSessionStore.list_sessions — 与 DictSessionStore 对齐的观测面。"""
-from agent.storage.sqlite import RuntimeStorage
-from agent.core.types import Message
-from agent.core.memory import MemoryScope
-from agent.storage.sqlite import SqliteSessionStore
-from agent.core.memory.types import TurnRecord
+from agent.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.types.conversation import Message
+from agent.types.memory.scope import MemoryScope
+from agent.storage.sqlite.session_store import SqliteSessionStore
+from agent.types.memory.source import TurnRecord
 
 _SCOPE = MemoryScope(tenant_id="frontier", user_id="web-user")
 

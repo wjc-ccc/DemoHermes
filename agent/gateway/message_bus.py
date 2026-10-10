@@ -2,8 +2,8 @@
 MessageBus — 进程内消息总线（入站/出站双队列）
 
 数据流向：
-    Channel --publish_inbound--> [in_dto]  --Gateway worker 消费-->
-    [out_dto] --publish_outbound--> Channel.deliver_to_OutboundEvent
+    Channel --publish_inbound--> [inbound]  --Gateway dispatch 消费-->
+    [outbound] --publish_outbound--> Channel.deliver_to_OutboundEvent
 
 这不是独立进程的 message bus，而是同进程 queue.Queue 的封装：
     - 各 Channel 只 put，不碰 Session/Loop
@@ -17,19 +17,13 @@ from __future__ import annotations
 import queue
 from typing import Generic, TypeVar
 
-from ..core.types import InboundEvent, OutboundReply
+from agent.types.channel import InboundEvent, OutboundReply
 
 T = TypeVar("T")
 
 
-"""
-本质两个queue，一个负责进入一个负责出，消费者和生产者只有gateway
-提供的功能就是put、get、大小约束、结束信号、长度观测
-"""
-
-
-class _DtoQueue(Generic[T]):
-    """单条 DTO 队列：put / get / 结束信号 / 长度观测。"""
+class _BusQueue(Generic[T]):
+    """单条队列：put / get / 结束信号 / 长度观测。"""
 
     def __init__(self, name: str, maxsize: int = 0):
         self.name = name
@@ -43,7 +37,7 @@ class _DtoQueue(Generic[T]):
         return self._q.get(block=True, timeout=timeout)
 
     def put_sentinel(self) -> None:
-        """结束信号，worker 收到 None 后退出。"""
+        """结束信号，消费线程收到 None 后退出。"""
         self._q.put(None)
 
     def qsize(self) -> int:
@@ -51,11 +45,11 @@ class _DtoQueue(Generic[T]):
 
 
 class MessageBus:
-    """一对入站/出站 DTO 队列，Gateway 与 Channel 之间的唯一传送带。"""
+    """一对入站/出站队列，Gateway 与 Channel 之间的唯一传送带。"""
 
     def __init__(self, maxsize: int = 0):
-        self._inbound: _DtoQueue[InboundEvent] = _DtoQueue("in_dto", maxsize=maxsize)
-        self._outbound: _DtoQueue[OutboundReply] = _DtoQueue("out_dto", maxsize=maxsize)
+        self._inbound: _BusQueue[InboundEvent] = _BusQueue("inbound", maxsize=maxsize)
+        self._outbound: _BusQueue[OutboundReply] = _BusQueue("outbound", maxsize=maxsize)
 
     # ---- 输入侧：Channel → Gateway ----
     def publish_inbound(self, event: InboundEvent) -> None:

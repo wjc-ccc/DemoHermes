@@ -1,16 +1,15 @@
 """Slice 8: 整轮 ContextBudget——最终 messages 不超过输入预算，协议组不可拆（§4.3）。"""
-from agent.core.context_budget import ContextBudget
-from agent.core.agent_loop import AgentLoop
-from agent.core.memory import (
-    MarkdownBook,
-    MemoryContextLoader,
-    MemoryLayer,
-    MemoryScope,
-    MemorySnapshot,
-    ensure_scope_dir,
-)
-from agent.core.types import Message, Session
-from agent.model.baseStructure import BaseModel, ModelResponse
+from agent.types.context import ContextBudget
+from tests.loop_fakes import make_loop
+from agent.storage.sqlite.markdown_documents import MarkdownDocuments
+from agent.core.memory.memory_context_loader import MemoryContextLoader
+from agent.types.memory.layers import MemoryLayer
+from agent.types.memory.scope import MemoryScope
+from agent.types.memory.snapshot import MemorySnapshot
+from agent.core.memory.memory_scope import ensure_scope_dir
+from agent.types.conversation import Message, Session
+from agent.model.baseStructure import BaseModel
+from agent.types.model import ModelResponse
 from tests.anchor_fakes import DeterministicAnchorBuilder
 
 _SCOPE = MemoryScope(tenant_id="cli", user_id="u1")
@@ -40,13 +39,8 @@ class _FixedCostEstimator:
 
 def _snapshot(tmp_path, content: str = "偏好：先给结论") -> MemorySnapshot:
     root = tmp_path / "memory"
-    MarkdownBook(
-        ensure_scope_dir(root, _SCOPE) / "MEMORY.md",
-        layer=MemoryLayer.USER,
-        type="long_term_fact",
-        scope=_SCOPE,
-        writable=True,
-    ).replace(content)
+    documents = MarkdownDocuments(root)
+    documents.replace_user(_SCOPE, content, expected_hash=documents.read(_SCOPE).disk_hash, actor="human", reason="test setup")
     return MemoryContextLoader(root).freeze(_SCOPE, session_id="s1")
 
 
@@ -80,13 +74,15 @@ def test_long_session_request_stays_within_input_budget(tmp_path):
     estimator = _FixedCostEstimator(per_message=100)
 
     model = _FakeModel([ModelResponse(text="回答")])
-    loop = AgentLoop(model=model, anchor_builder=DeterministicAnchorBuilder())
+    loop = make_loop(
+        model=model, anchor_builder=DeterministicAnchorBuilder(),
+        budget=budget, token_estimator=estimator,
+    )
     session = _history_session(turns=3)
 
     result = loop.run_turn(
         session, Message(role="user", content_text="最新问题"),
         memory_snapshot=snapshot,
-        context_budget=budget, token_estimator=estimator,
     )
 
     assert result.completed, result.error
@@ -108,28 +104,28 @@ def test_output_token_reservation_can_make_recent_window_impossible(tmp_path):
     estimator = _FixedCostEstimator(per_message=100)
 
     success_model = _FakeModel([ModelResponse(text="回答")])
-    success = AgentLoop(
-        model=success_model, anchor_builder=DeterministicAnchorBuilder()
-    ).run_turn(
-        _history_session(turns=3), Message(role="user", content_text="最新问题"),
-        memory_snapshot=snapshot,
-        context_budget=ContextBudget(
+    success = make_loop(
+        model=success_model, anchor_builder=DeterministicAnchorBuilder(),
+        budget=ContextBudget(
             model_context_tokens=1100, reserved_output_tokens=300
         ),
         token_estimator=estimator,
+    ).run_turn(
+        _history_session(turns=3), Message(role="user", content_text="最新问题"),
+        memory_snapshot=snapshot,
     )
     assert success.completed
 
     failed_model = _FakeModel([ModelResponse(text="不应调用")])
-    failed = AgentLoop(
-        model=failed_model, anchor_builder=DeterministicAnchorBuilder()
-    ).run_turn(
-        _history_session(turns=3), Message(role="user", content_text="最新问题"),
-        memory_snapshot=snapshot,
-        context_budget=ContextBudget(
+    failed = make_loop(
+        model=failed_model, anchor_builder=DeterministicAnchorBuilder(),
+        budget=ContextBudget(
             model_context_tokens=1100, reserved_output_tokens=400
         ),
         token_estimator=estimator,
+    ).run_turn(
+        _history_session(turns=3), Message(role="user", content_text="最新问题"),
+        memory_snapshot=snapshot,
     )
     assert failed.error == "context_budget_exceeded"
     assert failed_model.calls == []
@@ -143,13 +139,13 @@ def test_latest_user_and_recent_two_turns_are_never_trimmed(tmp_path):
 
     model = _FakeModel([ModelResponse(text="回答")])
     session = _history_session(turns=3)
-    result = AgentLoop(
-        model=model, anchor_builder=DeterministicAnchorBuilder()
+    result = make_loop(
+        model=model, anchor_builder=DeterministicAnchorBuilder(),
+        budget=ContextBudget(model_context_tokens=1000, reserved_output_tokens=700),
+        token_estimator=estimator,
     ).run_turn(
         session, Message(role="user", content_text="最新问题"),
         memory_snapshot=snapshot,
-        context_budget=ContextBudget(model_context_tokens=1000, reserved_output_tokens=700),
-        token_estimator=estimator,
     )
 
     assert not result.completed
@@ -160,8 +156,8 @@ def test_latest_user_and_recent_two_turns_are_never_trimmed(tmp_path):
 def _tool_turn_session() -> Session:
     """第1轮普通对话 + 第2轮带两次工具调用的完整协议组。"""
     from agent.core.building_messages import build_assistant_message, build_tool_message
-    from agent.core.types import ToolCall
-    from agent.model.baseStructure import ToolCallRequest
+    from agent.types.conversation import ToolCall
+    from agent.types.model import ToolCallRequest
 
     session = Session(session_id="s1")
     session.add_message(Message(role="user", content_text="第1轮问题"))
@@ -190,15 +186,15 @@ def test_assistant_tool_call_and_tool_results_are_trimmed_as_one_group(tmp_path)
 
     def run(max_input: int):
         model = _FakeModel([ModelResponse(text="回答")])
-        result = AgentLoop(
-            model=model, anchor_builder=DeterministicAnchorBuilder()
-        ).run_turn(
-            _tool_turn_session(), Message(role="user", content_text="最新问题"),
-            memory_snapshot=snapshot,
-            context_budget=ContextBudget(
+        result = make_loop(
+            model=model, anchor_builder=DeterministicAnchorBuilder(),
+            budget=ContextBudget(
                 model_context_tokens=max_input + 300, reserved_output_tokens=300
             ),
             token_estimator=estimator,
+        ).run_turn(
+            _tool_turn_session(), Message(role="user", content_text="最新问题"),
+            memory_snapshot=snapshot,
         )
         return result, model.calls
 
@@ -234,13 +230,13 @@ def test_experience_recall_is_present_in_context_with_history(tmp_path):
     )
     estimator = _CharCostEstimator()
     model = _FakeModel([ModelResponse(text="回答")])
-    result = AgentLoop(
-        model=model, anchor_builder=DeterministicAnchorBuilder()
+    result = make_loop(
+        model=model, anchor_builder=DeterministicAnchorBuilder(),
+        budget=ContextBudget(model_context_tokens=10**9, reserved_output_tokens=1),
+        token_estimator=estimator,
     ).run_turn(
         _history_session(turns=3), Message(role="user", content_text="最新问题"),
         memory_snapshot=snapshot,
-        context_budget=ContextBudget(model_context_tokens=10**9, reserved_output_tokens=1),
-        token_estimator=estimator,
     )
 
     assert result.completed, result.error
@@ -260,12 +256,12 @@ def test_same_messages_and_budget_produce_same_trimmed_context(tmp_path):
     sent_runs = []
     for _ in range(2):
         model = _FakeModel([ModelResponse(text="回答")])
-        result = AgentLoop(
-            model=model, anchor_builder=DeterministicAnchorBuilder()
+        result = make_loop(
+            model=model, anchor_builder=DeterministicAnchorBuilder(),
+            budget=budget, token_estimator=estimator,
         ).run_turn(
             _history_session(turns=3), Message(role="user", content_text="最新问题"),
             memory_snapshot=snapshot,
-            context_budget=budget, token_estimator=estimator,
         )
         assert result.completed, result.error
         sent_runs.append(model.calls[0])
@@ -280,13 +276,13 @@ def test_impossible_required_context_returns_context_budget_exceeded_without_mod
     estimator = _FixedCostEstimator(per_message=100)
 
     model = _FakeModel([ModelResponse(text="不应被调用")])
-    result = AgentLoop(
-        model=model, anchor_builder=DeterministicAnchorBuilder()
+    result = make_loop(
+        model=model, anchor_builder=DeterministicAnchorBuilder(),
+        budget=ContextBudget(model_context_tokens=500, reserved_output_tokens=300),
+        token_estimator=estimator,
     ).run_turn(
         _history_session(turns=3), Message(role="user", content_text="最新问题"),
         memory_snapshot=snapshot,
-        context_budget=ContextBudget(model_context_tokens=500, reserved_output_tokens=300),
-        token_estimator=estimator,
     )
 
     assert not result.completed

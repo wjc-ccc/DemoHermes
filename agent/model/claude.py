@@ -20,7 +20,8 @@ from typing import Any
 
 import httpx
 
-from .baseStructure import BaseModel, ModelResponse, ToolCallRequest
+from agent.model.baseStructure import BaseModel
+from agent.types.model import ModelResponse, ToolCallRequest
 from ..provider import ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL, DEEPSEEK_API_KEY, MODEL
 
 logger = logging.getLogger(__name__)

@@ -1,8 +1,7 @@
 """四层确定性验收；开放语义需要调用方注册任务专用检查。"""
 import json
 from jsonschema import Draft202012Validator
-from ..decision import GateDecision
-from ..ledger import digest
+from agent.types.action.execution import GateDecision, digest
 
 
 class ChainGates:

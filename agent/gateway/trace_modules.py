@@ -70,6 +70,8 @@ _PRECISION_COLUMNS = (
     "trace_id",
     "session_id",
     "turn_id",
+    "context",
+    "context_iterations",
     "created_at",
     "conversation",
     "budget",
@@ -213,6 +215,8 @@ def _precision_row(
         "created_at": None if created_at is None else str(created_at),
         "conversation": conversation,
         "records": _json_cell(trace.get("records") or []),
+        "context": "查看完整上下文",
+        "context_iterations": len(trace.get("builds") or []),
         "exposed_refs": _json_cell(trace.get("exposed_refs") or []),
         "p3_hit_refs": _json_cell(trace.get("p3_hit_refs") or []),
     }

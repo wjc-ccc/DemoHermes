@@ -1,5 +1,7 @@
 """评测通过生产装配运行；离线测试仅替换外部模型边界。"""
+from agent.types.runtime import RuntimeConfig
 from agent import main
+from agent.runtime import build_runtime
 from agent.model.registry import ModelRegistry
 from types import SimpleNamespace
 import pytest
@@ -9,14 +11,14 @@ def test_eval_backend_keeps_database_and_manuals_in_selected_directory(tmp_path,
     registry = ModelRegistry()
     registry.register(SimpleNamespace(name="offline"))
     monkeypatch.setattr(ModelRegistry, "default", classmethod(lambda cls: registry))
-    gateway = main.build_gateway(data_root=tmp_path)
+    runtime = build_runtime(RuntimeConfig(data_root=tmp_path))
     try:
-        assert gateway.observe_databases["agent"] == tmp_path / "agent.db"
+        assert runtime.gateway.store.db.path == tmp_path / "agent.db"
         assert (tmp_path / "agent.db").exists()
         assert (tmp_path / "skills").is_dir()
         assert (tmp_path / "memory").is_dir()
     finally:
-        gateway.stop()
+        runtime.stop()
 
 
 @pytest.mark.parametrize("cards,expected,error", [
@@ -37,7 +39,7 @@ def test_eval_does_not_count_missing_extra_wrong_kind_or_merged_cards_as_pass(ca
 
 def test_http_dialogue_background_card_and_evidence_can_be_read_in_new_session(tmp_path, monkeypatch):
     import json
-    from agent.model.baseStructure import ModelResponse, ToolCallRequest
+    from agent.types.model import ModelResponse, ToolCallRequest
     from agent.eval.memory_behavior import run_suite
 
     class ExternalModelFixture:
@@ -91,7 +93,7 @@ def test_http_dialogue_background_card_and_evidence_can_be_read_in_new_session(t
 
 
 def test_multi_session_case_extracts_after_each_session(tmp_path, monkeypatch):
-    from agent.model.baseStructure import ModelResponse
+    from agent.types.model import ModelResponse
     from agent.eval.memory_behavior import run_suite
 
     class EmptyExternalModel:
@@ -115,7 +117,7 @@ def test_multi_session_case_extracts_after_each_session(tmp_path, monkeypatch):
 
 
 def test_malformed_model_proposal_is_not_a_successful_empty_extraction(tmp_path, monkeypatch):
-    from agent.model.baseStructure import ModelResponse
+    from agent.types.model import ModelResponse
     from agent.eval.memory_behavior import run_suite
 
     class InvalidExternalModel:

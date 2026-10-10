@@ -1,6 +1,5 @@
 from jsonschema import Draft202012Validator
-from ..decision import GateDecision
-from ..ledger import digest
+from agent.types.action.execution import GateDecision, digest
 from ..policy import RISK_ORDER
 from .memory import check_memory
 from .skill import check_skill

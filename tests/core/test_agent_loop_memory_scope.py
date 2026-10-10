@@ -3,11 +3,12 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 
-from agent.core.agent_loop import AgentLoop
-from agent.core.memory import MemoryScope
-from agent.core.types import Message, Session
-from agent.model.baseStructure import ModelResponse, ToolCallRequest
-from agent.tools.base import Tool, ToolCallResult
+from tests.loop_fakes import make_loop
+from agent.types.memory.scope import MemoryScope
+from agent.types.conversation import Message, Session
+from agent.types.model import ModelResponse, ToolCallRequest
+from agent.tools.base import Tool
+from agent.types.tools import ToolCallResult
 from agent.tools.registry import ToolRegistry
 
 
@@ -19,9 +20,9 @@ class _Search(Tool):
         self.calls = []
         self.lock = Lock()
 
-    def execute(self, arguments):
+    def execute(self, arguments, *, context):
         with self.lock:
-            self.calls.append((arguments["query"], arguments["_scope"].storage_key))
+            self.calls.append((arguments["query"], context.memory_scope.storage_key))
         return ToolCallResult(ok=True, result_text="[]")
 
 
@@ -41,7 +42,7 @@ def test_parallel_users_pass_distinct_runtime_scope_to_memory_tools():
     search = _Search()
     registry = ToolRegistry()
     registry.register(search)
-    loop = AgentLoop(model=_Model(), tool_registry=registry)
+    loop = make_loop(model=_Model(), tools=registry)
     scopes = (MemoryScope(tenant_id="cli", user_id="alice"),
               MemoryScope(tenant_id="cli", user_id="bob"))
 

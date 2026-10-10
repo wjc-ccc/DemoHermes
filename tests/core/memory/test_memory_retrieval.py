@@ -1,16 +1,17 @@
 from __future__ import annotations
+from agent.types.tools import ToolInvocationContext
 
 import json
 from datetime import datetime, timedelta, timezone
 
-from agent.core.memory.markdown_book import MarkdownBook
-from agent.core.memory.memory_item import UserMemoryItem, content_sha256
-from agent.core.memory.types.card_types import UserCardStatus
-from agent.core.memory.memory_layer import MemoryLayer
-from agent.core.memory.memory_retrieval import MemoryRetriever
-from agent.core.memory.memory_scope import MemoryScope
-from agent.core.memory.types.memory_source_types import EvidenceRef
-from agent.storage.sqlite import RuntimeStorage
+from agent.storage.sqlite.markdown_documents import MarkdownDocuments
+from agent.types.memory.items import UserMemoryItem, content_sha256
+from agent.types.memory.categories import UserCardStatus
+from agent.types.memory.layers import MemoryLayer
+from agent.storage.sqlite.memory_retrieval import MemoryRetriever
+from agent.types.memory.scope import MemoryScope
+from agent.types.memory.source import EvidenceRef
+from agent.storage.sqlite.runtime_storage import RuntimeStorage
 from agent.tools.memory_tools import MemoryReadTool, MemorySearchTool
 
 
@@ -74,12 +75,12 @@ def test_search_and_read_are_scope_bound_and_page_raw_sources(tmp_path):
     path = memory_root / user.storage_key / "MEMORY.md"
     path.parent.mkdir(parents=True)
     path.write_text("# 手册\npytest 项目约定", encoding="utf-8")
-    snapshot = MarkdownBook(path, layer=MemoryLayer.USER, type="long_term_fact", scope=user).read()
+    snapshot = MarkdownDocuments(memory_root).read(user).snapshot
     document_id = storage.documents.register(snapshot)
     outside = tmp_path / "outside.md"
     outside.write_text("pytest 私有文件", encoding="utf-8")
     outside_id = storage.documents.register(
-        MarkdownBook(outside, layer=MemoryLayer.USER, type="long_term_fact", scope=user).read())
+        snapshot.model_copy(update={"path": str(outside), "content": "pytest 私有文件"}))
     retriever = MemoryRetriever(storage.db, document_root=memory_root)
 
     card_hits = retriever.search(user, "pytest", source="card")
@@ -109,8 +110,8 @@ def test_search_and_read_are_scope_bound_and_page_raw_sources(tmp_path):
     assert "tool:tool-memory" not in {h.reference for h in retriever.search(user, "pytest", source="raw")}
 
     search_tool, read_tool = MemorySearchTool(retriever), MemoryReadTool(retriever)
-    assert search_tool.execute({"query": "pytest"}).ok is False
-    assert search_tool.execute({"_scope": user, "query": "pytest", "mode": "semantic"}).ok is False
-    result = search_tool.execute({"_scope": user, "query": "pytest", "source": "history"})
+    assert search_tool.execute({"query": "pytest"}, context=ToolInvocationContext()).ok is False
+    assert search_tool.execute({"query": "pytest", "mode": "semantic"}, context=ToolInvocationContext(memory_scope=user)).ok is False
+    result = search_tool.execute({"query": "pytest", "source": "history"}, context=ToolInvocationContext(memory_scope=user))
     assert result.ok and result.data["hits"][0]["reference"] == "message:message-1"
-    assert read_tool.execute({"_scope": other, "reference": "message:message-1"}).ok is False
+    assert read_tool.execute({"reference": "message:message-1"}, context=ToolInvocationContext(memory_scope=other)).ok is False

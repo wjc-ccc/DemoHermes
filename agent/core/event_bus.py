@@ -9,36 +9,11 @@ from __future__ import annotations
 
 import queue
 import threading
-import time
-import uuid
-from typing import Literal
-
-from pydantic import BaseModel as PydanticModel
-from pydantic import Field
-
-### 参考事件类型
-EventType = Literal[
-    "turn_start",
-    "llm_request",
-    "llm_response",
-    "tool_call_start",
-    "tool_call_result",
-    "turn_end",
-    "turn_error",
-    "outbound_reply",
-]
-
-## 全局唯一事件类型 方便前端展示和回放
-class LoopEvent(PydanticModel):
-    event_id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
-    type: str = Field(default_factory=str, description="事件类型，见模块 docstring")
-    turn_id: str = Field(default_factory=str, description="一轮对话的标识，前端按它分组展示")
-    session_key: str = Field(default_factory=str)
-    session_id: str = Field(default_factory=str)
-    data: dict = Field(default_factory=dict, description="各事件类型自定义载荷")
-    created_at: float = Field(default_factory=time.time)
 
 
+from agent.types.events import LoopEvent
+
+### 简单的管道 然后设定一个queue list 订阅的时候就加入一个queue 发布的时候然后通过lock锁住对应的queue list 然后通过put_nowait 放入对应的queue
 class EventBus:
     """进程内发布/订阅总线。订阅满时丢事件（观测允许丢，主链路不允许堵）。"""
 
@@ -67,6 +42,3 @@ class EventBus:
                 q.put_nowait(event)
             except queue.Full:
                 pass
-
-
-default_event_bus = EventBus()

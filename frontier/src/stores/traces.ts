@@ -2,7 +2,8 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { listTraceModules, listTraces } from '@/api/traces'
 import config from '@/config'
-import type { FilterValue, TraceModule, TraceSheet } from '@/types'
+import type { FilterValue } from '@/types/tables'
+import type { TraceModule, TraceSheet } from '@/types/traces'
 
 const DISABLED = 'memory debug disabled'
 

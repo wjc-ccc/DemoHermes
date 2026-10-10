@@ -3,14 +3,14 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from ...core.memory.memory_scope import MemoryScope
-from ...core.memory.types.memory_source_types import SessionReset, TurnRecord
-from ...core.types import Message, Session, ToolCall
+from agent.types.memory.scope import MemoryScope
+from agent.types.conversation import SessionReset, Message, Session, ToolCall
+from agent.types.memory.source import TurnRecord
 from .codec import milliseconds
 from .errors import AuditConflictError, SessionIntegrityError
 from .execution_store import insert_turn, insert_session_facts
 from .job_store import enqueue_job
-from .types import ArchivedMessage
+from agent.types.storage import ArchivedMessage, TurnCommitResult, MemoryMutationReceipt
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +80,7 @@ class SqliteSessionStore:
         """同一事务提交 Session、Turn、事实和待审 outbox。"""
         if turn.session_id != session.session_id:
             raise SessionIntegrityError('Turn 属于其他会话')
+        receipts = []
         with self.db.write() as conn:
             self._upsert_session(conn,session,scope)
             sequence = insert_turn(conn,turn)
@@ -90,15 +91,15 @@ class SqliteSessionStore:
                 self._action_commit_hook.before_commit(conn, session, turn)
             if self._card_mutator is not None and turn.completed and not turn.interrupted:
                 for call in session.tool_calls:
-                    if (call.trajectory_id != turn.turn_id or call.tool_name != 'memory_edit'
-                        or call.status != 'success' or not isinstance(call.tool_call_result, dict)):
+                    if call.trajectory_id != turn.turn_id or not call.ok or call.tool_name != "memory_edit":
                         continue
-                    mutation = call.tool_call_result.get('memory_mutation')
+                    mutation = call.pending_mutation
                     if mutation is not None:
                         source_message_id = turn.user_message_id
                         if self._action_commit_hook is not None:
-                            source_message_id = call.metadata.get('action', {}).get('source_message_id', source_message_id)
+                            source_message_id = call.action_evidence.source_message_id if call.action_evidence is not None else source_message_id
                         item = self._card_mutator.apply(conn, scope, source_message_id, mutation)
+                        receipts.append(MemoryMutationReceipt(item.item_id, item.revision, item.content_hash))
                         if self._action_commit_hook is not None:
                             self._action_commit_hook.record_mutation(conn, call, item)
             if self._action_commit_hook is not None:
@@ -111,6 +112,8 @@ class SqliteSessionStore:
                     dedupe_key=f'memory.extract:{self._extractor_version}:{turn.turn_id}',
                     input={'turn_id':turn.turn_id,'from_turn_no':sequence,'to_turn_no':sequence,
                            'trigger_type':'turn_committed'})
+
+        return TurnCommitResult(turn.turn_id, persisted=True, mutations=tuple(receipts))
 
     def close_and_reset(self, session_key, session, *, scope, channel='', author_id=''):
         with self.db.write() as conn:

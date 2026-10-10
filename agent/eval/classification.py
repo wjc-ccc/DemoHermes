@@ -1,11 +1,7 @@
 """Memory 抽取等固定标签任务的指标计算。"""
 from __future__ import annotations
 
-from .types import (
-    ClassificationReport,
-    ClassificationRequest,
-    LabelMetric,
-)
+from agent.types.eval.classification import ClassificationReport, ClassificationRequest, LabelMetric
 
 
 def _ratio(numerator: int, denominator: int) -> float:

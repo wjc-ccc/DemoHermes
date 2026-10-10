@@ -4,7 +4,7 @@ from __future__ import annotations
 import queue
 from types import SimpleNamespace
 
-from agent.core.event_bus import LoopEvent
+from agent.types.events import LoopEvent
 from agent.gateway.http_api import _Handler
 
 
@@ -36,6 +36,7 @@ def test_sse_connection_aborted_unsubscribes_without_escaping() -> None:
     bus = _EventBus()
     handler = object.__new__(_Handler)
     handler.server = SimpleNamespace(gateway=SimpleNamespace(events=bus))
+    handler.headers = {}
     handler.wfile = _DisconnectingWriter()
     handler.send_response = lambda _status: None
     handler.send_header = lambda _name, _value: None

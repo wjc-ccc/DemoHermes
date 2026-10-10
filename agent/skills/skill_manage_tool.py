@@ -4,12 +4,15 @@
     - 直接把 status 写成 active（create 恒为 draft，patch 只作用于正文）
     - 修改内置技能
     - 覆盖同名技能或重复沉淀同样的正文
-新建的技能是「候选」，能否上线由 Eval 回放质量门决定。
+新建技能保持 draft，由可信管理入口审查后启用。
 """
 from __future__ import annotations
 
-from ..tools.base import Tool, ToolCallResult
-from .repository import SkillChangeRequest, SkillDraft, SkillRepository
+from agent.tools.base import Tool
+from agent.types.action.policy import ToolPolicy
+from agent.types.tools import ToolCallResult, ToolInvocationContext
+from agent.types.skills import SkillChangeRequest, SkillDraft
+from agent.skills.repository import SkillRepository
 
 _ERROR_HINTS = {
     "exists": "同名技能已存在，请改用 patch",
@@ -28,7 +31,7 @@ class SkillManageTool(Tool):
     description = (
         "管理程序性技能（Skills）：create 新建技能候选，patch 用 old_string/new_string "
         "小步修正正文。复杂多步任务成功后可沉淀为候选；使用技能发现问题应立刻 patch。"
-        "新建与修改都是候选，需通过评测回放才会正式启用。"
+        "新建技能保持草案，需人工审查后启用。"
     )
     parameters = {
         "type": "object",
@@ -55,11 +58,18 @@ class SkillManageTool(Tool):
         },
         "required": ["action", "name"],
     }
+    action_policy = ToolPolicy(when_to_use="创建或修正技能候选",
+        when_not_to_use="不用于修改内置技能或自动晋升",
+        effect="write", risk="medium", permission="user", idempotency="keyed",
+        key_fields=("action", "name", "expected_revision"))
+    action_operations = {
+        "patch": action_policy.model_copy(update={"precondition_field": "expected_revision"}),
+    }
 
     def __init__(self, repository: SkillRepository) -> None:
         self._repo = repository
 
-    def execute(self, arguments: dict) -> ToolCallResult:
+    def execute(self, arguments: dict, *, context: ToolInvocationContext) -> ToolCallResult:
         action = str(arguments.get("action", "")).strip()
         name = str(arguments.get("name", "")).strip()
         if action == "create":
@@ -93,7 +103,7 @@ class SkillManageTool(Tool):
             hint = _ERROR_HINTS.get(result.code, result.detail or result.code)
             return ToolCallResult(ok=False, error=f"{hint}（{result.code}）")
         if result.code == "created":
-            text = f"已创建技能候选「{result.name}」，通过评测回放后才会启用"
+            text = f"已创建技能候选「{result.name}」，需人工审查后才会启用"
         else:
             text = f"已修正技能「{result.name}」正文（revision {result.revision}）"
         return ToolCallResult(

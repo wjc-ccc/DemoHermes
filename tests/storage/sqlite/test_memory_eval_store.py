@@ -1,11 +1,11 @@
 """案例版本是公开存储契约：旧版可重读，同版不能被另一份答案覆盖。"""
 import pytest
 
-from agent.storage.sqlite import RuntimeStorage
+from agent.storage.sqlite.runtime_storage import RuntimeStorage
 
 
 def _dataset(version="1.0.0", text="我是 Python 后端工程师。"):
-    from agent.eval.datasets.types.memory_eval_types import MemoryEvalDataset
+    from agent.types.eval.datasets import MemoryEvalDataset
     return MemoryEvalDataset.model_validate({
         "dataset_id": "memory_behavior", "version": version, "title": "记忆案例",
         "description": "测试案例版本", "created_at": "2026-10-08T10:00:00+08:00",

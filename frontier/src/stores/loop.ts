@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import config from '@/config'
 import { openEventStream, type EventStreamHandle } from '@/api/events'
 import { mapEmit } from '@/utils/emitMapper'
-import type { LoopEvent, LoopTurnCard } from '@/types'
+import type { LoopEvent, LoopTurnCard } from '@/types/events'
 
 export const useLoopStore = defineStore('loop', () => {
   const turns = ref(new Map<string, LoopTurnCard>())

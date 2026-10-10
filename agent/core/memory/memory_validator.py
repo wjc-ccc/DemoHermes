@@ -9,12 +9,11 @@ import unicodedata
 import uuid
 from collections.abc import Callable
 
-from .memory_item import content_sha256
+from agent.types.memory.items import content_sha256, UserMemoryItem
 from .memory_claim_evidence import experience_outcome_signals
-from .types.card_types import UserCardKind, ExperienceOutcome, UserCardStatus
-from .memory_scope import MemoryScope
-from .types.extraction_types import MemoryProposal, MemoryValidationResult
-from .memory_item import UserMemoryItem
+from agent.types.memory.categories import UserCardKind, ExperienceOutcome, UserCardStatus
+from agent.types.memory.scope import MemoryScope
+from agent.types.memory.extraction import MemoryProposal, MemoryValidationResult
 
 
 _SENSITIVE_PATTERNS = (

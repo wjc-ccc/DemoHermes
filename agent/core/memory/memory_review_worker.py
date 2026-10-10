@@ -1,7 +1,7 @@
 """待处理作业消费者：连接事实队列、纯审查器与原子提交器。"""
 # 职责：后台认领固定来源的提炼作业，加载轮次，续租、重试并提交结果。
 # 边界：不决定提炼内容或卡片冲突规则；作业状态保存在 SQLite 队列中。
-# 关联：由 main.py 启停，调用 MemoryBatchReviewer 与 memory_review_committer.py。
+# 关联：由 AgentRuntime 启停，调用 MemoryBatchReviewer 与 memory_review_committer.py。
 from __future__ import annotations
 
 import logging
@@ -9,7 +9,7 @@ import threading
 import time
 
 from .memory_batch_reviewer import MemoryBatchReviewer
-from .types.review_worker_types import MemoryReviewCommitter, MemoryReviewQueue
+from agent.types.memory.protocols import MemoryReviewCommitter, MemoryReviewQueue
 
 
 logger = logging.getLogger(__name__)
@@ -104,6 +104,7 @@ class MemoryReviewWorker:
             heartbeat_thread.start()
             try:
                 # 传入本次需要处理的turn ids
+                ### 如果需要处理任务 那么获得对应的字段并处理
                 turn_ids = tuple(job.input.get("turn_ids") or (job.turn_id,))
                 turns = tuple(self._queue.executions.get_record(identity) for identity in turn_ids)
                 sessions = tuple(
