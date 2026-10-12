@@ -119,7 +119,7 @@ def test_replay_applies_new_post_policy_without_new_side_effect(bank_runtime):
     runtime.catalog.get("fake_pay")["post_guards"] = (redact,)
     replay = runtime.handler.handle_batch((payment(),), context(runtime))[0]
     item = runtime.ledger.get(replay.action_evidence.ledger_entry_id)
-    assert replay.ok and "external_ref" not in replay.tool_call_result
+    assert replay.ok and "external_ref" not in replay.result_data
     assert "external_ref" in item.raw_output["data"] and item.publish_state == "redacted" and bank.calls == 1
 
 

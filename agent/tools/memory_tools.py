@@ -5,6 +5,7 @@
 关联：AgentLoop 注入 scope，Retriever 检查来源权限并读取 SQLite/已登记文档。
 """
 from __future__ import annotations
+from agent.prompt.renderers import render_tool_result
 
 import json
 from dataclasses import asdict
@@ -71,8 +72,18 @@ class MemorySearchTool(Tool):
             candidate["snippet"] = candidate["snippet"][:260]
             candidate["matched_keywords"] = tuple(value[:80] for value in candidate["matched_keywords"][:8])
             candidate["evidence_refs"] = tuple(value[:160] for value in candidate["evidence_refs"][:5])
-            proposal = {"mode": "keyword", "query": query, "hits": [*visible, candidate]}
-            if estimate_markdown_tokens(json.dumps(proposal, ensure_ascii=False)) > 1200:
+            proposal = {"mode": "keyword", "query": query, "hits": [*visible, candidate],
+                        "next_offset": max(offset,0)+len(visible)+1}
+            if context.result_token_budget is not None:
+                def fits(value):
+                    return len(render_tool_result(self.name,value).encode("utf-8"))<=context.result_token_budget
+                if not visible and not fits(proposal):
+                    candidate["title"]=candidate["title"][:32]
+                    candidate["snippet"]=candidate["snippet"][:60]
+                    candidate["evidence_refs"]=candidate["evidence_refs"][:1]
+                if not fits(proposal):
+                    break
+            elif estimate_markdown_tokens(render_tool_result(self.name, proposal)) > 1200:
                 if not visible:
                     candidate["snippet"] = candidate["snippet"][:80]
                     visible.append(candidate)
@@ -81,7 +92,9 @@ class MemorySearchTool(Tool):
         has_more = len(visible) < len(hits) or len(hits) >= max(1, min(requested_limit, 50))
         data = {"mode": "keyword", "query": query, "hits": visible,
                 "next_offset": max(offset, 0) + len(visible) if has_more else None}
-        return ToolCallResult(ok=True, result_text=json.dumps(data, ensure_ascii=False), data=data)
+        if hits and not visible:
+            return ToolCallResult(ok=False,error="检索结果预算不足，请依据已取得的信息作答或缩短查询。")
+        return ToolCallResult(ok=True, result_text=render_tool_result(self.name, data), data=data)
 
 
 class MemoryReadTool(Tool):
@@ -119,4 +132,17 @@ class MemoryReadTool(Tool):
         if page is None:
             return ToolCallResult(ok=False, error="引用不存在或当前用户无权读取")
         data = asdict(page)
-        return ToolCallResult(ok=True, result_text=json.dumps(data, ensure_ascii=False), data=data, readback_reference=reference)
+        if context.result_token_budget is not None:
+            # Page the original source instead of filling protected P1 with a
+            # whole document. Raw database content remains unchanged.
+            while (len(data["content"]) > 32
+                   and len(render_tool_result(self.name, data).encode("utf-8")) > context.result_token_budget):
+                length=max(32,len(data["content"])//2)
+                data["content"]=data["content"][:length]
+                data["next_offset"]=data["offset"]+length
+            if len(render_tool_result(self.name,data).encode("utf-8"))>context.result_token_budget:
+                data["context"]=tuple({key:value for key,value in entry.items() if key!="snippet"}
+                                      for entry in data.get("context",()))
+            if len(render_tool_result(self.name,data).encode("utf-8"))>context.result_token_budget:
+                return ToolCallResult(ok=False,error="原文页预算不足，请依据已取得的信息作答。")
+        return ToolCallResult(ok=True, result_text=render_tool_result(self.name, data), data=data, readback_reference=reference)

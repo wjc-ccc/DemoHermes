@@ -63,6 +63,34 @@ def has_source_overlap(claim: str, evidence: str) -> bool:
     return any(term not in _GENERIC_TERMS and term in source for term in terms)
 
 
+def explicit_source_exclusion(evidence: str) -> bool:
+    """An explicit attribution exclusion cannot establish an opposite personal trait.
+
+    A separate first-person statement remains eligible. This narrow guard does not
+    decide general retention value or infer a preference from negation.
+    """
+    excluded = re.search(r"(?:不能|不要)(?:把.{0,16})?(?:当(?:作|成)?|算(?:作|成)?|视为).{0,8}我(?:的|本人)"
+                         r"|(?:这|那|它|他|她|并|不).{0,6}不是我的(?:职业|偏好|口味|身份)", evidence)
+    personal = re.search(r"我(?:本人)?(?:叫|是|喜欢|偏好|习惯|擅长|不喜欢|不爱|讨厌)", evidence)
+    return bool(excluded and not personal)
+
+
+def unconfirmed_capability_only(evidence: str) -> bool:
+    """Reject only statements wholly consisting of an unanswered capability check."""
+    clauses = [clause.strip() for clause in re.split(r"[，,。；;！？!?\n]", evidence) if clause.strip()]
+    return bool(clauses and all(re.search(r"是否|能否|(?:还|尚|仍)?(?:没有|未)验证|不确定", clause)
+                               for clause in clauses))
+
+
+def confirmed_event_schedule(text: str) -> bool:
+    """A stated fixed event schedule is scoped state, unless expressed as a preference."""
+    if re.search(r"喜欢|偏好|习惯|希望|倾向|prefer|would like", text, re.I):
+        return False
+    event = r"(?:例会|会议|内部讨论|讨论会|周报)"
+    return bool(re.search(event + r".{0,30}固定|固定.{0,30}" + event, text)
+                and re.search(r"周[一二三四五六日天]|星期[一二三四五六日天]|每天|每月|每年|每周", text))
+
+
 _HAN_DIGITS = {"零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
                "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
 _HAN_NUMBER = re.compile(r"[零〇一二两三四五六七八九十百]+")

@@ -12,7 +12,7 @@ from .audit_store import SqliteAuditStore
 from .memory_review_committer import SqliteMemoryReviewCommitter
 from .memory_review_scheduler import SqliteMemoryReviewScheduler
 from .memory_card_mutation import SqliteMemoryCardMutationService
-from .memory_eval_store import SqliteMemoryEvalStore
+from .eval_store import SqliteEvalStore
 from agent.types.memory.extraction import MEMORY_EXTRACTOR_VERSION
 
 
@@ -47,4 +47,5 @@ class RuntimeStorage:
         self.traces=SqliteTraceStore(database)
         self.audit=SqliteAuditStore(database)
         self.review_committer=SqliteMemoryReviewCommitter(database)
-        self.memory_evals=SqliteMemoryEvalStore(database)
+        self.evals=SqliteEvalStore(database)
+        self.memory_evals=self.evals  # Legacy CLI name; both use the single generic store.

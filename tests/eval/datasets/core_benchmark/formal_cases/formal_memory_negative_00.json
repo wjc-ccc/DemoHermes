@@ -1,0 +1,319 @@
+{
+  "case_id": "formal_memory_negative_00",
+  "title": "negative：仓储补货与40轮历史",
+  "description": "先定义事实时间线；三个独立历史截止；不同工作讨论、相关干扰和工具观察交错。",
+  "scenario": "negative",
+  "difficulty": "long_benchmark",
+  "abilities": [
+    "long_history",
+    "length:40",
+    "family:negative",
+    "normal_noise"
+  ],
+  "history": [
+    {
+      "session_id": "formal_memory_negative_00.s1",
+      "occurred_at": "2026-11-01T09:00:00+08:00",
+      "turns": [
+        {
+          "turn_id": "formal_memory_negative_00.t001",
+          "user_text": "邮件草稿第1段：客户反馈文字包含肯定和担忧两部分，分别归纳。",
+          "assistant_text": "肯定部分说明已有价值，担忧部分说明仍需确认的风险，两者不能相互替代。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t002",
+          "user_text": "同事小林是前端工程师，这是同事的职业，不是我的职业。",
+          "assistant_text": "已记录这条明确说明。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t003",
+          "user_text": "演示说明第3段：为这份匿名样稿把三段内容排序，顺序只用于当前草稿。",
+          "assistant_text": "可以按背景、过程、结论排序；这次排法不改变其他项目的约定。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t004",
+          "user_text": "问题清单第4段：午间讨论提到一种新的排版方法，现在只比较阅读效果。",
+          "assistant_text": "可以比较行宽、留白和层次，目前的讨论不能证明该方法适合所有读者。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t005",
+          "user_text": "评审记录第5段：给这段示例中的人物观点换一种表达，不要将人物当成我。",
+          "assistant_text": "可以保留原观点换一种措辞，人物的意见不代表你的身份或偏好。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t006",
+          "user_text": "邮件草稿第6段：解释为什么同一张截图在两种窗口宽度下显示不同，不用修改程序。",
+          "assistant_text": "可能来自布局与缩放；只有截图不足以确定具体原因，需要窗口尺寸和样式信息。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t007",
+          "user_text": "协作讨论第7段：对比一下纸质笔记和电子笔记在临时会议中的便利性。",
+          "assistant_text": "纸质记录快、干扰少；电子记录易检索和共享。会议结束后可以统一整理。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t008",
+          "user_text": "我们还讨论过一个未执行的建议，但没有行动和结果。",
+          "assistant_text": "已记录这条明确说明。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t009",
+          "user_text": "问题清单第9段：演示数据中的东区记录数量比西区多，说明图表应该怎样标注。",
+          "assistant_text": "注明这是演示数据，保留数量差异；不要据此解释真实地区的原因。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t010",
+          "user_text": "评审记录第10段：其他项目的说明书写着默认值五十，但维护者还没有确认更新。",
+          "assistant_text": "这属于其他项目且更新尚未确认；如果引用，需说明来源与状态。"
+        }
+      ]
+    },
+    {
+      "session_id": "formal_memory_negative_00.s2",
+      "occurred_at": "2026-11-02T09:00:00+08:00",
+      "turns": [
+        {
+          "turn_id": "formal_memory_negative_00.t011",
+          "user_text": "邮件草稿第11段：我收到另一组同事的草稿，其中几个数字还未核对，怎样安排检查顺序？",
+          "assistant_text": "先核对来源与计算口径，再检查总数与分项是否一致，最后检查单位和日期。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t012",
+          "user_text": "协作讨论第12段：今天讨论邮件标题应该先写主题还是先写日期，你能给两个版本吗？",
+          "assistant_text": "可以先写主题便于识别，也可以先写日期便于排序，需要按收件人的习惯选择。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t013",
+          "user_text": "演示说明第13段：客户反馈文字包含肯定和担忧两部分，分别归纳。",
+          "assistant_text": "肯定部分说明已有价值，担忧部分说明仍需确认的风险，两者不能相互替代。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t014",
+          "user_text": "问题清单第14段：整理这段评审讨论：有人看重响应速度，有人更担心数据完整性。",
+          "assistant_text": "这两点需要分别列出：响应速度影响交互体验，数据完整性影响结果可靠性，讨论尚未给出取舍。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t015",
+          "user_text": "评审记录第15段：为这份匿名样稿把三段内容排序，顺序只用于当前草稿。",
+          "assistant_text": "可以按背景、过程、结论排序；这次排法不改变其他项目的约定。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t016",
+          "user_text": "邮件草稿第16段：午间讨论提到一种新的排版方法，现在只比较阅读效果。",
+          "assistant_text": "可以比较行宽、留白和层次，目前的讨论不能证明该方法适合所有读者。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t017",
+          "user_text": "协作讨论第17段：给这段示例中的人物观点换一种表达，不要将人物当成我。",
+          "assistant_text": "可以保留原观点换一种措辞，人物的意见不代表你的身份或偏好。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t018",
+          "user_text": "演示说明第18段：解释为什么同一张截图在两种窗口宽度下显示不同，不用修改程序。",
+          "assistant_text": "可能来自布局与缩放；只有截图不足以确定具体原因，需要窗口尺寸和样式信息。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t019",
+          "user_text": "问题清单第19段：对比一下纸质笔记和电子笔记在临时会议中的便利性。",
+          "assistant_text": "纸质记录快、干扰少；电子记录易检索和共享。会议结束后可以统一整理。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t020",
+          "user_text": "评审记录第20段：会议里有人猜测一次失败与网络有关，但日志尚未支持这个结论。",
+          "assistant_text": "保留它作为待验证假设，不能把猜测写成根因或已验证经验。"
+        }
+      ]
+    },
+    {
+      "session_id": "formal_memory_negative_00.s3",
+      "occurred_at": "2026-11-04T09:00:00+08:00",
+      "turns": [
+        {
+          "turn_id": "formal_memory_negative_00.t021",
+          "user_text": "邮件草稿第21段：演示数据中的东区记录数量比西区多，说明图表应该怎样标注。",
+          "assistant_text": "注明这是演示数据，保留数量差异；不要据此解释真实地区的原因。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t022",
+          "user_text": "协作讨论第22段：其他项目的说明书写着默认值五十，但维护者还没有确认更新。",
+          "assistant_text": "这属于其他项目且更新尚未确认；如果引用，需说明来源与状态。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t023",
+          "user_text": "演示说明第23段：我收到另一组同事的草稿，其中几个数字还未核对，怎样安排检查顺序？",
+          "assistant_text": "先核对来源与计算口径，再检查总数与分项是否一致，最后检查单位和日期。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t024",
+          "user_text": "问题清单第24段：今天讨论邮件标题应该先写主题还是先写日期，你能给两个版本吗？",
+          "assistant_text": "可以先写主题便于识别，也可以先写日期便于排序，需要按收件人的习惯选择。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t025",
+          "user_text": "评审记录第25段：客户反馈文字包含肯定和担忧两部分，分别归纳。",
+          "assistant_text": "肯定部分说明已有价值，担忧部分说明仍需确认的风险，两者不能相互替代。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t026",
+          "user_text": "邮件草稿第26段：整理这段评审讨论：有人看重响应速度，有人更担心数据完整性。",
+          "assistant_text": "这两点需要分别列出：响应速度影响交互体验，数据完整性影响结果可靠性，讨论尚未给出取舍。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t027",
+          "user_text": "协作讨论第27段：为这份匿名样稿把三段内容排序，顺序只用于当前草稿。",
+          "assistant_text": "可以按背景、过程、结论排序；这次排法不改变其他项目的约定。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t028",
+          "user_text": "演示说明第28段：午间讨论提到一种新的排版方法，现在只比较阅读效果。",
+          "assistant_text": "可以比较行宽、留白和层次，目前的讨论不能证明该方法适合所有读者。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t029",
+          "user_text": "问题清单第29段：给这段示例中的人物观点换一种表达，不要将人物当成我。",
+          "assistant_text": "可以保留原观点换一种措辞，人物的意见不代表你的身份或偏好。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t030",
+          "user_text": "评审记录第30段：解释为什么同一张截图在两种窗口宽度下显示不同，不用修改程序。",
+          "assistant_text": "可能来自布局与缩放；只有截图不足以确定具体原因，需要窗口尺寸和样式信息。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t031",
+          "user_text": "邮件草稿第31段：对比一下纸质笔记和电子笔记在临时会议中的便利性。",
+          "assistant_text": "纸质记录快、干扰少；电子记录易检索和共享。会议结束后可以统一整理。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t032",
+          "user_text": "我自己的职业、口味和对应实验结果都还没有告诉你，不要从这些材料反推。",
+          "assistant_text": "已记录这条明确说明。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t033",
+          "user_text": "演示说明第33段：演示数据中的东区记录数量比西区多，说明图表应该怎样标注。",
+          "assistant_text": "注明这是演示数据，保留数量差异；不要据此解释真实地区的原因。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t034",
+          "user_text": "问题清单第34段：其他项目的说明书写着默认值五十，但维护者还没有确认更新。",
+          "assistant_text": "这属于其他项目且更新尚未确认；如果引用，需说明来源与状态。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t035",
+          "user_text": "评审记录第35段：我收到另一组同事的草稿，其中几个数字还未核对，怎样安排检查顺序？",
+          "assistant_text": "先核对来源与计算口径，再检查总数与分项是否一致，最后检查单位和日期。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t036",
+          "user_text": "邮件草稿第36段：今天讨论邮件标题应该先写主题还是先写日期，你能给两个版本吗？",
+          "assistant_text": "可以先写主题便于识别，也可以先写日期便于排序，需要按收件人的习惯选择。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t037",
+          "user_text": "协作讨论第37段：客户反馈文字包含肯定和担忧两部分，分别归纳。",
+          "assistant_text": "肯定部分说明已有价值，担忧部分说明仍需确认的风险，两者不能相互替代。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t038",
+          "user_text": "演示说明第38段：整理这段评审讨论：有人看重响应速度，有人更担心数据完整性。",
+          "assistant_text": "这两点需要分别列出：响应速度影响交互体验，数据完整性影响结果可靠性，讨论尚未给出取舍。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t039",
+          "user_text": "问题清单第39段：为这份匿名样稿把三段内容排序，顺序只用于当前草稿。",
+          "assistant_text": "可以按背景、过程、结论排序；这次排法不改变其他项目的约定。"
+        },
+        {
+          "turn_id": "formal_memory_negative_00.t040",
+          "user_text": "评审记录第40段：午间讨论提到一种新的排版方法，现在只比较阅读效果。",
+          "assistant_text": "可以比较行宽、留白和层次，目前的讨论不能证明该方法适合所有读者。"
+        }
+      ]
+    }
+  ],
+  "expected_memories": [],
+  "ignored_information": [
+    "其他项目记录、未批准建议、第三方资料及普通讨论不自动成为本项目事实"
+  ],
+  "forbidden_memories": [],
+  "questions": [
+    {
+      "question_id": "q1",
+      "text": "材料能证明我的职业或口味吗？",
+      "asked_at": "2026-11-01T13:00:00+08:00",
+      "history_session_count": null,
+      "expected_memory_ids": [],
+      "evidence_turn_ids": [
+        "formal_memory_negative_00.t002"
+      ],
+      "expected_action": "answer",
+      "reference_answer": "不能，第三方/虚构资料不代表本人。",
+      "required_meaning": [
+        "不能，第三方/虚构资料不代表本人。"
+      ],
+      "forbidden_meaning": [
+        "推断本人职业口味"
+      ],
+      "answer_contains": [],
+      "answer_lacks": [],
+      "required_tools": [],
+      "requires_semantic_review": true,
+      "question_schema_version": "2",
+      "history_end_turn_id": "formal_memory_negative_00.t010",
+      "expected_active_memory_ids": []
+    },
+    {
+      "question_id": "q2",
+      "text": "未执行的建议能当作验证过的经验吗？",
+      "asked_at": "2026-11-04T13:00:00+08:00",
+      "history_session_count": null,
+      "expected_memory_ids": [],
+      "evidence_turn_ids": [
+        "formal_memory_negative_00.t008"
+      ],
+      "expected_action": "answer",
+      "reference_answer": "不能，没有行动和真实结果。",
+      "required_meaning": [
+        "不能，没有行动和真实结果。"
+      ],
+      "forbidden_meaning": [
+        "把建议说成成功经验"
+      ],
+      "answer_contains": [],
+      "answer_lacks": [],
+      "required_tools": [],
+      "requires_semantic_review": true,
+      "question_schema_version": "2",
+      "history_end_turn_id": "formal_memory_negative_00.t024",
+      "expected_active_memory_ids": []
+    },
+    {
+      "question_id": "q3",
+      "text": "核对本人信息与实验结果，你现在知道什么？",
+      "asked_at": "2026-11-04T13:00:00+08:00",
+      "history_session_count": null,
+      "expected_memory_ids": [],
+      "evidence_turn_ids": [
+        "formal_memory_negative_00.t002",
+        "formal_memory_negative_00.t008",
+        "formal_memory_negative_00.t032"
+      ],
+      "expected_action": "ask_clarification",
+      "reference_answer": "本人信息未提供、实验未执行，需询问，不能反推或建卡。",
+      "required_meaning": [
+        "本人信息未提供、实验未执行，需询问，不能反推或建卡。"
+      ],
+      "forbidden_meaning": [
+        "反推负向偏好",
+        "编造结果"
+      ],
+      "answer_contains": [],
+      "answer_lacks": [],
+      "required_tools": [],
+      "requires_semantic_review": true,
+      "question_schema_version": "2",
+      "history_end_turn_id": "formal_memory_negative_00.t040",
+      "expected_active_memory_ids": []
+    }
+  ],
+  "strict_card_count": true
+}

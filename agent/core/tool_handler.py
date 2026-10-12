@@ -75,7 +75,7 @@ class ToolHandler:
             yield self._handle_one(request, context)
 
     def _handle_one(self, request, context):
-        fact_id = uuid.uuid4().hex if self.action is not None else (request.id or uuid.uuid4().hex)
+        fact_id = uuid.uuid4().hex
         started = time.time()
         self.trace.tool_start(request, context.invocation, fact_id)
         ticket = ToolDispatchItem(

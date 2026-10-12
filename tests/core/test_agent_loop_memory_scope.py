@@ -27,7 +27,7 @@ class _Search(Tool):
 
 
 class _Model:
-    def chat(self, messages, tools=None):
+    def chat(self, messages, tools=None, **kwargs):
         if any(message.get("role") == "tool" for message in messages):
             return ModelResponse(text="完成")
         query = next(message["content"] for message in reversed(messages)

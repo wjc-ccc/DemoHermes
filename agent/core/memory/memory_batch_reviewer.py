@@ -18,6 +18,8 @@ from .memory_claim_evidence import (
     explicit_user_statement,
     has_source_overlap,
     unsupported_anchors,
+    explicit_source_exclusion,
+    unconfirmed_capability_only,
 )
 from agent.types.memory.layers import MemoryLayer
 from agent.types.memory.trace import (
@@ -148,7 +150,7 @@ class MemoryBatchReviewer:
                 quote = proposal.evidence_quotes.get(source_id, "").strip()
                 raw = (messages_by_id[source_id].content_text
                        if source_id in messages_by_id else
-                       tools_by_id[source_id].result_text or ""
+                       tools_by_id[source_id].result_text or tools_by_id[source_id].error or ""
                        if source_id in tools_by_id else "")
                 if not quote or quote not in raw:
                     codes.append("missing_exact_source_quote")
@@ -158,6 +160,10 @@ class MemoryBatchReviewer:
                 proposal.applicability, proposal.action, proposal.outcome,
             )))
             quoted = "\n".join(proposal.evidence_quotes.values())
+            if proposal.kind.value in {"profile", "stable_preference"} and explicit_source_exclusion(quoted):
+                codes.append("explicit_source_exclusion")
+            if proposal.kind.value == "ongoing_fact" and unconfirmed_capability_only(quoted):
+                codes.append("unconfirmed_capability_only")
             if not has_source_overlap(claim, quoted):
                 codes.append("claim_without_source_overlap")
             if unsupported_anchors("\n".join(filter(None, (
@@ -247,6 +253,8 @@ class MemoryBatchReviewer:
                             *proposal.source_tool_call_ids,
                         ),
                         reason_code=proposal.reason_code,
+                        retention_reason=proposal.retention_reason,
+                        future_use=proposal.future_use,
                     ),
                     runtime=MemoryRuntimeTraceFields(
                         input_hash=input_hash,
@@ -258,6 +266,15 @@ class MemoryBatchReviewer:
                 )
             )
 
+        for skipped in extraction.skipped:
+            traces.append(MemoryItemTrace(
+                trace_item_id=self._id_factory(), proposal_id="skip:" + self._id_factory(),
+                source_type="memory_extraction", decision=MemoryTraceDecision.SKIPPED,
+                ai=MemoryAiTraceFields(
+                    reason_code=skipped.reason_code, skip_reason=skipped.reason,
+                    evidence_refs=(*skipped.source_message_ids, *skipped.source_tool_call_ids),
+                ),
+            ))
         for issue in extraction.issues:
             traces.append(MemoryItemTrace(
                 trace_item_id=self._id_factory(), proposal_id=issue.proposal_id,
@@ -277,6 +294,7 @@ class MemoryBatchReviewer:
             validator_version=self._validator.version,
             latency_ms=max(0.0, (self._clock() - started) * 1000.0),
             items=tuple(traces),
+            model_calls=extraction.model_calls,
         )
 
         ### 返回最终记忆提取的结果 保存trace proposal validation user_items evidence

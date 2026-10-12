@@ -31,9 +31,9 @@ class SqliteMemoryReviewScheduler:
                 (self.extractor_version, self.extractor_version),
             )
             rows = conn.execute(
-                "SELECT t.turn_id,s.scope_key,t.completed_at FROM turns t "
+                "SELECT t.turn_id,s.scope_key,t.finished_at FROM turns t "
                 "JOIN sessions s ON s.session_id=t.session_id "
-                "WHERE t.status='completed' ORDER BY s.scope_key,t.completed_at,t.turn_id"
+                "WHERE t.status='completed' ORDER BY s.scope_key,t.finished_at,t.turn_id"
             ).fetchall()
             ordinals: dict[str, int] = {}
             for turn_id, scope_key, _ in rows:

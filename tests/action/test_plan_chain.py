@@ -38,7 +38,7 @@ class ChainModel:
     def __init__(self):
         self.calls = []
         self.bad_second = True
-    def chat(self, messages, tools=None):
+    def chat(self, messages, tools=None, **kwargs):
         prompt = next(message["content"] for message in reversed(messages) if message["role"] == "user")
         if not prompt.startswith(("first", "second", "publish")):
             return ModelResponse(text="{}")

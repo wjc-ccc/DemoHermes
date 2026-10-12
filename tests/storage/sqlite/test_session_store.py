@@ -29,7 +29,7 @@ def test_turn_facts_and_review_job_commit_atomically(tmp_path) -> None:
         completed=True,
         interrupted=False,
         error=None,
-        precision_trace={
+        perception_trace={
             "metrics": {"trace_id": "turn-1", "tokens_used": 12},
             "records": [],
             "exposed_refs": [],
@@ -61,4 +61,4 @@ def test_turn_facts_and_review_job_commit_atomically(tmp_path) -> None:
 
     debug_turn = store.executions.get_turn("turn-1")
     assert debug_turn is not None
-    assert debug_turn["precision_trace"]["metrics"]["tokens_used"] == 12
+    assert debug_turn["perception_trace"]["metrics"]["tokens_used"] == 12

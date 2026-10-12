@@ -144,8 +144,10 @@ def main() -> None:
         default=True,
         help="开启只读 Memory Debug HTTP（/api/debug/memory/*；默认开；用 --no-enable-memory-debug 关闭）",
     )
-    parser.add_argument("--use-action", action=argparse.BooleanOptionalAction, default=False,
-                        help="启用 action 执行账本、工具集与 PRE/POST（默认关闭）")
+    parser.add_argument("--use-action", 
+        action=argparse.BooleanOptionalAction, 
+        default=True,
+        help="启用 action 执行账本、工具集与 PRE/POST（默认开）")
     args = parser.parse_args()
 
     if args.cli:

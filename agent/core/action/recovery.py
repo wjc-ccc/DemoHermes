@@ -62,7 +62,7 @@ class ActionRecovery:
                 args["external_ref"] = item.external_ref
             request = ToolCallRequest(id=uuid.uuid4().hex, name=policy.recovery_tool, arguments=args)
             call = runtime.handler.handle_batch((request,), ToolTurnContext.from_action(context))[0]
-            data = call.tool_call_result or {}
+            data = call.result_data or {}
             current = runtime.ledger.get(item.entry_id)
             if current.effect_state == "succeeded":
                 recovered.append(current)

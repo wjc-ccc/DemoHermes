@@ -3,7 +3,7 @@ import { onMounted, ref, watch } from 'vue'
 import { useTraceStore } from '@/stores/traces'
 import { formatCell } from '@/utils/format'
 import ColumnFilter from '@/components/ColumnFilter.vue'
-import PrecisionContextDialog from '@/components/PrecisionContextDialog.vue'
+import PerceptionContextDialog from '@/components/PerceptionContextDialog.vue'
 
 const traces = useTraceStore()
 const openedKey = ref('')
@@ -91,7 +91,7 @@ function openCell(rowIndex: number, column: string, value: unknown) {
               <tbody>
                 <tr v-for="(row, index) in traces.sheet.rows" :key="index">
                   <td v-for="column in traces.sheet.columns" :key="column.name">
-                    <button v-if="traces.selectedModule === 'precision' && column.name === 'context'" class="cell" @click="contextTurnId = String(row.turn_id)">查看完整上下文</button>
+                    <button v-if="traces.selectedModule === 'perception' && column.name === 'context'" class="cell" @click="contextTurnId = String(row.turn_id)">查看完整上下文</button>
                     <button
                       v-else
                       class="cell"
@@ -130,7 +130,7 @@ function openCell(rowIndex: number, column: string, value: unknown) {
         <pre>{{ opened.text }}</pre>
       </section>
     </div>
-    <Teleport to="body"><PrecisionContextDialog v-if="contextTurnId" :turn-id="contextTurnId" @close="contextTurnId = ''" /></Teleport>
+    <Teleport to="body"><PerceptionContextDialog v-if="contextTurnId" :turn-id="contextTurnId" @close="contextTurnId = ''" /></Teleport>
   </main>
 </template>
 

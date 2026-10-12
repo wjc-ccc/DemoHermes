@@ -1,11 +1,11 @@
-"""固定 Precision 策略：Skill 属于 P0，不存在第二套独立裁剪入口。"""
+"""固定 Perception 策略：Skill 属于 P0，不存在第二套独立裁剪入口。"""
 from types import SimpleNamespace
 
 import pytest
 
 from agent.types.context import ContextBudget
-from agent.core.precision.errors import ContextBudgetExceededError
-from agent.core.precision.percision_engine import PrecisionBuilder
+from agent.core.perception.errors import ContextBudgetExceededError
+from agent.core.perception.perception_engine import PerceptionBuilder
 from agent.types.conversation import Message, Session
 
 
@@ -17,11 +17,11 @@ class _PerMessage:
         return self.cost * len(messages)
 
 
-def test_skill_summary_flows_through_precision_main_path():
+def test_skill_summary_flows_through_perception_main_path():
     session = Session(session_id="s")
     session.add_message(Message(role="user", content_text="问题"))
     selection = SimpleNamespace(summary_prompt="## Skills\n- alpha: description")
-    result = PrecisionBuilder().build(
+    result = PerceptionBuilder().build(
         session,
         skill_selection=selection,
         token_estimator=_PerMessage(1),
@@ -36,7 +36,7 @@ def test_required_skill_overflow_returns_context_budget_exceeded():
     session.add_message(Message(role="user", content_text="问题"))
     selection = SimpleNamespace(summary_prompt="## Skills\n- alpha: description")
     with pytest.raises(ContextBudgetExceededError):
-        PrecisionBuilder().build(
+        PerceptionBuilder().build(
             session,
             skill_selection=selection,
             budget=ContextBudget(model_context_tokens=250, reserved_output_tokens=50),

@@ -6,7 +6,7 @@
 
 main.py → agent.main.main → agent.runtime.build_runtime(RuntimeConfig) → AgentRuntime。
 
-Runtime 装配模型、SQLite、技能与工具、可选 MemoryBuilder、ToolHandler/ToolDispatch、PrecisionBuilder、AgentLoop 和 Gateway。core 保留原路径，属于 Runtime 内部能力。
+Runtime 装配模型、SQLite、技能与工具、可选 MemoryBuilder、ToolHandler/ToolDispatch、PerceptionBuilder、AgentLoop 和 Gateway。core 保留原路径，属于 Runtime 内部能力。
 
 Action 的账本、Guard、计划、工件和恢复位于 agent/core/action，属于 Runtime 内部的执行控制能力；共享契约仍在 agent/types/action。Gateway 必须接收装配好的 SQLite 会话存储，dict 存储与回退路径已删除。
 
@@ -19,8 +19,8 @@ Action 的账本、Guard、计划、工件和恢复位于 agent/core/action，�
 | ToolHandler | PRE、审批、版本、预算、资源领取及分配 | agent/core/tool_handler.py |
 | ToolDispatch | 调用、超时、迟到结果、效果、POST 与回放 | agent/core/tool_dispatch.py |
 | ActionRuntime | 装配执行控制、账本、计划、工件与恢复 | agent/core/action/runtime.py |
-| PrecisionBuilder | 保护、准入、Anchor、渲染及预算 | agent/core/precision/percision_engine.py |
-| Trace | 事件载荷、完整输入快照、指标窗口 | agent/core/agent_loop_trace.py、precision/percision_trace.py |
+| PerceptionBuilder | 保护、准入、Anchor、渲染及预算 | agent/core/perception/perception_engine.py |
+| Trace | 事件载荷、完整输入快照、指标窗口 | agent/core/agent_loop_trace.py、perception/perception_trace.py |
 | RuntimeStorage | SQLite 初始化与 Store 装配 | agent/storage/sqlite/runtime_storage.py |
 
 ## 一轮请求
@@ -30,7 +30,7 @@ Action 的账本、Guard、计划、工件和恢复位于 agent/core/action，�
       → AgentLoop.run_turn
           → Handler.begin_turn：冻结授权工具、契约、计划凭证
           → SkillRegistry.select：本轮选择一次，正文冻结
-          → PrecisionBuilder.build → model.chat
+          → PerceptionBuilder.build → model.chat
           → 有工具请求：Handler 审批/分配 → Dispatch 执行
           → ToolCall 追加 → 回读纠偏 → tool 回注 → 下一次模型调用
       → SessionStore.commit_turn
@@ -51,7 +51,7 @@ ToolCallResult.pending_mutation → ToolCall.pending_mutation 是卡片暂存指
 
 SQL 检索和文档版本实现位于 storage/sqlite/memory_retrieval.py、markdown_documents.py；关键词与 token 估算纯函数在 core/memory。存储版本由契约及装配提供，不导入 Extractor 实现。
 
-Precision 内部经过保护、准入、Anchor 规划、历史选择和完成阶段，阶段结果留在实现。最近两轮原文、优先级、原始历史 digest、失败回退与回读纠偏保持。
+Perception 内部经过保护、准入、Anchor 规划、历史选择和完成阶段，阶段结果留在实现。最近两轮原文、优先级、原始历史 digest、失败回退与回读纠偏保持。
 
 ## 开关与生命周期
 
@@ -66,7 +66,7 @@ Precision 内部经过保护、准入、Anchor 规划、历史选择和完成阶
 
 默认 Memory 开、Action 关。默认 calculator、use_skill、skill_manage；Memory 开时增加 memory_search/read/edit。bash/file 不默认注册。
 
-启动：Action 查证 → Gateway → Reviewer → 入口启动渠道。停止：Gateway/渠道 → Memory 刷新与处理 → Dispatch 资源。每个 Runtime 拥有独立 EventBus、PrecisionTrace。事件只用于观测，不能替代事务通知或作业。
+启动：Action 查证 → Gateway → Reviewer → 入口启动渠道。停止：Gateway/渠道 → Memory 刷新与处理 → Dispatch 资源。每个 Runtime 拥有独立 EventBus、PerceptionTrace。事件只用于观测，不能替代事务通知或作业。
 
 ## 技能、评测与维护
 
@@ -76,6 +76,6 @@ Skill Evolution、反思、蒸馏、优化、候选 Shadow、晋升 Worker、专
 
 当前没有工作台、SqliteWorkspaceStore 或 Plugin 加载器。计划、链段、工件验收与恢复属于可选 Action。
 
-先读 Runtime 装配与 Loop 迭代，再进入 Handler 审批、Dispatch 副作用、Store 事务、Precision 取舍。Trace 区分运行核验与 AI 输出。
+先读 Runtime 装配与 Loop 迭代，再进入 Handler 审批、Dispatch 副作用、Store 事务、Perception 取舍。Trace 区分运行核验与 AI 输出。
 
 新库按原迁移初始化，Action 表按开关加载。本次切换仅重建运行库及 WAL/SHM，保留手册、技能和附件；正常启动不删库。

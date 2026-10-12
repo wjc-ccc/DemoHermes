@@ -143,7 +143,7 @@ class SqliteMemoryCardMutationService:
     @staticmethod
     def _require_user_message(conn, scope: MemoryScope, message_id: str) -> EvidenceRef:
         row = conn.execute(
-            "SELECT m.payload_json,m.created_at,m.role,s.scope_key FROM messages m "
+            "SELECT m.message_json,m.created_at,m.role,s.scope_key FROM messages m "
             "JOIN sessions s ON s.session_id=m.session_id WHERE m.message_id=?",
             (message_id,),
         ).fetchone()

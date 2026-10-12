@@ -15,6 +15,56 @@ from agent.storage.sqlite.runtime_storage import RuntimeStorage
 from agent.tools.memory_tools import MemoryReadTool, MemorySearchTool
 
 
+def test_budgeted_read_pages_unicode_without_losing_original_or_offsets():
+    from agent.types.memory.retrieval import MemoryReadPage
+    original="中文🙂完整原文。"*600
+    class Retriever:
+        def read(self,scope,reference,offset=0,limit=2000):
+            text=original[offset:offset+limit]
+            return MemoryReadPage(reference=reference,source="message",content=text,offset=offset,
+                                  next_offset=offset+len(text) if offset+len(text)<len(original) else None,
+                                  total_chars=len(original))
+    tool=MemoryReadTool(Retriever())
+    context=ToolInvocationContext(memory_scope=MemoryScope(user_id="u1"),result_token_budget=900)
+    parts,offset=[],0
+    while True:
+        result=tool.execute({"reference":"message:source","offset":offset,"limit":4000},context=context)
+        assert result.ok and len(result.result_text.encode("utf-8"))<=900
+        assert result.data["offset"]==offset and result.data["total_chars"]==len(original)
+        parts.append(result.data["content"])
+        offset=result.data["next_offset"]
+        if offset is None:
+            break
+        assert offset==sum(len(part) for part in parts)
+    assert "".join(parts)==original
+
+
+def test_search_results_respect_current_budget_and_keep_next_page_reference():
+    from agent.types.memory.retrieval import MemorySearchHit
+    class Retriever:
+        def search(self,scope,query,**kwargs):
+            return tuple(MemorySearchHit(reference=f"message:{i}",source="history",title="历史记录",
+                snippet="中文历史摘要"*35,matched_keywords=(),evidence_refs=(),score=1,created_at=1)
+                for i in range(20))
+    result=MemorySearchTool(Retriever()).execute({"query":"记录","limit":20},
+        context=ToolInvocationContext(memory_scope=MemoryScope(user_id="u1"),result_token_budget=900))
+    assert result.ok
+    assert len(result.result_text.encode("utf-8"))<=900
+    assert result.data["next_offset"]==len(result.data["hits"])
+    assert 0<len(result.data["hits"])<20
+
+
+def test_historical_extraction_and_checkpoint_can_read_cards_valid_at_source_time(tmp_path):
+    storage=RuntimeStorage.open(tmp_path/"agent.db")
+    scope=MemoryScope(user_id="u1")
+    expiry=datetime(2026,10,3,tzinfo=timezone(timedelta(hours=8)))
+    card=_card(scope,"bounded","加班期学习限制",kind="ongoing_fact",expires=expiry)
+    storage.memory.put(card)
+    assert storage.memory.search(scope,"",limit=10)==()
+    as_of=datetime(2026,10,2,tzinfo=timezone(timedelta(hours=8)))
+    assert [c.item_id for c in storage.memory.search(scope,"",limit=10,as_of_ms=int(as_of.timestamp()*1000))]==["bounded"]
+
+
 def _card(scope, identity, content, *, kind="reusable_experience", status=UserCardStatus.ACTIVE,
           expires=None, evidence=()):
     return UserMemoryItem(
@@ -61,13 +111,13 @@ def test_search_and_read_are_scope_bound_and_page_raw_sources(tmp_path):
     with storage.db.write() as conn:
         conn.execute(
             "INSERT INTO messages (message_id,session_id,turn_id,seq_id,role,content_text,"
-            "source_type,created_at,payload_json) VALUES (?,?,?,?,?,?,?,?,?)",
+            "source_type,created_at,message_json) VALUES (?,?,?,?,?,?,?,?,?)",
             ("message-1", session.session_id, None, 0, "user", "pytest 原始问题和详细上下文",
              "user_authored", 1000, "{}"),
         )
         conn.execute(
             "INSERT INTO tool_calls (tool_call_id,session_id,turn_id,trajectory_id,tool_name,status,"
-            "created_at,payload_json) VALUES (?,?,?,?,?,?,?,?)",
+            "created_at,tool_call_json) VALUES (?,?,?,?,?,?,?,?)",
             ("tool-1", session.session_id, None, "turn-1", "bash", "success", 2000,
              json.dumps({"result_text": "pytest 收集到 42 个测试"}, ensure_ascii=False)),
         )
@@ -103,7 +153,7 @@ def test_search_and_read_are_scope_bound_and_page_raw_sources(tmp_path):
     with storage.db.write() as conn:
         conn.execute(
             "INSERT INTO tool_calls (tool_call_id,session_id,turn_id,trajectory_id,tool_name,status,"
-            "created_at,payload_json) VALUES (?,?,?,?,?,?,?,?)",
+            "created_at,tool_call_json) VALUES (?,?,?,?,?,?,?,?)",
             ("tool-memory", session.session_id, None, "turn-2", "memory_search", "success", 3000,
              json.dumps({"result_text": "pytest 旧检索结果"}, ensure_ascii=False)),
         )

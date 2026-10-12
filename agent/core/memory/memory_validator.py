@@ -39,6 +39,13 @@ _GENERIC_KEYWORDS = frozenset({
 def _normalized_keywords(keywords: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(unicodedata.normalize("NFKC", value).strip() for value in keywords)
 
+
+def experience_keywords_valid(keywords: tuple[str, ...]) -> bool:
+    normalized = _normalized_keywords(keywords)
+    unique = {value.casefold() for value in normalized if value}
+    return (3 <= len(normalized) <= 8 and len(unique) == len(normalized)
+            and all(len(value) <= 64 and value.casefold() not in _GENERIC_KEYWORDS for value in normalized))
+
 ## 对于user类型的proposal卡片进行校验
 class MemoryValidator:
     version = "memory-validator-v3"
@@ -95,11 +102,7 @@ class MemoryValidator:
             if ((proposal.outcome_status is ExperienceOutcome.SUCCESS and negative)
                 or (proposal.outcome_status is ExperienceOutcome.FAILURE and positive)):
                 codes.append("experience_outcome_conflict")
-            keywords = _normalized_keywords(proposal.keywords)
-            unique = {value.casefold() for value in keywords if value}
-            if (not 3 <= len(keywords) <= 8
-                or len(unique) != len(keywords)
-                or any(len(value) > 64 or value.casefold() in _GENERIC_KEYWORDS for value in keywords)):
+            if not experience_keywords_valid(proposal.keywords):
                 codes.append("invalid_experience_keywords")
         else:
             if any((proposal.applicability, proposal.action, proposal.outcome,

@@ -31,6 +31,7 @@ class ToolInvocationContext:
     source_message_id: str | None = None
     memory_scope: MemoryScope | None = None
     skills: SkillSelection | None = None
+    result_token_budget: int | None = None
 
 
 @dataclass(frozen=True)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 from agent.types.memory.items import UserMemoryItem
 from agent.types.memory.scope import MemoryScope
 from agent.types.memory.layers import MemoryLayer
@@ -18,8 +18,10 @@ class MemoryRetriever:
     """只读检索；每次操作都由调用方提供可信的 MemoryScope。"""
 
     def __init__(self, database, *, document_root: str | Path | None = None,
-                 allowed_document_paths: Iterable[str | Path] = (), documents: MarkdownDocuments | None = None) -> None:
+                 allowed_document_paths: Iterable[str | Path] = (), documents: MarkdownDocuments | None = None,
+                 now_ms: Callable[[], int] | None = None) -> None:
         self.db = database
+        self._clock = now_ms
         self.document_root = Path(document_root).resolve() if document_root else None
         self.allowed_document_paths = frozenset(Path(path).resolve() for path in allowed_document_paths)
         self._documents = documents or MarkdownDocuments(self.document_root or Path.cwd(), database,
@@ -105,7 +107,8 @@ class MemoryRetriever:
                 (item.valid_from and item.valid_from.timestamp() * 1000 > self._now_ms()) or
                 (item.valid_until and item.valid_until.timestamp() * 1000 <= self._now_ms())):
                 return None
-            body = json.dumps(item.model_dump(mode="json"), ensure_ascii=False, indent=2)
+            from agent.prompt.renderers import render_card
+            body = render_card(item)
             source = "card"
         elif prefix == "message":
             with self.db.read() as conn:
@@ -130,7 +133,7 @@ class MemoryRetriever:
         elif prefix == "tool":
             with self.db.read() as conn:
                 row = conn.execute(
-                    "SELECT c.payload_json FROM tool_calls c JOIN sessions s "
+                    "SELECT c.tool_call_json FROM tool_calls c JOIN sessions s "
                     "ON s.session_id=c.session_id WHERE c.tool_call_id=? AND s.scope_key=?",
                     (identity, scope.storage_key),
                 ).fetchone()
@@ -176,10 +179,9 @@ class MemoryRetriever:
         if not isinstance(scope, MemoryScope):
             raise ValueError("缺少运行时 memory scope")
 
-    @staticmethod
-    def _now_ms() -> int:
+    def _now_ms(self) -> int:
         from agent.storage.sqlite.codec import milliseconds
-        return milliseconds()
+        return self._clock() if self._clock is not None else milliseconds()
 
     def _cards(self, scope: MemoryScope, *, kind: str | None = None):
         from agent.storage.sqlite.memory_store import query_user_memories
@@ -273,10 +275,10 @@ class MemoryRetriever:
         return hits
 
     def _search_tools(self, scope, terms):
-        where = " OR ".join("instr(py_casefold(c.payload_json),?)>0" for _ in terms)
+        where = " OR ".join("instr(py_casefold(c.tool_call_json),?)>0" for _ in terms)
         with self.db.read() as conn:
             rows = conn.execute(
-                "SELECT c.tool_call_id,c.tool_name,c.payload_json,c.created_at FROM tool_calls c "
+                "SELECT c.tool_call_id,c.tool_name,c.tool_call_json,c.created_at FROM tool_calls c "
                 "JOIN sessions s ON s.session_id=c.session_id WHERE s.scope_key=? "
                 "AND c.tool_name NOT LIKE 'memory\\_%' ESCAPE '\\' AND (" + where + ")",
                 (scope.storage_key, *terms),
@@ -300,8 +302,13 @@ class MemoryRetriever:
         result = payload.get("result_text")
         if result:
             return str(result)
-        structured = payload.get("tool_call_result")
-        return json.dumps(structured, ensure_ascii=False) if structured is not None else ""
+        if payload.get("error"):
+            return str(payload["error"])
+        structured = payload.get("result_data", payload.get("tool_call_result"))
+        if structured is None:
+            return ""
+        from agent.prompt.renderers import _fields
+        return "\n".join(_fields(structured))
 
     def _document(self, scope: MemoryScope, identity: str):
         clauses = ["(layer=? AND scope_key=?)" for _ in _allowed_document_scopes(scope)]

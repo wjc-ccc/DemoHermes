@@ -20,7 +20,7 @@ DemoCursor/
 ├── frontier/           # 可视化前端
 ├── agent/              # 核心代码包（小写；import 必须保持 agent）
 │   ├── runtime.py      # 装配、生命周期与提交后通知
-│   ├── core/           # 内部 Loop、Precision、MemoryBuilder、Handler/Dispatch
+│   ├── core/           # 内部 Loop、Perception、MemoryBuilder、Handler/Dispatch
 │   │   └── action/     # 执行控制：账本、Guard、计划、工件和恢复
 │   ├── types/          # 跨模块结构、类别与协议
 │   ├── gateway/        # 消息枢纽；会话存储由 Runtime 注入 SQLite

@@ -20,7 +20,7 @@ from __future__ import annotations
 import time
 import uuid
 from typing import Any, Dict, Literal
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import AliasChoices, BaseModel, Field, ValidationError, field_validator
 
 from agent.types.context import Anchor, AdmissionVerdict
 from agent.types.action.execution import ActionExecutionEvidence
@@ -93,10 +93,10 @@ class ToolCall(BaseModel): ## 包含字段较为全面  7.13 ✅️
     ## time info
     created_at:float = Field(default_factory=time.time,description="toolcall created time")
     finished_at:float = Field(default_factory=time.time,description="toolcall finished time")
-    durations_ms:int = Field(default_factory=int)
+    duration_ms:int = Field(default=0, ge=0, validation_alias=AliasChoices("duration_ms", "durations_ms"))
 
     ## toolcall result
-    tool_call_result:dict|None = Field(default=None)  # 结构化结果
+    result_data:dict|None = Field(default=None, validation_alias=AliasChoices("result_data", "tool_call_result"))
     result_text:str|None = Field(default=None)  # 文本结果（回注 LLM 用）
     error:str|None = Field(default=None)
     metadata:dict = Field(default_factory=dict,description="tool call metadata")
@@ -118,8 +118,8 @@ class ToolCall(BaseModel): ## 包含字段较为全面  7.13 ✅️
         if self.action_trace is not None:
             value["metadata"]["action_trace"] = self.action_trace.model_dump(mode="json")
         if self.pending_mutation is not None:
-            value["tool_call_result"] = {
-                **(value["tool_call_result"] or {}),
+            value["result_data"] = {
+                **(value["result_data"] or {}),
                 "memory_mutation": self.pending_mutation.command_payload(),
             }
         return value
@@ -151,7 +151,9 @@ class Session(BaseModel): ## 包含字段较为全面  7.13 ✅️  提供add me
 
     ## message info
     messages:list[Message] = Field(default_factory=list)
-    message_count:int = Field(default_factory=int,description="session message count")
+    @property
+    def message_count(self) -> int:
+        return len(self.messages)
 
 
     ## tool_call info
@@ -160,7 +162,7 @@ class Session(BaseModel): ## 包含字段较为全面  7.13 ✅️  提供add me
     summary:str = Field(default_factory=str,description="legacy session summary")## 仅用于旧 Anchor 迁移
     context_anchor:Anchor|dict|None = Field(
         default=None,
-        description="Precision v2 结构化 Anchor；覆盖账本由 PrecisionBuilder 校验",
+        description="Perception v2 结构化 Anchor；覆盖账本由 PerceptionBuilder 校验",
     )
     ### 每个session的message对应的准入定案 这个是上下文准入的逻辑（每个context item是否进入以及进入凭证是什么） 
     context_verdicts: dict[str, AdmissionVerdict] = Field(
@@ -174,7 +176,7 @@ class Session(BaseModel): ## 包含字段较为全面  7.13 ✅️  提供add me
     @field_validator("context_anchor", mode="before")
     @classmethod
     def _restore_valid_anchor(cls, value):
-        """恢复合法旧字典为 Anchor；损坏载荷保留给 Precision 降级。"""
+        """恢复合法旧字典为 Anchor；损坏载荷保留给 Perception 降级。"""
         if isinstance(value, Anchor) or not isinstance(value, dict):
             return value
         try:
@@ -205,7 +207,6 @@ class Session(BaseModel): ## 包含字段较为全面  7.13 ✅️  提供add me
         msg.session_id = self.session_id
         msg.seq_id = len(self.messages)
         self.messages.append(msg)
-        self.message_count = len(self.messages)
         now = time.time()
         self.updated_at = now
         self.last_active_at = now

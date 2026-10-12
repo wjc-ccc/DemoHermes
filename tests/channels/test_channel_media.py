@@ -13,7 +13,7 @@ from agent.channel.channel_feishu import FeishuChannel
 from agent.channel.channel_qq import QQChannel
 from agent.channel.channel_wechat import WechatChannel
 from agent.core.building_messages import build_user_message
-from agent.core.precision.percision_engine import PrecisionBuilder
+from agent.core.perception.perception_engine import PerceptionBuilder
 from agent.model.media_messages import prepare_model_messages
 
 
@@ -114,7 +114,7 @@ def test_wechat_multiple_images_and_file_keep_order_and_unique_paths(monkeypatch
     assert [part.type for part in event.content] == ["image", "image", "file"]
     assert [part.file_name for part in event.content] == ["image-1.jpg", "image-2.jpg", "report.pdf"]
     assert len({part.path for part in event.content}) == 3
-    mapped = PrecisionBuilder._map_message(build_user_message(event))
+    mapped = PerceptionBuilder._map_message(build_user_message(event))
     prepared = prepare_model_messages([mapped], supports_images=True)[0]
     assert [block["type"] for block in prepared["content"]] == ["text", "image_url", "image_url"]
     assert "report.pdf" in prepared["content"][0]["text"]

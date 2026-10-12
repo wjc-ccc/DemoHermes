@@ -12,13 +12,13 @@ from ..channel.channel_cli import CliChannel
 from ..core.agent_loop import AgentLoop
 from agent.core.agent_loop_trace import AgentLoopTrace
 from agent.core.event_bus import EventBus
-from agent.core.precision.percision_anchor import ModelAnchorBuilder
-from agent.core.precision.percision_engine import PrecisionBuilder
-from agent.core.precision.percision_trace import PrecisionTrace
+from agent.core.perception.perception_anchor import ModelAnchorBuilder
+from agent.core.perception.perception_engine import PerceptionBuilder
+from agent.core.perception.perception_trace import PerceptionTrace
 from agent.core.tool_handler import ToolHandler
 from agent.core.tool_dispatch import ToolDispatch
-from agent.types.precision.admission import AdmissionPolicy
-from agent.types.precision.result import PrecisionConfig
+from agent.types.perception.admission import AdmissionPolicy
+from agent.types.perception.result import PerceptionConfig
 from agent.types.runtime import LoopConfig
 
 from agent.core.memory.memory_context_loader import MemoryContextLoader
@@ -104,7 +104,7 @@ def _tool_evidence_of(calls: list[ToolCall]) -> tuple[ToolCallEvidence, ...]:
     """把 Session 里已落库的 ToolCall 转成评测证据。"""
     evidence: list[ToolCallEvidence] = []
     for call in calls:
-        data = call.tool_call_result or {}
+        data = call.result_data or {}
         arguments = call.arguments or {}
         skill_name = str(data.get("skill_name") or arguments.get("skill_name") or "")
         try:
@@ -246,17 +246,17 @@ class EvalRunner:
         if self._skills is not None and hasattr(self._skills, "reload"):
             # 每个 case 从磁盘真相重新开始，避免上一 case 的写入影响下一 case
             self._skills.reload()
-        events, precision_trace = EventBus(), PrecisionTrace()
-        trace = AgentLoopTrace(events, precision_trace)
+        events, perception_trace = EventBus(), PerceptionTrace()
+        trace = AgentLoopTrace(events, perception_trace)
         handler = ToolHandler(ToolDispatch(trace, registry=tools), registry=tools)
         if self._skills is not None:
             self._skills.selector = self._selector
-        precision = PrecisionBuilder(
-            trace=precision_trace, anchor_builder=ModelAnchorBuilder(model),
+        perception = PerceptionBuilder(
+            trace=perception_trace, anchor_builder=ModelAnchorBuilder(model),
             admission_policy=AdmissionPolicy(readback=tools.get("memory_read") is not None),
-            config=PrecisionConfig(budget=self._context_budget, token_estimator=self._token_estimator),
+            config=PerceptionConfig(budget=self._context_budget, token_estimator=self._token_estimator),
         )
-        loop = AgentLoop(model, precision=precision, tool_handler=handler,
+        loop = AgentLoop(model, perception=perception, tool_handler=handler,
                          skills=self._skills, trace=trace, config=LoopConfig())
         on_turn_committed = None
         if extractor is not None:
@@ -281,7 +281,7 @@ class EvalRunner:
             memory_context=memory_context,
             workers=1,
             on_turn_committed=on_turn_committed,
-            event_bus=events, precision_trace=precision_trace,
+            event_bus=events, perception_trace=perception_trace,
         )
         gateway.register_channel(CliChannel())
 

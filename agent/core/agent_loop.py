@@ -11,13 +11,15 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
-from agent.core.precision.errors import AnchorCompactionError, ContextBudgetExceededError
+from agent.core.perception.errors import AnchorCompactionError, ContextBudgetExceededError
 from .building_messages import build_assistant_message, build_tool_message
-from agent.core.precision.percision_admission import mark_readback_miss
+from agent.core.perception.perception_admission import mark_readback_miss
 from agent.types.conversation import Message, Session, TurnResult
 from agent.types.runtime import LoopConfig, TurnContext
+from agent.types.perception.trace import ModelCallSnapshot, normalized_usage, response_metadata
 
 if TYPE_CHECKING:
     from agent.types.action.policy import AssemblyPolicy
@@ -28,15 +30,15 @@ logger = logging.getLogger(__name__)
 
 _PREVIEW = 100
 
-## agent loop 加载tool skills event bus 迭代次数 percision trace等等 + 负责emit中间状态对象 
+## agent loop 加载tool skills event bus 迭代次数 perception trace等等 + 负责emit中间状态对象
 # 接受网关传入的特定session id的 session和message 组装上下文 + 工程化 retry等等
 class AgentLoop:
-    """执行单个会话 turn 的 ReAct 循环，并把上下文治理委托给 Precision。"""
+    """执行单个会话 turn 的 ReAct 循环，并把上下文治理委托给 Perception。"""
     ## 进程级别的loop 就应该具备进程级别的模块配置  skill tool anchor admission budget
-    def __init__(self, model, *, precision, tool_handler, skills=None, trace, config=None):
+    def __init__(self, model, *, perception, tool_handler, skills=None, trace, config=None):
         """注入完整模块；预算、Anchor 和执行控制由对应模块管理。"""
         self.model = model
-        self.precision = precision
+        self.perception = perception
         self.tool_handler = tool_handler
         self.skills = skills
         self.trace = trace
@@ -45,7 +47,7 @@ class AgentLoop:
 
 
     ## retry适合网络波动  对于有error的 一部分是阻止二次尝试 + 工具出错的熔断工具并返回工具错误信息 + 参数错误的传出工具提示的错误信息
-    def _chat_with_retry(self, messages: list[dict], *, tool_schemas=None):
+    def _chat_with_retry(self, messages: list[dict], *, tool_schemas=None, turn_id=None, iteration=None, output_token_limit=None):
         """仅针对主模型瞬时异常执行有限次数重试。"""
         from ..model.media_messages import prepare_model_messages
 
@@ -54,17 +56,39 @@ class AgentLoop:
         )
         # ACTION-HOOK-03：think 前使用当前 turn 筛选 schema；[] 不回退成全部工具。
         tools = tool_schemas
+        if turn_id is not None:
+            self.trace.perception.record_request(turn_id, iteration, tools or [], messages=messages)
         last_error: Exception | None = None
         for attempt in range(self.config.model_retries + 1):
+            started = time.time()
+            response = None
+            error = None
             try:
-                return self.model.chat(messages, tools=tools or None)
+                response = self.model.chat(messages, tools=tools or None,
+                    **({"max_tokens": output_token_limit} if output_token_limit is not None else {}))
+                if not (response.text or "").strip() and not response.tool_calls:
+                    raise RuntimeError("empty_model_response")
+                return response
             except Exception as e:
                 last_error = e
+                error = str(e)
                 logger.warning(
                     "模型调用失败（第 %d/%d 次）: %s", attempt + 1, self.config.model_retries + 1, e
                 )
-                if attempt < self.config.model_retries:
-                    time.sleep(0.5 * (attempt + 1))
+            finally:
+                finished = time.time()
+                usage = dict(response.usage or {}) if response is not None else {}
+                input_tokens, output_tokens = normalized_usage(usage)
+                if turn_id is not None:
+                    self.trace.perception.record_model_call(turn_id, iteration, ModelCallSnapshot(
+                        attempt=attempt + 1, provider=getattr(self.model, "name", None),
+                        model=getattr(self.model, "model_name", None), started_at=started,
+                        finished_at=finished, duration_ms=max(0, int((finished - started) * 1000)),
+                        usage=usage, input_token_count=input_tokens, output_token_count=output_tokens, error=error,
+                        **response_metadata(response),
+                    ))
+            if attempt < self.config.model_retries:
+                time.sleep(0.5 * (attempt + 1))
         raise last_error  # type: ignore[misc]
 
     # ** 初始化turnid 和 指标 然后执行run turn** 核心函数 loop调用接口
@@ -112,18 +136,20 @@ class AgentLoop:
         ## 当前对话开始 循环迭代
         iteration_limit = tool_context.max_iterations or self.config.max_iterations
         for iteration in range(1, iteration_limit + 1):
-            # 唯一上下文主链：Precision 内部固定执行加载 → 分级 → 构建。
+            schemas = self.tool_handler.get_schemas(tool_context)
+            # 唯一上下文主链：Perception 内部固定执行加载 → 分级 → 构建。
             try:
-                precision_result = self.precision.build(
+                perception_result = self.perception.build(
                     session,
                     memory_snapshot=memory_snapshot,
                     skill_selection=skill_selection,
                     ephemeral_prompt=ephemeral_prompt,
                     trace_id=turn_id,
                     iteration=iteration,
+                    tool_schemas=schemas,
                 )
             except AnchorCompactionError as exc:
-                self.trace.precision.record_failure(turn_id, iteration, "anchor_compaction_failed")
+                self.trace.perception.record_failure(turn_id, iteration, "anchor_compaction_failed")
                 logger.warning(
                     "turn Anchor 压缩失败 turn_id=%s code=%s detail=%s",
                     turn_id,
@@ -141,7 +167,7 @@ class AgentLoop:
                     error="anchor_compaction_failed",
                 )
             except ContextBudgetExceededError:
-                self.trace.precision.record_failure(turn_id, iteration, "context_budget_exceeded")
+                self.trace.perception.record_failure(turn_id, iteration, "context_budget_exceeded")
                 logger.warning("turn 上下文预算超限 turn_id=%s", turn_id)
                 self.trace.emit(
                     "turn_error", turn_id, session, session_key,
@@ -153,24 +179,24 @@ class AgentLoop:
                 )
 
             except Exception:
-                self.trace.precision.record_failure(turn_id, iteration, "context_build_failed")
+                self.trace.perception.record_failure(turn_id, iteration, "context_build_failed")
                 raise
 
-            if precision_result.anchor_updated and precision_result.anchor is not None:
-                session.context_anchor = precision_result.anchor
-            if precision_result.verdicts_updated:
-                session.context_verdicts = dict(precision_result.verdicts)
-            messages = precision_result.messages
-            schemas = self.tool_handler.get_schemas(tool_context)
-            self.trace.precision.record_request(turn_id, iteration, schemas or [])
+            if perception_result.anchor_updated and perception_result.anchor is not None:
+                session.context_anchor = perception_result.anchor
+            if perception_result.verdicts_updated:
+                session.context_verdicts = dict(perception_result.verdicts)
+            messages = perception_result.messages
+            self.trace.perception.record_request(turn_id, iteration, schemas or [])
 
             self.trace.emit(
                 "llm_request", turn_id, session, session_key,
-                iteration=iteration, **precision_result.metrics.event_data(),
+                iteration=iteration, **perception_result.metrics.event_data(),
             )
             try:
                 ## TODO：针对于不同的错误信息应该使用不同的 retry方法 
-                response = self._chat_with_retry(messages, tool_schemas=schemas)
+                response = self._chat_with_retry(messages, tool_schemas=schemas, turn_id=turn_id, iteration=iteration,
+                                                 output_token_limit=perception_result.output_token_limit)
 
             except Exception as e:
                 logger.exception("模型调用最终失败 turn_id=%s", turn_id)
@@ -193,13 +219,24 @@ class AgentLoop:
 
             ## 判断是否工具调用
             if response.has_tool_calls:
+                for request in response.tool_calls:
+                    if not request.id:
+                        request.id = uuid.uuid4().hex
                 session.add_message(build_assistant_message(response.text, response.tool_calls))
                 # ACTION-HOOK-04：Handler 审批/分配，Dispatch 执行，Loop 统一记录和回注。
-                records = self.tool_handler.handle_batch(response.tool_calls, tool_context)
+                budget = self.perception.config.budget
+                response_context = tool_context
+                if budget is not None:
+                    remaining = max(256, budget.max_input_tokens - perception_result.metrics.tokens_used - 512)
+                    limit = max(128, min(2048, remaining // (2 * max(1, len(response.tool_calls)))))
+                    response_context = replace(tool_context, invocation=replace(tool_context.invocation,
+                        result_token_budget=limit), action=(tool_context.action.model_copy(
+                            update={"result_token_budget": limit}) if tool_context.action is not None else None))
+                records = self.tool_handler.handle_batch(response.tool_calls, response_context)
                 for record in records:
                     session.tool_calls.append(record)
                     if record.ok and record.readback_reference is not None:
-                        self.trace.precision.record_memory_read(turn_id, record.readback_reference)
+                        self.trace.perception.record_memory_read(turn_id, record.readback_reference)
                         self._pin_readback(session, record.readback_reference, turn_id, session_key)
                     session.add_message(build_tool_message(record))
                 continue
@@ -254,7 +291,12 @@ class AgentLoop:
         """模型读回了被准入移出/裁剪的工具结果：判错，钉住全文并发出事件。"""
         if not isinstance(reference, str) or not session.context_verdicts:
             return
-        verdicts, pinned = mark_readback_miss(session.context_verdicts, reference)
+        turn = self.trace.perception.get(turn_id)
+        applied = tuple(message_id for build in (turn.builds if turn else ())
+                        for message_id in build.applied_admission_message_ids)
+        verdicts, pinned = mark_readback_miss(
+            session.context_verdicts, reference, applied_message_ids=applied,
+        )
         if pinned is None:
             return
         session.context_verdicts = verdicts

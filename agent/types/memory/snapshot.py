@@ -7,7 +7,7 @@ from agent.types.memory.scope import MemoryScope
 
 # 职责：携带文档正文、经验召回、来源版本和非致命诊断。
 # 边界：纯数据结构，不读取文件或决定上下文优先级。
-# 关联：MemoryContextLoader 创建快照，PrecisionBuilder 消费快照。
+# 关联：MemoryContextLoader 创建快照，PerceptionBuilder 消费快照。
 
 
 class MemoryDiagnostic(BaseModel):
@@ -31,7 +31,7 @@ class DocumentRevision(BaseModel):
 
 ## 所有类型的memory的核心字段 用于按照存在情况提取对应路径下的记忆
 class MemorySnapshot(BaseModel):
-    """Memory → Precision 的稳定 Interface；同一 Turn 内不可变。"""
+    """Memory → Perception 的稳定 Interface；同一 Turn 内不可变。"""
 
     model_config = ConfigDict(frozen=True)
 

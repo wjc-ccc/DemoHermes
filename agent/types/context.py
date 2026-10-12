@@ -82,7 +82,7 @@ class ContextBudget(BaseModel):
     @computed_field
     @property
     def max_input_tokens(self) -> int:
-        """返回 Precision 真正可使用的输入额度。"""
+        """返回 Perception 真正可使用的输入额度。"""
         return self.model_context_tokens - self.reserved_output_tokens
 
 

@@ -1,6 +1,6 @@
-# Memory 测评示例：两个版本与字段定义
+# Memory 基础题库：两个历史版本与字段定义
 
-构建日期：2026-10-08。所有示例均为虚构数据。
+构建日期：2026-10-08。所有示例均为虚构数据。以下记录基础版本；2026-10-11新增的48个长对话场景及96道问题见 [长对话评测](long-dialogue-evaluation.md)。
 
 已保存到项目 `data/agent.db`：
 
@@ -9,7 +9,7 @@
 | memory_behavior | 1.0.0 | 23 | 4 | 原有基础回归案例的快照；多数只检验提取与检索 |
 | memory_behavior | 2.0.0 | 20 | 40 | 日常多会话黄金问题；每个场景两道自然提问 |
 
-数据库现在共保存 43 个场景、44 个后续提问。第一版没有后续问题的基础用例仍完整保存并可回放，不人为给它们补造提问。
+这两个历史版本共43个场景、44个后续提问。第一版没有后续问题的基础用例仍完整保存并可回放，不人为给它们补造提问。
 
 ## 三种版本的关系
 
@@ -23,11 +23,11 @@
 
 | 表 | 一行表示什么 | 版本关联 |
 |---|---|---|
-| `memory_eval_datasets` | 一份已经发布的案例集 | 主键为 dataset_id + version |
-| `memory_eval_cases` | 一个场景：历史、预期记忆、应忽略内容 | dataset_id + dataset_version + case_id |
-| `memory_eval_questions` | 场景中的一个黄金问题 | dataset_id + dataset_version + case_id + question_id |
+| `eval_datasets` | 一份已经发布的案例集 | 主键为 dataset_id + dataset_version |
+| `eval_cases` | 一个场景：历史、预期记忆、应忽略内容 | dataset_id + dataset_version + case_id |
+| `eval_questions` | 场景中的一个黄金问题 | dataset_id + dataset_version + case_id + question_id |
 
-数据库通过外键关联三张表。常用筛选字段直接作为列保存，其余完整定义保存在 `payload_json`。案例行的 JSON 不重复保存问题列表，问题独立存在第三张表，读取时再组装。
+数据库通过外键关联三张表。常用筛选字段直接作为列保存，其余完整定义保存在 `dataset_json`、`case_json`、`question_json`。案例行的 JSON 不重复保存问题列表，问题独立存在第三张表，读取时再组装。`010_storage_contract.sql` 完成旧表名迁移，新增 `eval_runs` 和 `eval_results` 保存实际运行。
 
 这三张表属于评测标准，不进入用户卡片、对话历史、原文检索或自动经验召回。参考答案不会被模型读取。后台只读表目录已加入中文说明，可按版本、场景和难度筛选。
 
@@ -146,11 +146,11 @@
 
 数据日期作为对话上下文提供给模型，**不修改实际 SQLite 时钟**。跨日期物理过期的自动断言仍需可控时钟测试配合；不能仅靠这批黄金问题证明全部过期行为正确。
 
-源文件：原基础版为 `tests/eval/datasets/memory_behavior.json`，新版为 `tests/eval/datasets/memory_golden_v2.json`。规范类型在 `agent/eval/datasets/types/memory_eval_types.py`。
+源文件：原基础版为 `tests/eval/datasets/memory_behavior.json`，日常版为 `tests/eval/datasets/memory_golden_v2.json`。规范类型在 `agent/types/eval/datasets.py`。
 
 本次已完成案例编写、发布、版本存取及评测转换测试。新版 40 题尚未进行真实模型全量运行，数据库中的内容是评测标准，不是模型已通过的结果。
 
-## 写入审计
+## 2026-10-08写入审计
 
 本次新增迁移 `006_memory_eval_datasets.sql`，未修改已应用的旧迁移。
 

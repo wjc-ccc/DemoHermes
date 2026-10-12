@@ -10,8 +10,8 @@ FrontierHttpServer — 可视化前端的 HTTP / SSE 入口（仅标准库实现
     GET  /api/debug/memory/session :（flag）当前用户 SQLite 会话只读视图
     GET  /api/debug/memory/sessions :（flag）当前用户全部 session（含已结束）
     GET  /api/debug/memory/turns :（flag）指定 session 的 turn 列表
-    GET  /api/debug/memory/turn :（flag）指定 turn 的消息、工具和 Precision trace
-    GET  /api/debug/memory/trace :（flag）指定 turn 的 Precision trace 指标
+    GET  /api/debug/memory/turn :（flag）指定 turn 的消息、工具和 Perception trace
+    GET  /api/debug/memory/trace :（flag）指定 turn 的 Perception trace 指标
     GET  /api/debug/memory/context :（flag）当前用户冻结 MemorySnapshot 预览
     GET  /api/debug/tables         :（flag）已登记 SQLite 的表目录
     GET  /api/debug/tables/rows    :（flag）指定表的分页行
@@ -301,8 +301,8 @@ class _Handler(BaseHTTPRequestHandler):
         store = self.server.gateway.store
         reader = getattr(getattr(store, "executions", None), "get_turn", None)
         persisted_turn = reader(turn_id) if turn_id and reader else None
-        persisted = persisted_turn.get("precision_trace") if persisted_turn else None
-        trace = self.server.gateway.precision_trace
+        persisted = persisted_turn.get("perception_trace") if persisted_turn else None
+        trace = self.server.gateway.perception_trace
         latest = trace.get(turn_id) if trace and turn_id else (trace.latest() if trace else None)
         payload = persisted or (latest.model_dump(mode="json") if latest else None)
         builds = payload.get("builds", []) if isinstance(payload, dict) else []

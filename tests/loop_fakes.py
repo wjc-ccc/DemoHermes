@@ -2,18 +2,18 @@
 from agent.core.agent_loop import AgentLoop
 from agent.core.agent_loop_trace import AgentLoopTrace
 from agent.core.event_bus import EventBus
-from agent.core.precision.percision_anchor import ModelAnchorBuilder
-from agent.core.precision.percision_engine import PrecisionBuilder
-from agent.core.precision.percision_trace import PrecisionTrace
+from agent.core.perception.perception_anchor import ModelAnchorBuilder
+from agent.core.perception.perception_engine import PerceptionBuilder
+from agent.core.perception.perception_trace import PerceptionTrace
 from agent.core.tool_dispatch import ToolDispatch
 from agent.core.tool_handler import ToolHandler
-from agent.types.precision.admission import AdmissionPolicy
-from agent.types.precision.result import PrecisionConfig
+from agent.types.perception.admission import AdmissionPolicy
+from agent.types.perception.result import PerceptionConfig
 from agent.types.runtime import LoopConfig, TurnContext
 
 
 def make_loop(model=None, *, tools=None, skills=None, event_bus=None,
-              precision_trace=None, anchor_builder=None, anchor_model=None,
+              perception_trace=None, anchor_builder=None, anchor_model=None,
               action=None, context_judge=None, admission_policy=None,
               budget=None, token_estimator=None, selector=None,
               max_iterations=8, model_retries=2, agent_id="main",
@@ -24,8 +24,8 @@ def make_loop(model=None, *, tools=None, skills=None, event_bus=None,
             models = ModelRegistry.default()
         model = models.get(model_name)
     events = event_bus if event_bus is not None else EventBus()
-    precision_trace = precision_trace if precision_trace is not None else PrecisionTrace()
-    trace = AgentLoopTrace(events, precision_trace)
+    perception_trace = perception_trace if perception_trace is not None else PerceptionTrace()
+    trace = AgentLoopTrace(events, perception_trace)
     if action is not None:
         handler = action.handler
         handler.dispatch.trace = trace
@@ -35,14 +35,14 @@ def make_loop(model=None, *, tools=None, skills=None, event_bus=None,
     if skills is not None and selector is not None:
         skills.selector = selector
     policy = admission_policy or AdmissionPolicy()
-    precision = PrecisionBuilder(
-        trace=precision_trace,
+    perception = PerceptionBuilder(
+        trace=perception_trace,
         anchor_builder=anchor_builder if anchor_builder is not None else ModelAnchorBuilder(anchor_model or model),
         context_judge=context_judge,
         admission_policy=policy.model_copy(update={"readback": tools is not None and tools.get("memory_read") is not None}),
-        config=PrecisionConfig(budget=budget, token_estimator=token_estimator),
+        config=PerceptionConfig(budget=budget, token_estimator=token_estimator),
     )
-    return AgentLoop(model, precision=precision, tool_handler=handler,
+    return AgentLoop(model, perception=perception, tool_handler=handler,
                      skills=skills, trace=trace,
                      config=LoopConfig(max_iterations=max_iterations, model_retries=model_retries, agent_id=agent_id))
 

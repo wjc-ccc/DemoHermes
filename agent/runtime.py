@@ -10,14 +10,14 @@ from agent.core.agent_loop import AgentLoop
 from agent.core.agent_loop_trace import AgentLoopTrace
 from agent.core.tool_handler import ToolHandler
 from agent.core.tool_dispatch import ToolDispatch
-from agent.core.precision.percision_engine import PrecisionBuilder
-from agent.core.precision.percision_anchor import ModelAnchorBuilder
-from agent.types.precision.result import PrecisionConfig
+from agent.core.perception.perception_engine import PerceptionBuilder
+from agent.core.perception.perception_anchor import ModelAnchorBuilder
+from agent.types.perception.result import PerceptionConfig
 from agent.core.environment_snapshot import EnvironmentSnapshotter
 from agent.core.event_bus import EventBus
 from agent.core.memory.memory_builder import MemoryBuilder
 from agent.core.memory.memory_extractor import MemoryExtractor
-from agent.core.precision.percision_trace import PrecisionTrace
+from agent.core.perception.perception_trace import PerceptionTrace
 from agent.gateway.gateway import Gateway
 from agent.model.registry import ModelRegistry
 from agent.skills.registry import SkillRegistry
@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 class AgentRuntime:
     def __init__(self, *, config, gateway, loop, models, tools, skills, storage,
-                 memory, action, events, precision_trace, environment, tool_handler, tool_dispatch):
+                 memory, action, events, perception_trace, environment, tool_handler, tool_dispatch):
         self.config = config
         self.gateway = gateway
         self.loop = loop
@@ -48,7 +48,7 @@ class AgentRuntime:
         self.memory = memory
         self.action = action
         self.events = events
-        self.precision_trace = precision_trace
+        self.perception_trace = perception_trace
         self.environment = environment
         self.tool_handler = tool_handler
         self.tool_dispatch = tool_dispatch
@@ -122,8 +122,8 @@ def build_runtime(config: RuntimeConfig | None = None, *, model_registry=None) -
     )
     data_root = Path(config.data_root) if config.data_root is not None else ROOT / "data"
     models = model_registry if model_registry is not None else ModelRegistry.default()
-    events, precision_trace = EventBus(), PrecisionTrace()
-    trace = AgentLoopTrace(events, precision_trace)
+    events, perception_trace = EventBus(), PerceptionTrace()
+    trace = AgentLoopTrace(events, perception_trace)
     # 会话事实始终落库；Memory 开关只控制记忆能力的装配与生命周期。
     # ACTION-HOOK-08：可选模块在启动装配处注入；关闭时不导入 action。
     # action-only 只持久记账，不启用 Memory 工具与后台提炼。
@@ -160,12 +160,10 @@ def build_runtime(config: RuntimeConfig | None = None, *, model_registry=None) -
         from agent.core.action.bootstrap import build_action_runtime
         action = build_action_runtime(storage, tools, config=config.action_config,
                                       event_bus=events, skill_repository=repository, trace=trace)
-    budget = None
-    if config.use_memory:
-        budget = config.context_budget or ContextBudget(
-            model_context_tokens=int(os.getenv("AGENT_MODEL_CONTEXT_TOKENS", "32768")),
-            reserved_output_tokens=int(os.getenv("AGENT_RESERVED_OUTPUT_TOKENS", "4096")),
-        )
+    budget = config.context_budget or ContextBudget(
+        model_context_tokens=int(os.getenv("AGENT_MODEL_CONTEXT_TOKENS", "32768")),
+        reserved_output_tokens=int(os.getenv("AGENT_RESERVED_OUTPUT_TOKENS", "4096")),
+    )
     # ---- 对话核心 ----
     if action is not None:
         handler, dispatch = action.handler, action.dispatch
@@ -174,22 +172,22 @@ def build_runtime(config: RuntimeConfig | None = None, *, model_registry=None) -
         handler = ToolHandler(dispatch, registry=tools)
     model = models.get()
     policy = build_admission_policy().model_copy(update={"readback": tools.get("memory_read") is not None})
-    precision = PrecisionBuilder(
-        trace=precision_trace, anchor_builder=ModelAnchorBuilder(model),
+    perception = PerceptionBuilder(
+        trace=perception_trace, anchor_builder=ModelAnchorBuilder(model),
         context_judge=build_context_judge(), admission_policy=policy,
-        config=PrecisionConfig(budget=budget),
+        config=PerceptionConfig(budget=budget),
     )
-    loop = AgentLoop(model, precision=precision, tool_handler=handler,
+    loop = AgentLoop(model, perception=perception, tool_handler=handler,
                      skills=skills, trace=trace, config=LoopConfig())
     gateway = Gateway(
         loop=loop, store=storage.sessions,
         memory_context=memory.context if memory is not None else None,
-        workers=config.workers, event_bus=events, action_runtime=action, precision_trace=precision_trace,
+        workers=config.workers, event_bus=events, action_runtime=action, perception_trace=perception_trace,
     )
     runtime = AgentRuntime(
         config=config, gateway=gateway, loop=loop, models=models, tools=tools,
         skills=skills, storage=storage, memory=memory, action=action,
-        events=events, precision_trace=precision_trace, tool_handler=handler, tool_dispatch=dispatch,
+        events=events, perception_trace=perception_trace, tool_handler=handler, tool_dispatch=dispatch,
         environment=EnvironmentSnapshotter(storage.executions) if config.use_memory else None,
     )
     gateway.describe_agent = runtime.describe

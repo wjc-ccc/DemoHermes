@@ -84,7 +84,7 @@ def test_structured_context_anchor_roundtrips_in_session_payload(tmp_path):
 
 
 def test_invalid_context_anchor_payload_does_not_block_session_restore(tmp_path):
-    """损坏旧 Anchor 保留为字典，由 Precision 恢复原始历史。"""
+    """损坏旧 Anchor 保留为字典，由 Perception 恢复原始历史。"""
     db = tmp_path / "memory.db"
     store = RuntimeStorage.open(db).sessions
     session = store.get_or_create("invalid-anchor", scope=_SCOPE)

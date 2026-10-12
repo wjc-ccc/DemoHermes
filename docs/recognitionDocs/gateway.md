@@ -10,4 +10,4 @@ Runtime 始终注入 SQLite 会话存储，Memory 和 Action 开关都不影响�
 
 Gateway 的 store 为必填依赖，没有 dict 会话存储或隐式回退；计划入口只检查是否启用 Action。
 
-失败返回 persistence_error，涉及 memory_edit 暂存时返回 memory_write_failed。Runtime 管后台生命周期，Gateway 管调度和渠道。运行描述与 PrecisionTrace 由 Runtime 提供，开关见 [Runtime 架构](../runtime-architecture.md)。
+失败返回 persistence_error，涉及 memory_edit 暂存时返回 memory_write_failed。Runtime 管后台生命周期，Gateway 管调度和渠道。运行描述与 PerceptionTrace 由 Runtime 提供，开关见 [Runtime 架构](../runtime-architecture.md)。

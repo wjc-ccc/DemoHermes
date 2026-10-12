@@ -199,14 +199,14 @@ class SqliteMemoryStore:
         return tuple(_legacy_snapshot(raw) for (raw,) in rows)
 
     def search(self, scope, query: str = "", *, limit: int = 50, offset: int = 0,
-               kind: str | None = None, statuses: tuple[str, ...] = ('active',)):
+               kind: str | None = None, statuses: tuple[str, ...] = ('active',), as_of_ms: int | None = None):
         if not statuses:
             return ()
         statuses = tuple(UserCardStatus(status).value for status in statuses)
         kind = getattr(kind, 'value', kind)
         conditions = ["scope_key=?", "status IN (" + ",".join("?" for _ in statuses) + ")",
                       "(valid_from IS NULL OR valid_from<=?)", "(valid_until IS NULL OR valid_until>?)"]
-        now = milliseconds()
+        now = milliseconds() if as_of_ms is None else as_of_ms
         values: list = [scope.storage_key, *statuses, now, now]
         if kind is not None:
             conditions.append("kind=?")

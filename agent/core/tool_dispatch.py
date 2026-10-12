@@ -33,13 +33,17 @@ class ToolDispatch:
         else:
             result, item = self._dispatch_basic(ticket), None
         request = ticket.request
+        if result.ok and not result.result_text and result.data is not None:
+            from agent.prompt.renderers import render_tool_result
+            result = result.model_copy(update={"result_text": render_tool_result(request.name, result.data)})
         record = ToolCall(
             tool_call_id=ticket.fact_id, session_id=ticket.invocation.session_id,
             trajectory_id=ticket.invocation.turn_id, tool_name=request.name,
             arguments=request.arguments, arguments_raw=request.arguments_raw,
             status="success" if result.ok else "error", created_at=ticket.started_at,
-            finished_at=time.time(), durations_ms=int((time.time()-ticket.started_at)*1000),
-            tool_call_result=result.data, result_text=result.result_text, error=result.error,
+            finished_at=time.time(), duration_ms=max(0, int((time.time()-ticket.started_at)*1000)),
+            result_data=result.data, result_text=result.result_text, error=result.error,
+            provider_tool_call_id=request.id or ticket.fact_id,
             pending_mutation=result.pending_mutation,
             readback_reference=result.readback_reference,
         )

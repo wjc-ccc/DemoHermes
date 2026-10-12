@@ -32,7 +32,7 @@ def test_two_versions_keep_their_own_history_questions_and_answers_after_reopen(
     reopened = RuntimeStorage.open(path).memory_evals
     assert reopened.get_dataset("memory_behavior", "1.0.0") == first
     assert reopened.get_dataset("memory_behavior", "2.0.0") == second
-    assert [row["version"] for row in reopened.list_datasets("memory_behavior")] == ["1.0.0", "2.0.0"]
+    assert [row["dataset_version"] for row in reopened.list_datasets("memory_behavior")] == ["1.0.0", "2.0.0"]
 
 
 def test_published_version_cannot_be_silently_replaced(tmp_path):

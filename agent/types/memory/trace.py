@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from agent.types.memory.layers import MemoryLayer
 from agent.types.memory.categories import UserCardKind
 from agent.types.memory.trace_categories import MemoryTraceOperation, MemoryTraceDecision
+from agent.types.perception.trace import ModelCallSnapshot
 
 
 def trace_now() -> datetime:
@@ -24,6 +25,9 @@ class MemoryAiTraceFields(BaseModel):
     self_reported_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     evidence_refs: tuple[str, ...] = ()
     reason_code: str | None = None
+    retention_reason: str | None = None
+    future_use: str | None = None
+    skip_reason: str | None = None
 
 
 class MemoryRuntimeTraceFields(BaseModel):
@@ -76,4 +80,5 @@ class MemoryTrace(BaseModel):
     validator_version: str | None = None
     latency_ms: float | None = Field(default=None, ge=0.0)
     items: tuple[MemoryItemTrace, ...] = ()
+    model_calls: tuple[ModelCallSnapshot, ...] = ()
     created_at: datetime = Field(default_factory=trace_now)

@@ -266,9 +266,9 @@ def test_pre_model_exception_records_user_and_failure_reply(tmp_path):
 
 
 def test_inflight_failure_keeps_original_turn_and_messages(tmp_path):
-    class _FailingPrecision:
+    class _FailingPerception:
         def build(self, *args, **kwargs):
-            raise RuntimeError("injected precision failure")
+            raise RuntimeError("injected perception failure")
 
     db = tmp_path / "agent.db"
     gateway, loop = _make_gateway(
@@ -276,7 +276,7 @@ def test_inflight_failure_keeps_original_turn_and_messages(tmp_path):
         store=RuntimeStorage.open(db).sessions,
         memory_context=MemoryContextLoader(tmp_path / "memory"),
     )
-    loop.precision = _FailingPrecision()
+    loop.perception = _FailingPerception()
     event = _event("hi")
     try:
         reply = gateway.ask(event, timeout=10)

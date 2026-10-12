@@ -6,7 +6,7 @@ from agent.core.tool_handler import ToolHandler
 from agent.core.tool_dispatch import ToolDispatch
 from agent.core.agent_loop_trace import AgentLoopTrace
 from agent.core.event_bus import EventBus
-from agent.core.precision.percision_trace import PrecisionTrace
+from agent.core.perception.perception_trace import PerceptionTrace
 from agent.types.action.policy import Toolset
 from .storage.tool_store import SqliteToolLedgerStore
 from .adapters.turn_commit import ActionTurnCommitHook
@@ -23,7 +23,7 @@ class ActionRuntime:
         self.config = config or ActionConfig()
         self.catalog = catalog
         self.ledger = SqliteToolLedgerStore(database)
-        self.trace = trace or AgentLoopTrace(event_bus if event_bus is not None else EventBus(), PrecisionTrace())
+        self.trace = trace or AgentLoopTrace(event_bus if event_bus is not None else EventBus(), PerceptionTrace())
         default = Toolset(tools=catalog.names())
         self.toolsets = {item.name: item for item in self.config.toolsets or (default,)}
         if self.config.default_toolset not in self.toolsets:
@@ -92,7 +92,7 @@ class ActionRuntime:
         self.plan_validator.validate(plan)
         if plan.source_message_id:
             with self.ledger.db.read() as conn:
-                row = conn.execute("SELECT m.payload_json FROM messages m JOIN sessions s ON s.session_id=m.session_id "
+                row = conn.execute("SELECT m.message_json FROM messages m JOIN sessions s ON s.session_id=m.session_id "
                     "WHERE m.message_id=? AND m.role='user' AND s.scope_key=?", (plan.source_message_id, plan.scope_key)).fetchone()
             metadata = json.loads(row[0]).get("metadata", {}) if row else {}
             if not row or metadata.get("source_type") in {"system_injected", "memory_recalled"}:

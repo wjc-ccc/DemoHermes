@@ -5,9 +5,9 @@ from agent.types.events import LoopEvent
 
 
 class AgentLoopTrace:
-    def __init__(self, events, precision):
+    def __init__(self, events, perception):
         self.events = events
-        self.precision = precision
+        self.perception = perception
 
     def emit(self, type_, turn_id, session, session_key, **data):
         self.events.publish(LoopEvent(
@@ -26,7 +26,7 @@ class AgentLoopTrace:
         data = {
             "tool_call_id": record.tool_call_id, "name": record.tool_name,
             "ok": record.ok, "result_preview": (record.result_text or "")[:100],
-            "error": record.error, "duration_ms": record.durations_ms,
+            "error": record.error, "duration_ms": record.duration_ms,
         }
         if record.action_evidence is not None:
             data.update(ledger_entry_id=record.action_evidence.ledger_entry_id,

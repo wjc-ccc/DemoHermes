@@ -126,16 +126,16 @@ def _get(port, path):
     return status, body
 
 
-def test_precision_context_persists_iterations_and_obeys_debug_auth(memory_stack):
-    from agent.core.precision.percision_trace import PrecisionTrace
-    from agent.types.precision.result import PrecisionMetrics, PrecisionResult
+def test_perception_context_persists_iterations_and_obeys_debug_auth(memory_stack):
+    from agent.core.perception.perception_trace import PerceptionTrace
+    from agent.types.perception.result import PerceptionMetrics, PerceptionResult
 
     session = memory_stack["session"]
     session.add_message(Message(role="user", content_text="snapshot user"))
-    trace = PrecisionTrace()
+    trace = PerceptionTrace()
     text = "HEAD-" + "完整内容" * 3000 + "-TAIL"
-    result = PrecisionResult(messages=[{"role": "system", "content": "first"}],
-                             metrics=PrecisionMetrics(trace_id="t-full"))
+    result = PerceptionResult(messages=[{"role": "system", "content": "first"}],
+                             metrics=PerceptionMetrics(trace_id="t-full"))
     trace.record(result, iteration=1)
     result = result.model_copy(update={"messages": [{"role": "user", "content": text}]})
     trace.record(result, iteration=2)
@@ -143,11 +143,11 @@ def test_precision_context_persists_iterations_and_obeys_debug_auth(memory_stack
     trace.record_request("t-full", 2, tools)
     trace.record_failure("t-full", 3, "context_budget_exceeded")
     turn = _turn(session, memory_stack["scope"]).model_copy(update={
-        "turn_id": "t-full", "precision_trace": trace.get("t-full").model_dump(mode="json")})
+        "turn_id": "t-full", "perception_trace": trace.get("t-full").model_dump(mode="json")})
     memory_stack["store"].commit_turn(session, turn, scope=memory_stack["scope"])
     # 使用新 Gateway 的空进程窗口，验证实际读取的是持久化全文。
     gateway = _gateway(memory_stack)
-    gateway.loop.trace.precision = PrecisionTrace()
+    gateway.loop.trace.perception = PerceptionTrace()
     server, port = _start_server(gateway, enable_memory_debug=True, api_token="test-token")
     try:
         path = "/api/debug/memory/trace?turn_id=t-full&iteration=2"
@@ -238,6 +238,6 @@ def test_debug_sessions_turns_and_turn_detail_are_queryable(memory_stack):
         status, detail = _get(port, "/api/debug/memory/turn?turn_id=t-debug")
         assert status == 200
         assert detail["messages"][0]["content_text"] == "debug-me"
-        assert detail["precision_trace"] is None
+        assert detail["perception_trace"] is None
     finally:
         _stop_server(server)

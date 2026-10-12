@@ -7,7 +7,7 @@ Gateway / AgentLoop / Tool / Skill 全链路测试
     3. 消息构建函数（user / assistant+tool_calls / tool）
     4. calculator 工具（含安全拦截）
     5. SkillRegistry + use_skill 工具
-    6. PrecisionBuilder 的 OpenAI 协议映射
+    6. PerceptionBuilder 的 OpenAI 协议映射
     7. AgentLoop 多步工具循环（mock：先调工具再给文本）
     8. AgentLoop 容错（模型异常 → 重试 → error；超迭代 → 兜底）
     9. Gateway 总线回路（ask 同步问答、/new 短路、同 key 串行）
@@ -40,7 +40,7 @@ from agent.core.building_messages import (
 from agent.types.memory.scope import MemoryScope
 from agent.types.channel import InboundEvent, SessionSource
 from agent.types.conversation import Session, ToolCall, TurnResult
-from agent.core.precision.percision_engine import PrecisionBuilder
+from agent.core.perception.perception_engine import PerceptionBuilder
 from agent.gateway.gateway import Gateway
 from agent.gateway.session_key import build_session_key
 from agent.model.baseStructure import BaseModel
@@ -191,8 +191,8 @@ def test_use_skill_tool():
     assert not tool.execute({"skill_name": "不存在"}, context=ToolInvocationContext()).ok
 
 
-# ================= 6. PrecisionBuilder 协议映射 =================
-def test_precision_engine_maps_tool_messages():
+# ================= 6. PerceptionBuilder 协议映射 =================
+def test_perception_engine_maps_tool_messages():
     session = Session(session_key="k")
     session.add_message(build_user_message(make_event("算一下 1+1")))
     req = ToolCallRequest(id="call_1", name="calculator", arguments={"expression": "1+1"}, arguments_raw='{"expression": "1+1"}')
@@ -200,7 +200,7 @@ def test_precision_engine_maps_tool_messages():
     record = ToolCall(tool_call_id="call_1", tool_name="calculator", status="success", result_text="1+1 = 2")
     session.add_message(build_tool_message(record))
 
-    messages = PrecisionBuilder().build(session).messages
+    messages = PerceptionBuilder().build(session).messages
     roles = [m["role"] for m in messages]
     assert roles == ["system", "user", "assistant", "tool"]
     assistant_msg = messages[2]
@@ -209,11 +209,11 @@ def test_precision_engine_maps_tool_messages():
     assert messages[3]["tool_call_id"] == "call_1"
 
 
-def test_precision_engine_injects_skill_summary_and_ephemeral():
+def test_perception_engine_injects_skill_summary_and_ephemeral():
     session = Session(session_key="k")
     session.add_message(build_user_message(make_event("hi")))
     selection = SkillRegistry().select()
-    messages = PrecisionBuilder().build(
+    messages = PerceptionBuilder().build(
         session,
         skill_selection=selection,
         ephemeral_prompt="你在测试环境",

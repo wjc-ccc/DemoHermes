@@ -102,6 +102,7 @@ class MemoryReviewWorker:
                         return
             heartbeat_thread=threading.Thread(target=heartbeat,daemon=True)
             heartbeat_thread.start()
+            result=None
             try:
                 # 传入本次需要处理的turn ids
                 ### 如果需要处理任务 那么获得对应的字段并处理
@@ -118,9 +119,15 @@ class MemoryReviewWorker:
                                        now=int(self._clock()*1000))
             except Exception as exc:
                 try:
+                    calls=getattr(exc,"model_calls",())
+                    if not calls and result is not None:
+                        calls=result.trace.model_calls
+                    raw=getattr(exc,"raw_response",None)
+                    detail_args=({"details":{"model_calls":[call.model_dump(mode="json") for call in calls],
+                                               "raw_response":raw}} if calls or raw is not None else {})
                     self._queue.jobs.fail(job, repr(exc),
                         available_at=int((self._clock()+self._backoff_seconds)*1000),
-                        max_attempts=self._max_attempts, now=int(self._clock()*1000))
+                        max_attempts=self._max_attempts, now=int(self._clock()*1000),**detail_args)
                 except Exception:
                     logger.exception("Review failure could not be recorded; claim may have expired")
             finally:

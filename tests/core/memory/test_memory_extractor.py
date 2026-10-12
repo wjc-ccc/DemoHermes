@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from tests.prompt_fakes import memory_output, decode_memory_input
 
 import pytest
 
@@ -12,7 +13,7 @@ from agent.types.conversation import Message, Session, ToolCall
 
 
 class _Cards:
-    def search(self, scope, query, *, limit, kind=None, offset=0):
+    def search(self, scope, query, *, limit, kind=None, offset=0, as_of_ms=None):
         return ()
 
 
@@ -20,7 +21,7 @@ class _StoredCards:
     def __init__(self, cards):
         self._cards = tuple(cards)
 
-    def search(self, scope, query, *, limit, kind=None, offset=0):
+    def search(self, scope, query, *, limit, kind=None, offset=0, as_of_ms=None):
         rows = [card for card in self._cards if kind is None or card.kind.value == kind]
         return tuple(rows[offset:offset + limit])
 
@@ -50,7 +51,7 @@ def _source(text="以后请用中文回答"):
 def test_empty_model_result_is_valid_without_rule_fallback():
     class Model:
         def chat(self, messages):
-            return {"text": "[]"}
+            return {"text": memory_output()}
 
     batch = MemoryExtractor(Model(), _Cards()).extract_batch(*_source())
     assert batch.proposals == ()
@@ -74,7 +75,7 @@ def test_model_failure_and_invalid_json_raise_for_job_retry():
 def test_valid_card_survives_one_invalid_item():
     class Model:
         def chat(self, messages):
-            return {"text": json.dumps([
+            return {"text": memory_output([
                 {"kind": "stable_preference", "subject": "assistant",
                  "attribute": "response_language", "summary": "以后用中文回答",
                  "content": "以后用中文回答", "confidence": 0.8,
@@ -101,8 +102,8 @@ def test_interrupted_turn_is_not_extracted():
 def test_memory_tool_output_cannot_be_reused_as_new_card_evidence():
     class Model:
         def chat(self, messages):
-            assert '"tools": []' in messages[-1]["content"]
-            return {"text": json.dumps([{
+            assert "Role tool" not in messages[-1]["content"]
+            return {"text": memory_output([{
                 "kind": "ongoing_fact", "subject": "user", "attribute": "project",
                 "summary": "用户开发 DemoCursor", "content": "用户开发 DemoCursor",
                 "confidence": 0.7, "source_tool_call_ids": ["memory-search-1"],
@@ -178,5 +179,5 @@ class _CapturingModel:
         self.payload = None
 
     def chat(self, messages):
-        self.payload = json.loads(messages[-1]["content"])
-        return {"text": "[]"}
+        self.payload = decode_memory_input(messages[-1]["content"])
+        return {"text": memory_output()}

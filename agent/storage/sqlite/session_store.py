@@ -138,7 +138,7 @@ class SqliteSessionStore:
                 return False
             now = milliseconds()
             payload = session.model_copy(update={'status':'completed','updated_at':now/1000}).model_dump_json(exclude={'messages','tool_calls'})
-            conn.execute("UPDATE sessions SET is_current=0,status='completed',updated_at=?,payload_json=? "
+            conn.execute("UPDATE sessions SET is_current=0,status='completed',updated_at=?,session_json=? "
                          "WHERE session_id=?",(now,payload,session_id))
             return True
 
@@ -184,22 +184,22 @@ class SqliteSessionStore:
             raise SessionIntegrityError('已有 Session 的 scope 或 route 不可更改')
         payload = json.dumps(session.model_dump(mode='json',exclude={'messages','tool_calls'}),ensure_ascii=False)
         conn.execute('INSERT INTO sessions (session_id,session_key,scope_kind,scope_key,organization_id,'
-            'tenant_id,user_id,project_id,status,channel,author_id,created_at,updated_at,last_active_at,payload_json) '
+            'tenant_id,user_id,project_id,status,channel,author_id,created_at,updated_at,last_active_at,session_json) '
             'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id) DO UPDATE SET '
             'status=excluded.status,updated_at=excluded.updated_at,last_active_at=excluded.last_active_at,'
-            'payload_json=excluded.payload_json',
+            'session_json=excluded.session_json',
             (session.session_id,session.session_key,scope.scope_kind,scope.storage_key,scope.organization_id,
              scope.tenant_id,scope.user_id,scope.project_id,session.status,session.channel,session.author_id,
              milliseconds(session.created_at),milliseconds(session.updated_at),milliseconds(session.last_active_at),payload))
 
     @staticmethod
     def _load_session(conn, session_id):
-        row = conn.execute('SELECT payload_json FROM sessions WHERE session_id=?',(session_id,)).fetchone()
+        row = conn.execute('SELECT session_json FROM sessions WHERE session_id=?',(session_id,)).fetchone()
         if row is None:
             return None
         payload = json.loads(row[0])
         messages = [Message.model_validate_json(item[0]) for item in conn.execute(
-            'SELECT payload_json FROM messages WHERE session_id=? ORDER BY seq_id',(session_id,))]
+            'SELECT message_json FROM messages WHERE session_id=? ORDER BY seq_id',(session_id,))]
         tool_calls = [ToolCall.model_validate_json(item[0]) for item in conn.execute(
-            'SELECT payload_json FROM tool_calls WHERE session_id=? ORDER BY created_at,tool_call_id',(session_id,))]
+            'SELECT tool_call_json FROM tool_calls WHERE session_id=? ORDER BY created_at,tool_call_id',(session_id,))]
         return Session(**payload,messages=messages,tool_calls=tool_calls)

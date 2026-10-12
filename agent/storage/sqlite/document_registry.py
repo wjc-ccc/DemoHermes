@@ -9,9 +9,8 @@ from .codec import milliseconds
 
 
 class SqliteDocumentRegistry:
-    def __init__(self, db: Database, *, tokenizer_name: str = "unknown") -> None:
+    def __init__(self, db: Database) -> None:
         self.db = db
-        self._tokenizer_name = tokenizer_name
 
     def register(self, snapshot: MarkdownBookSnapshot) -> str:
         scope = snapshot.scope
@@ -31,10 +30,10 @@ class SqliteDocumentRegistry:
             conn.execute(
                 "INSERT INTO context_documents "
                 "(id, layer, type, scope_key, organization_id, tenant_id, user_id, project_id, path, "
-                "content_hash, token_count, tokenizer_name, last_loaded_at, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "content_hash, token_count, last_loaded_at, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(id) DO UPDATE SET content_hash = excluded.content_hash, "
-                "token_count = excluded.token_count, tokenizer_name = excluded.tokenizer_name, "
+                "token_count = excluded.token_count, "
                 "last_loaded_at = excluded.last_loaded_at, updated_at = excluded.updated_at",
                 (
                     document_id,
@@ -48,7 +47,6 @@ class SqliteDocumentRegistry:
                     snapshot.path,
                     snapshot.content_hash,
                     snapshot.token_count,
-                    self._tokenizer_name,
                     now,
                     now,
                     now,

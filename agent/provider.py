@@ -51,7 +51,7 @@ AGENT_HTTP_ALLOWED_ORIGINS = tuple(
     if origin.strip()
 )
 
-# System Prompt 文件路径（由 PrecisionBuilder 的加载阶段读取）
+# System Prompt 文件路径（由 PerceptionBuilder 的加载阶段读取）
 SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent / "prompt" / "systemPrompt.py"
 
 # Channel 配置文件路径
@@ -70,8 +70,8 @@ def build_context_judge():
     """按 JEVMODEL_API_KEY 构造准入判官；没有 key 返回 None，准入退回规则 + 先验。"""
     if not JEVMODEL_API_KEY:
         return None
-    # precision 加载时会反向导入本模块，这里必须延迟导入。
-    from agent.core.precision.percision_judge import SystemOneContextJudge
+    # perception 加载时会反向导入本模块，这里必须延迟导入。
+    from agent.core.perception.perception_judge import SystemOneContextJudge
 
     return SystemOneContextJudge(
         api_key=JEVMODEL_API_KEY,
@@ -84,7 +84,7 @@ def build_context_judge():
 
 def build_admission_policy():
     """按 CONTEXT_ADMISSION_MODE 构造准入策略；非法取值按 shadow 处理。"""
-    from agent.types.precision.admission import AdmissionPolicy
+    from agent.types.perception.admission import AdmissionPolicy
 
     mode = CONTEXT_ADMISSION_MODE if CONTEXT_ADMISSION_MODE in {"off", "shadow", "active"} else "shadow"
     return AdmissionPolicy(mode=mode)

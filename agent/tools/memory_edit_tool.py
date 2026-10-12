@@ -27,6 +27,7 @@ class MemoryEditTool(Tool):
     description = (
         "更正、删除当前用户已有的记忆卡片，或读取、替换、恢复当前用户的 MEMORY.md。"
         "不能新建卡片：用户陈述的新信息由后台自动提炼，无需调用本工具。"
+        "仅询问已记录信息、比较历史值、请你回忆或总结时，只检索读取，不执行 card_update/card_delete。"
         "card_update/card_delete 先用 memory_search 找到卡片，item_id 与 expected_revision "
         "取自命中结果；事实卡只改 title、summary、content、keywords。"
         "卡片修改在本轮对话正常完成时一起落库；完成后才能确认已更正或删除。"
@@ -135,7 +136,8 @@ class MemoryEditTool(Tool):
                 return ToolCallResult(ok=False, error="未知 memory_edit operation")
         except (MemoryManualError, MarkdownRevisionConflictError, ValueError, TypeError) as exc:
             return ToolCallResult(ok=False, error=str(exc))
-        return ToolCallResult(ok=True, result_text=json.dumps(result, ensure_ascii=False), data=result)
+        from agent.prompt.renderers import render_tool_result
+        return ToolCallResult(ok=True, result_text="手册操作已提交。\n" + render_tool_result(self.name, result), data=result)
 
     def _stage_card(self, operation: str, arguments: dict, scope: MemoryScope) -> dict:
         item_id = str(arguments.get("item_id") or "").strip().removeprefix("card:")

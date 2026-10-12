@@ -39,6 +39,8 @@ def test_eval_does_not_count_missing_extra_wrong_kind_or_merged_cards_as_pass(ca
 
 def test_http_dialogue_background_card_and_evidence_can_be_read_in_new_session(tmp_path, monkeypatch):
     import json
+    import re
+    from tests.prompt_fakes import memory_output, decode_memory_input
     from agent.types.model import ModelResponse, ToolCallRequest
     from agent.eval.memory_behavior import run_suite
 
@@ -48,11 +50,11 @@ def test_http_dialogue_background_card_and_evidence_can_be_read_in_new_session(t
         def chat(self, messages, tools=None, **kwargs):
             if "长期记忆提炼器" not in messages[0]["content"]:
                 if messages[-1]["role"] == "tool":
-                    result = json.loads(messages[-1]["content"])
-                    if "hits" in result:
+                    result = messages[-1]["content"]
+                    if "工具：memory_search" in result:
                         return ModelResponse(text="", tool_calls=[ToolCallRequest(
                             id="read-profile", name="memory_read",
-                            arguments={"reference": result["hits"][0]["reference"]},
+                                arguments={"reference": re.search(r"引用：([^\n]+)", result)[1]},
                         )])
                     return ModelResponse(text="你是 Python 后端工程师。")
                 if "检索职业" in messages[-1]["content"]:
@@ -61,10 +63,10 @@ def test_http_dialogue_background_card_and_evidence_can_be_read_in_new_session(t
                         arguments={"query": "Python", "source": "card"},
                     )])
                 return ModelResponse(text="收到。")
-            source = json.loads(messages[-1]["content"])["sources"][0]
+            source = decode_memory_input(messages[-1]["content"])["sources"][0]
             if not source["user_text"].startswith("我是"):
-                return ModelResponse(text="[]")
-            return ModelResponse(text=json.dumps([{
+                return ModelResponse(text=memory_output())
+            return ModelResponse(text=memory_output([{
                 "kind": "profile", "subject": "user", "attribute": "profession",
                 "summary": "Python 后端工程师", "content": "用户是 Python 后端工程师。",
                 "keywords": ["Python", "后端", "工程师"], "confidence": 0.9,
@@ -100,7 +102,7 @@ def test_multi_session_case_extracts_after_each_session(tmp_path, monkeypatch):
         name = "empty_fixture"
 
         def chat(self, messages, tools=None, **kwargs):
-            return ModelResponse(text="[]" if "长期记忆提炼器" in messages[0]["content"] else "好的。")
+            return ModelResponse(text='{"cards":[],"skipped":[]}' if "长期记忆提炼器" in messages[0]["content"] else "好的。")
 
     registry = ModelRegistry()
     registry.register(EmptyExternalModel())
@@ -126,7 +128,7 @@ def test_malformed_model_proposal_is_not_a_successful_empty_extraction(tmp_path,
         def chat(self, messages, tools=None, **kwargs):
             if "长期记忆提炼器" in messages[0]["content"]:
                 # 真实模型曾输出这两种错误字段类型，不能把拒绝它们算作“选择不记”。
-                return ModelResponse(text='[{"kind":"profile","confidence":"high","evidence_quotes":[]}]')
+                return ModelResponse(text='{"cards":[{"kind":"profile","confidence":"high","evidence_quotes":[]}],"skipped":[]}')
             return ModelResponse(text="你好。")
 
     registry = ModelRegistry()

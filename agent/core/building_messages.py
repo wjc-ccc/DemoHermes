@@ -6,6 +6,8 @@
     build_tool_message      : 工具执行记录 → role=tool（回注上下文用）
 """
 from __future__ import annotations
+import json
+import uuid
 
 from agent.types.conversation import ContentPart, Message, ToolCall
 from agent.types.channel import InboundEvent
@@ -50,8 +52,14 @@ def build_assistant_message(
     """
     metadata: dict = {}
     if tool_call_requests:
+        seen = set()
+        for req in tool_call_requests:
+            if not req.id or req.id in seen:
+                req.id = uuid.uuid4().hex
+            seen.add(req.id)
         metadata["tool_calls"] = [
-            {"id": req.id, "name": req.name, "arguments_raw": req.arguments_raw}
+            {"id": req.id, "name": req.name,
+             "arguments_raw": req.arguments_raw or json.dumps(req.arguments, ensure_ascii=False)}
             for req in tool_call_requests
         ]
     return Message(
@@ -73,7 +81,6 @@ def build_tool_message(record: ToolCall) -> Message:
         content_text=text or "",
         content=[ContentPart(type="text", text=text)] if text else [],
         tool_call_ids=[record.tool_call_id],
-        # ACTION-HOOK-11：action 的事实 ID 每次尝试唯一；模型回注保留 provider ID。
-        # 关闭模块的记录没有 provider ID，继续使用原 tool_call_id。
+        # Each fact ID is unique; protocol replies keep the provider correlation ID.
         metadata={"tool_call_id": record.provider_tool_call_id or record.tool_call_id, "tool_name": record.tool_name},
     )

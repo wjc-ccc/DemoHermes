@@ -14,7 +14,7 @@ class _Model:
     def __init__(self):
         self.calls = 0
 
-    def chat(self, messages, tools=None):
+    def chat(self, messages, tools=None, **kwargs):
         self.calls += 1
         return ModelResponse(text="收到")
 
@@ -30,8 +30,8 @@ def test_production_gateway_registers_memory_tools_and_budget(tmp_path, monkeypa
         assert {"memory_search", "memory_read", "memory_edit"} <= set(
             runtime.tools.list_tools()
         )
-        assert runtime.loop.precision.config.budget.model_context_tokens == 32768
-        assert runtime.loop.precision.config.budget.reserved_output_tokens == 4096
+        assert runtime.loop.perception.config.budget.model_context_tokens == 32768
+        assert runtime.loop.perception.config.budget.reserved_output_tokens == 4096
         assert runtime.gateway._memory_context is not None
         oversized = runtime.gateway.loop.run_turn(
             Session(session_id="large"), Message(role="user", content_text="长" * 30_000),

@@ -15,7 +15,7 @@ _FILTER_NAMES = {
     "category", "type", "status", "role", "channel", "validity", "operation",
     "decision", "layer", "level", "phase", "direction", "scope_kind",
     "memory_kind", "source_authority", "provider",
-    "dataset_id", "dataset_version", "version", "scenario", "difficulty",
+    "dataset_id", "dataset_version", "version", "scenario", "difficulty", "target", "question_schema_version",
 }
 _MAX_FILTER_OPTIONS = 40
 

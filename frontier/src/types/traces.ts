@@ -33,7 +33,7 @@ export interface ContextBuildSnapshot {
   error: string | null
 }
 
-export interface PrecisionTraceDetail {
+export interface PerceptionTraceDetail {
   turn_id: string | null
   trace: Record<string, unknown> | null
   window: Record<string, unknown> | null
@@ -51,7 +51,7 @@ export interface ContextBuildSnapshot {
   error: string | null
 }
 
-export interface PrecisionTraceDetail {
+export interface PerceptionTraceDetail {
   turn_id: string | null
   trace: Record<string, unknown> | null
   window: Record<string, unknown> | null

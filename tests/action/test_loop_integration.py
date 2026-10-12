@@ -21,7 +21,7 @@ class CalculatorModel:
     supports_images = False
     def __init__(self):
         self.tools_seen = []
-    def chat(self, messages, tools=None):
+    def chat(self, messages, tools=None, **kwargs):
         self.tools_seen.append(tools)
         if any(message.get("role") == "tool" for message in messages):
             return ModelResponse(text="16")

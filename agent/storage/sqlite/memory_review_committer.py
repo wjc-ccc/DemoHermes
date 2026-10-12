@@ -15,7 +15,7 @@ from agent.types.memory.categories import UserCardKind, UserCardStatus
 from .codec import milliseconds
 from .errors import IntegrityError, LeaseLostError
 from .job_store import read_job, require_lease, complete_job
-from .memory_store import put_user_memory, query_user_memories
+from .memory_store import put_user_memory, query_user_memories, read_user_memory
 from .trace_store import put_trace
 from .memory_card_policy import (
     can_restore_after_delete,
@@ -64,6 +64,7 @@ class SqliteMemoryReviewCommitter:
                 if (item.scope.storage_key != job_scope_key or not
                     self._proposal_sources_in_scope(conn,job_scope_key,proposal)):
                     raise IntegrityError("user memory evidence outside review scope")
+                self._validate_validity_source(conn,item)
                 item=item.model_copy(update={"evidence":tuple(evidence.get(pid,()))})
                 candidates=self._find_user_candidates(conn,item)
                 tombstones=tuple(c for c in candidates if c.status is UserCardStatus.DELETED)
@@ -133,6 +134,18 @@ class SqliteMemoryReviewCommitter:
             complete_job(conn,job,dict(request_hash=request_hash,summary=summary,
                                       review=persisted.model_dump(mode="json")),now=now_ms)
             return MemoryReviewCommitResult(**summary)
+
+    @staticmethod
+    def _validate_validity_source(conn,item):
+        reference=item.metadata.get("validity_source")
+        if not reference:
+            return
+        parent=read_user_memory(conn,reference["card_id"],scope_key=item.scope.storage_key)
+        if (parent is None or parent.status is not UserCardStatus.ACTIVE
+            or parent.kind is not UserCardKind.ONGOING_FACT
+            or parent.revision!=reference["revision"]
+            or item.valid_until!=parent.valid_until):
+            raise IntegrityError("validity source changed or belongs to another scope")
 
     @staticmethod
     def _find_user_candidates(conn, item: UserMemoryItem) -> tuple[UserMemoryItem, ...]:

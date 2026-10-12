@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { EmitStepView } from '@/types/events'
 import { ref } from 'vue'
-import PrecisionContextDialog from '@/components/PrecisionContextDialog.vue'
+import PerceptionContextDialog from '@/components/PerceptionContextDialog.vue'
 
 const contextOpen = ref(false)
 
@@ -20,6 +20,6 @@ defineProps<{
     </div>
   </div>
   <Teleport to="body">
-    <PrecisionContextDialog v-if="contextOpen && step.turnId" :turn-id="step.turnId" :iteration="step.iteration" @close="contextOpen = false" />
+    <PerceptionContextDialog v-if="contextOpen && step.turnId" :turn-id="step.turnId" :iteration="step.iteration" @close="contextOpen = false" />
   </Teleport>
 </template>

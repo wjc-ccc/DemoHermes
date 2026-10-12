@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from tests.prompt_fakes import memory_output, decode_memory_input
 
 from agent.core.memory.memory_extractor import MemoryExtractor
 from agent.types.memory.scope import MemoryScope
@@ -16,12 +17,12 @@ class _Model:
         self.batch_sources = []
 
     def chat(self, messages):
-        sources = json.loads(messages[-1]["content"])["sources"]
+        sources = decode_memory_input(messages[-1]["content"])["sources"]
         self.batch_sources.append(tuple(source["turn_id"] for source in sources))
         if len(sources) == 1:
-            return {"text": "[]"}
+            return {"text": memory_output()}
         source = sources[-1]
-        return {"text": json.dumps([{
+        return {"text": memory_output([{
             "kind": "ongoing_fact", "subject": "DemoCursor", "attribute": "python_version",
             "summary": "DemoCursor 使用 Python 3.11",
             "content": "DemoCursor 使用 Python 3.11",
@@ -59,7 +60,8 @@ def test_cross_session_batch_keeps_fixed_source_turns(tmp_path):
     _turn(storage, scope, "route-a", 2, "我会继续开发项目")
     _turn(storage, scope, "route-b", 3, "我正在开发 DemoCursor，项目使用 Python 3.11。")
     assert worker.process_pending() == 1
-    assert model.batch_sources == [("turn-1",), ("turn-2", "turn-3")]
+    # Extraction and admission must see the same fixed source batch.
+    assert model.batch_sources == [("turn-1",),("turn-1",),("turn-2","turn-3"),("turn-2","turn-3")]
     cards = storage.memory.search(scope, "", statuses=("active",))
     assert len(cards) == 1
     assert cards[0].evidence[0].source_id == "user-3"

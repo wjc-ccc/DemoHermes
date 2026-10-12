@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from tests.prompt_fakes import memory_output, decode_memory_input
 from types import SimpleNamespace
 
 from agent.core.memory.memory_context_loader import MemoryContextLoader
@@ -10,7 +11,7 @@ from agent.core.memory.memory_extractor import MemoryExtractor
 from agent.core.memory.memory_batch_reviewer import MemoryBatchReviewer
 from agent.core.memory.memory_review_worker import MemoryReviewWorker
 from agent.storage.sqlite.memory_retrieval import MemoryRetriever
-from agent.core.precision.percision_engine import PrecisionBuilder
+from agent.core.perception.perception_engine import PerceptionBuilder
 from agent.types.memory.source import TurnRecord
 from agent.types.conversation import Message
 from agent.storage.sqlite.runtime_storage import RuntimeStorage
@@ -18,9 +19,9 @@ from agent.storage.sqlite.runtime_storage import RuntimeStorage
 
 class _ExperienceModel:
     def chat(self, messages):
-        sources = json.loads(messages[-1]["content"])["sources"]
+        sources = decode_memory_input(messages[-1]["content"])["sources"]
         source_id = sources[0]["user_message_id"]
-        return SimpleNamespace(text=json.dumps([{
+        return SimpleNamespace(text=memory_output([{
             "kind": "reusable_experience",
             "title": "Windows 项目测试", "summary": "该项目中使用虚拟环境运行 pytest",
             "content": "一次观察：在 Windows 项目运行 pytest 时，使用项目虚拟环境后测试成功。",
@@ -76,7 +77,7 @@ def test_completed_turn_extraction_is_recalled_in_new_session(tmp_path):
     assert snapshot.experience_prompt and "项目虚拟环境" in snapshot.experience_prompt
     assert f"card:{cards[0].item_id}" in snapshot.experience_prompt
     new_session.add_message(Message(role="user", content_text="Windows 项目 pytest 怎么运行？"))
-    built = PrecisionBuilder().build(new_session, memory_snapshot=snapshot)
+    built = PerceptionBuilder().build(new_session, memory_snapshot=snapshot)
     experience_record = next(record for record in built.records
                              if record.item_name == "memory_experience")
     assert cards[0].item_id in experience_record.content_preview

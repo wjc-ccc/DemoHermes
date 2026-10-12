@@ -10,14 +10,15 @@ from agent.runtime import build_runtime
 from agent.types.channel import InboundEvent, SessionSource
 from agent.types.model import ModelResponse, ToolCallRequest
 from agent.types.runtime import RuntimeConfig
+from agent.types.context import ContextBudget
 
 
 class CalculatorModel:
     name = "runtime-test"
 
-    def chat(self, messages, tools=None):
+    def chat(self, messages, tools=None, **kwargs):
         if "长期记忆提炼器" in messages[0].get("content", ""):
-            return ModelResponse(text="[]")
+            return ModelResponse(text='{"cards":[],"skipped":[]}')
         if any(message.get("role") == "tool" for message in messages):
             return ModelResponse(text="16")
         return ModelResponse(tool_calls=[ToolCallRequest(
@@ -31,6 +32,13 @@ class Models:
 
     def get(self, *args):
         return self.model
+
+
+def test_explicit_context_budget_is_respected_when_memory_is_disabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("JEVMODEL_API_KEY", "")
+    budget = ContextBudget(model_context_tokens=12345, reserved_output_tokens=1234)
+    runtime = build_runtime(RuntimeConfig(use_memory=False, data_root=tmp_path, context_budget=budget), model_registry=Models())
+    assert runtime.loop.perception.config.budget == budget
 
 
 @pytest.mark.parametrize("memory,action", [(False, False), (True, False), (False, True), (True, True)])
@@ -48,10 +56,10 @@ def test_runtime_capability_matrix_and_committed_tool_facts(tmp_path, monkeypatc
         assert description.memory is memory and description.action is action
         assert description.storage == "sqlite"
         assert description.database == str(tmp_path / "agent.db")
-        assert (runtime.loop.precision.config.budget is not None) is memory
+        assert runtime.loop.perception.config.budget is not None
         assert {"calculator", "use_skill", "skill_manage"} <= set(description.tools)
         assert ({"memory_read", "memory_search", "memory_edit"} <= set(description.tools)) is memory
-        turn = runtime.precision_trace.get(reply.metadata["turn_id"])
+        turn = runtime.perception_trace.get(reply.metadata["turn_id"])
         assert len(turn.builds) == 2
         assert any(event.type == "tool_call_result" for event in list(events.queue))
         record = runtime.storage.executions.get_turn(reply.metadata["turn_id"])
@@ -88,7 +96,7 @@ def test_memory_disabled_conversation_survives_runtime_restart(tmp_path, monkeyp
     class HistoryModel:
         name = "history-test"
 
-        def chat(self, messages, tools=None):
+        def chat(self, messages, tools=None, **kwargs):
             self.messages = messages
             return ModelResponse(text="继续")
 
@@ -106,7 +114,7 @@ def test_memory_disabled_conversation_survives_runtime_restart(tmp_path, monkeyp
         assert any(message["role"] == "assistant" and message.get("content") == "16" for message in models.model.messages)
         assert len(restarted.storage.executions.list_turns(restored.session_id)) == 2
         assert restarted.memory is None
-        assert restarted.loop.precision.config.budget is None
+        assert restarted.loop.perception.config.budget is not None
     finally:
         restarted.stop()
 
@@ -117,7 +125,7 @@ def test_memory_disabled_failed_turn_is_persisted(tmp_path, monkeypatch):
     class FailingModel:
         name = "failure-test"
 
-        def chat(self, messages, tools=None):
+        def chat(self, messages, tools=None, **kwargs):
             raise RuntimeError("model unavailable")
 
     models = Models()
@@ -142,11 +150,11 @@ def test_runtimes_own_independent_event_and_context_windows(tmp_path):
     runtimes = [build_runtime(RuntimeConfig(use_memory=False, data_root=tmp_path / str(i)), model_registry=Models()) for i in range(2)]
     try:
         assert runtimes[0].events is not runtimes[1].events
-        assert runtimes[0].precision_trace is not runtimes[1].precision_trace
+        assert runtimes[0].perception_trace is not runtimes[1].perception_trace
         runtimes[0].start()
         reply = runtimes[0].gateway.ask(InboundEvent(text="计算", source=SessionSource(user_id="u")), timeout=10)
-        assert runtimes[0].precision_trace.get(reply.metadata["turn_id"]) is not None
-        assert runtimes[1].precision_trace.snapshot().n == 0
+        assert runtimes[0].perception_trace.get(reply.metadata["turn_id"]) is not None
+        assert runtimes[1].perception_trace.snapshot().n == 0
     finally:
         for runtime in runtimes:
             runtime.stop()

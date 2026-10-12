@@ -25,6 +25,6 @@
 
 5. 统一原子：session、markdown、未来 RAG chunk 共用一种带 token/优先级/相关度的结构 + hermes逻辑  sqlite保存条式记忆 方便召回（后续条式记忆也会落到向量数据库 也应该思考一下这个步骤）  这个原子 更多是在做trace的逻辑 能够统计每条 或者 每部分记忆的情况 所以不需要太深的接口
 
-6. 把memory放到 core中  参考percision 作为一个单独的模块 memory 然后percision那里 通过参数决定是否启用memory（包含不限于 提供相关工具  自动经验发现  memory后续的提取逻辑）
+6. 把memory放到 core中  参考perception 作为一个单独的模块 memory 然后perception那里 通过参数决定是否启用memory（包含不限于 提供相关工具  自动经验发现  memory后续的提取逻辑）
 
 7. 现在逻辑的设定对于锚账集逻辑还没有实现

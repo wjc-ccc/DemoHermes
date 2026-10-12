@@ -1,4 +1,4 @@
-"""Memory observations stored separately from Precision's original turn payload."""
+"""Memory observations stored separately from Perception's original turn payload."""
 from __future__ import annotations
 import json
 from datetime import datetime

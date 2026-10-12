@@ -7,9 +7,9 @@ Memory 现在有四种不同生命周期的内容：原始事实、常驻 Markdo
 | 内容 | 保存位置 | 读取时机 | 在上下文中的角色 |
 | --- | --- | --- | --- |
 | 原始对话、工具调用、轮次 | `data/agent.db` 的 `sessions`、`turns`、`messages`、`tool_calls` | `memory_search` 找引用，`memory_read` 按需读原文 | 默认不整体注入；是证据和历史来源 |
-| Policy、Project、用户手册 | `data/memory/POLICY.md`、项目根目录中的项目文档、`data/memory/<scope_key>/MEMORY.md` | 每轮 `MemoryContextLoader.freeze` | `memory_manual`，Precision P0；Policy/Project/User 用标签区分来源 |
-| 用户卡片 | `memory_cards`、`memory_experiences`、`memory_evidence`、`memory_terms`、`memory_card_versions` | 经验关键词最多召回 3 张，其他卡片按需搜索 | 自动经验是 Precision P1；工具结果按普通工具内容进入模型 |
-| 当前 Session 与 Anchor | `sessions.payload_json`，消息原文另存上述事实表 | 本轮从当前会话加载；历史过长时 Precision 压缩 | 最近对话保留细节，Anchor 用 intent、changes、decisions、next_steps、excluded 五槽概括旧片段 |
+| Policy、Project、用户手册 | `data/memory/POLICY.md`、项目根目录中的项目文档、`data/memory/<scope_key>/MEMORY.md` | 每轮 `MemoryContextLoader.freeze` | `memory_manual`，Perception P0；Policy/Project/User 用标签区分来源 |
+| 用户卡片 | `memory_cards`、`memory_experiences`、`memory_evidence`、`memory_terms`、`memory_card_versions` | 经验关键词最多召回 3 张，其他卡片按需搜索 | 自动经验是 Perception P1；工具结果按普通工具内容进入模型 |
+| 当前 Session 与 Anchor | `sessions.payload_json`，消息原文另存上述事实表 | 本轮从当前会话加载；历史过长时 Perception 压缩 | 最近对话保留细节，Anchor 用 intent、changes、decisions、next_steps、excluded 五槽概括旧片段 |
 
 文件路径由 `agent/main.py::_memory_paths` 决定；默认 `data/agent.db` 与 `data/memory/`。用户目录以 `MemoryScope.storage_key` 命名，键由组织、租户、用户和项目的稳定身份生成，不含临时 session/turn。群聊与私聊保留不同 scope；工具调用的 scope 由运行时注入。
 
@@ -17,7 +17,7 @@ Memory 现在有四种不同生命周期的内容：原始事实、常驻 Markdo
 
 1. Gateway 根据渠道来源取得 scope，`MemoryContextLoader.freeze` 读取 Policy、Project、当前用户的有效 `MEMORY.md`。用户手册默认最多约 1200 个估算 tokens；非法或超长的人工版本保留在磁盘，但上下文使用最近有效版本并报告诊断。
 2. Retriever 对当前输入做关键词匹配，只允许 `reusable_experience` 的有效卡进入自动经验区；最多 3 张，总预算默认 600 tokens，完全不匹配时为空。本轮快照固定，不受后台随后写入影响。
-3. Precision 把系统提示、技能和 Markdown 快照放入 P0，把经验放入 P1。当前 Session 消息和 Anchor 在历史层级中处理；生产入口启用上下文总预算，旧对话达到阈值时按五槽压缩。原始消息不会因为上下文压缩而从 SQLite 删除。
+3. Perception 把系统提示、技能和 Markdown 快照放入 P0，把经验放入 P1。当前 Session 消息和 Anchor 在历史层级中处理；生产入口启用上下文总预算，旧对话达到阈值时按五槽压缩。原始消息不会因为上下文压缩而从 SQLite 删除。
 4. AgentLoop 调用模型与工具。`memory_search` 目前只提供关键词模式，可检索卡片、历史消息、工具原文和已登记文档；`memory_read` 根据引用分页读详情。语义和混合检索仍是扩展位置，不作为当前可调用能力。
 5. `memory_edit` 可更正或删除**已有**卡片，必须提供 `item_id` 与 `expected_revision`；也可独立读取、替换、恢复用户手册。卡片更正/删除先暂存为工具结果，只在该轮正常完成时由 SessionStore 同事务提交。失败或中断的轮次仍保留原文，但不执行卡片修改。
 6. SessionStore 持久化完整轮次和工具结果，Scheduler 只为成功完成的轮次计数。用户 scope 累计第 1、3、6、10、15、20……轮形成固定来源批次；`/reset` 和正常退出补排剩余轮次，不推进间隔阶段。

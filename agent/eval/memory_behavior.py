@@ -132,7 +132,7 @@ def _database_snapshot(db: Database, scope: MemoryScope) -> dict:
             "WHERE s.scope_key=? AND j.job_type='memory.extract' ORDER BY j.created_at,j.id",
             (scope.storage_key,))]
         turns = [dict(row) for row in connection.execute(
-            "SELECT t.turn_id,t.session_id,t.status,t.error_code FROM turns t "
+            "SELECT t.turn_id,t.session_id,t.status,t.error_text FROM turns t "
             "JOIN sessions s ON s.session_id=t.session_id WHERE s.scope_key=? ORDER BY t.created_at",
             (scope.storage_key,))]
         messages = [dict(row) for row in connection.execute(
@@ -140,7 +140,7 @@ def _database_snapshot(db: Database, scope: MemoryScope) -> dict:
             "JOIN sessions s ON s.session_id=m.session_id WHERE s.scope_key=? ORDER BY m.created_at,m.seq_id",
             (scope.storage_key,))]
         tools = [dict(json.loads(row[1]), turn_id=row[0]) for row in connection.execute(
-            "SELECT t.turn_id,t.payload_json FROM tool_calls t JOIN sessions s ON s.session_id=t.session_id "
+            "SELECT t.turn_id,t.tool_call_json FROM tool_calls t JOIN sessions s ON s.session_id=t.session_id "
             "WHERE s.scope_key=? ORDER BY t.created_at", (scope.storage_key,))]
     for job in jobs:
         job["input"] = json.loads(job.pop("input_json"))
@@ -389,12 +389,12 @@ def audit_database(output_dir: Path) -> dict:
         selected = []
         with db.read() as connection:
             for (payload,) in connection.execute(
-                "SELECT t.payload_json FROM turns t JOIN sessions s ON s.session_id=t.session_id WHERE s.scope_key=?",
+                "SELECT t.turn_json FROM turns t JOIN sessions s ON s.session_id=t.session_id WHERE s.scope_key=?",
                 (scope.storage_key,)):
                 turn = json.loads(payload)
                 if turn["turn_id"] in original_turns:
                     continue
-                records = (turn.get("precision_trace") or {}).get("records", [])
+                records = (turn.get("perception_trace") or {}).get("records", [])
                 selected.extend(record for record in records if record["item_name"] == "memory_experience"
                                 and record["decision"] == "selected")
         actual_injection = None

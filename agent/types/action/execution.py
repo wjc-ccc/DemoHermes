@@ -35,6 +35,7 @@ class ToolContext(BaseModel):
     max_iterations: int | None = None
     memory_scope: MemoryScope | None = Field(default=None, exclude=True)
     skills: SkillSelection | None = Field(default=None, exclude=True)
+    result_token_budget: int | None = Field(default=None, exclude=True)
 
     def with_skills(self, skills):
         return self.model_copy(update={"skills": skills})

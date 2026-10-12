@@ -23,18 +23,33 @@ def migrate(conn, *, extra_schema_dirs=()):
         raise ValueError('migration 编号/名称冲突')
     for path in sorted(paths, key=lambda path: path.stem):
         sql = path.read_text(encoding='utf-8')
-        checksum = hashlib.sha256(sql.encode()).hexdigest()
+        rename_eval = path.stem == '012_perception_eval_naming'
+        checksum_source = sql.encode()
+        if rename_eval:
+            checksum_source += Path(__file__).with_name('perception_eval_migration.py').read_bytes()
+        checksum = hashlib.sha256(checksum_source).hexdigest()
         row = conn.execute('SELECT checksum FROM schema_migrations WHERE version=?', (path.stem,)).fetchone()
         if row:
             if row[0] != checksum:
                 raise RuntimeError(f'已应用 migration 被修改: {path.name}')
             continue
         # DDL 和版本记录在同一事务提交。
+        if rename_eval:
+            # 重建被引用的表时暂时关闭外键；提交前逐项校验，之后恢复。
+            conn.execute('PRAGMA foreign_keys=OFF')
         try:
             conn.executescript('BEGIN IMMEDIATE;\n' + sql)
+            if rename_eval:
+                from .perception_eval_migration import migrate_eval_names
+                migrate_eval_names(conn)
+                if conn.execute('PRAGMA foreign_key_check').fetchone():
+                    raise RuntimeError('评测命名迁移造成外键冲突')
             conn.execute('INSERT INTO schema_migrations VALUES (?,?,?)',
                          (path.stem, checksum, milliseconds()))
             conn.commit()
         except BaseException:
             conn.rollback()
             raise
+        finally:
+            if rename_eval:
+                conn.execute('PRAGMA foreign_keys=ON')

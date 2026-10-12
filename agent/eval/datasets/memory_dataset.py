@@ -60,11 +60,12 @@ def to_behavior_suite(dataset: MemoryEvalDataset) -> dict:
     cases = []
     for definition in dataset.cases:
         for question in definition.questions or (None,):
-            count = (question.history_session_count if question else None) or len(definition.history)
-            prefix = definition.history[:count]
+            prefix = definition.history_for(question) if question else definition.history
             available = {turn.turn_id for session in prefix for turn in session.turns}
             memories = [memory for memory in definition.expected_memories
                         if set(memory.evidence_turn_ids) <= available]
+            if question and question.expected_active_memory_ids is not None:
+                memories = [memory for memory in memories if memory.memory_id in question.expected_active_memory_ids]
             wire = dict(id=definition.case_id if len(definition.questions) <= 1 else
                         f"{definition.case_id}__{question.question_id}",
                         description=definition.title,

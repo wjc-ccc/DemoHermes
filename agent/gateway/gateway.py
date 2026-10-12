@@ -67,7 +67,7 @@ class Gateway:
         on_session_end=None,
         on_turn_committed=None,
         action_runtime=None,
-        precision_trace=None,
+        perception_trace=None,
         describe_agent=None,
     ):
         self.loop = loop  # 对话核心；每轮不变的装配配置都在 Loop 构造时注入
@@ -79,7 +79,7 @@ class Gateway:
         self.on_session_end = on_session_end  # 可选；reset 事务 commit 后才对 closed_session 触发（§8.3）
         self.on_turn_committed = on_turn_committed  # 可选；commit_turn 成功后唤醒 reviewer
         self._action = action_runtime
-        self.precision_trace = precision_trace
+        self.perception_trace = perception_trace
         self.describe_agent = describe_agent
         self._channels: dict[str, BaseChannel] = {}
         self._workers = max(1, workers)
@@ -313,8 +313,8 @@ class Gateway:
             self._mark_failed_turn_messages(session, user_msg)
             self._append_gateway_error(session, text_out)
 
-        precision_trace = self.precision_trace
-        precision_turn = precision_trace.get(result.turn_id) if precision_trace is not None else None
+        perception_trace = self.perception_trace
+        perception_turn = perception_trace.get(result.turn_id) if perception_trace is not None else None
         turn = TurnRecord(
             turn_id=result.turn_id,
             session_id=session.session_id,
@@ -335,9 +335,11 @@ class Gateway:
             completed=result.completed,
             interrupted=result.interrupted,
             error=result.error,
-            precision_trace=(
-                precision_turn.model_dump(mode="json") if precision_turn is not None else None
+            perception_trace=(
+                perception_turn.model_dump(mode="json") if perception_turn is not None else None
             ),
+            input_token_count=perception_turn.input_token_count if perception_turn is not None else None,
+            output_token_count=perception_turn.output_token_count if perception_turn is not None else None,
         )
         metadata = {
             "turn_id": result.turn_id,
@@ -361,6 +363,8 @@ class Gateway:
                 metadata["error"] = "memory_write_failed"
                 text_out = "记忆写入失败，本轮修改未保存。请重试。"
         else:
+            if perception_trace is not None:
+                perception_trace.finish(result.turn_id)
             # 事实落库成功后才唤醒 reviewer（§8.1：提交失败则不启后台提炼）
             if self.on_turn_committed is not None:
                 try:

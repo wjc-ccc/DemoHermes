@@ -33,7 +33,7 @@ def _worker(storage, model):
 def test_empty_batch_completes_without_card(tmp_path):
     class Empty:
         def chat(self, messages):
-            return {"text": "[]"}
+            return {"text": '{"cards":[],"skipped":[]}'}
 
     storage = RuntimeStorage.open(tmp_path / "agent.db", extractor_version=MemoryExtractor.version)
     scope = MemoryScope(tenant_id="cli", user_id="u1")

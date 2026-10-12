@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from agent.types.memory.items import UserMemoryItem, make_slot_key
 from agent.types.memory.categories import ExperienceOutcome, UserCardKind
 from agent.types.memory.trace import MemoryTrace
+from agent.types.perception.trace import ModelCallSnapshot
 
 
 # 职责：定义提取提案、校验结果及已解析证据的跨模块契约。
@@ -48,6 +49,8 @@ class MemoryProposal(BaseModel):
     valid_from: datetime | None = None
     valid_until: datetime | None = None
     reason_code: str = Field(min_length=1, max_length=100)
+    retention_reason: str | None = None
+    future_use: str | None = None
 
 
     ## 提案会通过对应的机械校验 后续 也考虑做一些人工校验和更正的逻辑
@@ -84,12 +87,22 @@ class MemoryExtractionIssue(BaseModel):
     code: str
 
 
+class MemorySkip(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    source_message_ids: tuple[str, ...] = ()
+    source_tool_call_ids: tuple[str, ...] = ()
+    reason_code: str = Field(min_length=1, max_length=100)
+    reason: str = Field(min_length=1, max_length=500)
+
+
 class MemoryExtractionBatch(BaseModel):
     """合法空批次表示本轮没有值得沉淀的卡片。"""
 
     model_config = ConfigDict(frozen=True)
     proposals: tuple[MemoryProposal, ...] = ()
     issues: tuple[MemoryExtractionIssue, ...] = ()
+    skipped: tuple[MemorySkip, ...] = ()
+    model_calls: tuple[ModelCallSnapshot, ...] = ()
 
 
 class MemoryEvidence(BaseModel):
@@ -117,4 +130,4 @@ class MemoryReviewResult(BaseModel):
     trace: MemoryTrace
 
 
-MEMORY_EXTRACTOR_VERSION = 'memory-extractor-v6'
+MEMORY_EXTRACTOR_VERSION = 'memory-extractor-v14'

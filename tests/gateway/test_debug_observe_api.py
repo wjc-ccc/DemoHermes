@@ -120,10 +120,10 @@ def test_table_catalog_lists_sessions_and_side_database(memory_stack, tmp_path):
         _stop_server(server)
 
 
-def test_trace_modules_read_precision_note_and_memory_rows(memory_stack):
+def test_trace_modules_read_perception_note_and_memory_rows(memory_stack):
     session = memory_stack["session"]
     scope = memory_stack["scope"]
-    session.add_message(Message(role="user", content_text="precision-row"))
+    session.add_message(Message(role="user", content_text="perception-row"))
     memory_stack["store"].commit_turn(
         session,
         TurnRecord(
@@ -138,7 +138,7 @@ def test_trace_modules_read_precision_note_and_memory_rows(memory_stack):
             completed=True,
             interrupted=False,
             error=None,
-            precision_trace={
+            perception_trace={
                 "metrics": {
                     "trace_id": "t-prec",
                     "budget": 100,
@@ -179,20 +179,20 @@ def test_trace_modules_read_precision_note_and_memory_rows(memory_stack):
         status, modules = _get(port, "/api/debug/traces/modules")
         assert status == 200
         by_module = {item["module"]: item for item in modules["modules"]}
-        assert set(by_module) == {"precision", "memory"}
-        assert by_module["precision"]["persisted"] is True
-        assert "当前进程" in by_module["precision"]["note"]
+        assert set(by_module) == {"perception", "memory"}
+        assert by_module["perception"]["persisted"] is True
+        assert "当前进程" in by_module["perception"]["note"]
         assert by_module["memory"]["note"] is None
 
-        status, precision = _get(port, "/api/debug/traces?module=precision")
+        status, perception = _get(port, "/api/debug/traces?module=perception")
         assert status == 200
-        names = [column["name"] for column in precision["columns"]]
+        names = [column["name"] for column in perception["columns"]]
         assert "trace_id" in names
         assert "conversation" in names
         assert "dropped_count" in names
-        row = precision["rows"][0]
+        row = perception["rows"][0]
         assert row["trace_id"] == "t-prec"
-        assert "precision-row" in row["conversation"]
+        assert "perception-row" in row["conversation"]
         assert "budget" in row["records"]
 
         status, memory = _get(port, "/api/debug/traces?module=memory")

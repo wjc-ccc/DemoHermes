@@ -13,8 +13,8 @@
 2. AgentRuntime 拥有装配、生命周期和提交后通知，MemoryBuilder 装配记忆能力。
 3. ToolHandler 承担执行前审批和分配，ToolDispatch 承担执行、超时、效果、POST 与回放。
 4. 可信工具上下文、待提交修改、执行凭证与提交回执使用 types 契约；types 独立导入。
-5. Precision 阶段交接和观测收拢，Memory SQL 移至 SQLite 实现。
-6. 四种开关组合、并发、事务、Action 恢复及计划、Memory、技能、Precision、HTTP/SSE、评测和前端。
+5. Perception 阶段交接和观测收拢，Memory SQL 移至 SQLite 实现。
+6. 四种开关组合、并发、事务、Action 恢复及计划、Memory、技能、Perception、HTTP/SSE、评测和前端。
 7. 当前文档对应真实入口；切换新库限定为运行数据库，保留手册、技能和附件。
 
 ## 最终验收（2026-10-10）
@@ -25,8 +25,8 @@
 | 保留普通技能 | selector、Registry、Repository、use_skill、skill_manage 保留；创建 draft、可信管理启用及版本测试通过 |
 | Runtime / MemoryBuilder | main 仅选择入口，runtime.py 装配并管理生命周期；MemoryBuilder 返回共享协议定义的结果 |
 | Handler / Dispatch | PRE、审批和分配在 Handler，调用、UNKNOWN、迟到回执、POST 与回放在 Dispatch；恢复和补偿使用同一路径 |
-| 明确共享契约 | 可信上下文、修改、执行证据、提交回执和 Precision 轮次快照进入 types；独立导入不加载 core 或实现 |
-| Precision 阶段 | 保护、准入、Anchor 规划、历史选择、完成交接；完整快照、预算、原文 digest、失败回退与回读测试通过 |
+| 明确共享契约 | 可信上下文、修改、执行证据、提交回执和 Perception 轮次快照进入 types；独立导入不加载 core 或实现 |
+| Perception 阶段 | 保护、准入、Anchor 规划、历史选择、完成交接；完整快照、预算、原文 digest、失败回退与回读测试通过 |
 | Memory 存储归属 | SQL 和文档版本实现归 SQLite；core 无直接 SQL，纯关键词和 token 估算保留 |
 | 默认值与开关 | Runtime 四组合均持久化会话；关闭 Action 不导入实现、不建 Action 表；Memory 控制记忆装配与生命周期 |
 | 生命周期与隔离 | 重复启停、不同 Runtime 独立事件和 Trace、会话串行/跨会话并行测试通过 |

@@ -35,7 +35,8 @@ def test_migrations_create_all_schema_versions(tmp_path) -> None:
         conn.close()
 
     assert versions == ["001_runtime", "002_memory_cycle", "003_manual_sync_and_legacy",
-                        "004_atomic_cards", "005_memory_cleanup", "006_memory_eval_datasets"]
+                        "004_atomic_cards", "005_memory_cleanup", "006_memory_eval_datasets", "010_storage_contract",
+                        "011_perception_naming", "012_perception_eval_naming"]
     assert {"turns", "jobs", "memory_cards", "memory_experiences", "memory_evidence",
             "memory_terms", "memory_card_versions", "memory_conflicts",
             "memory_review_turns", "memory_document_versions"} <= tables

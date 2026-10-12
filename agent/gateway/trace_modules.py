@@ -9,8 +9,8 @@ from ..storage.sqlite.catalog import CatalogError, open_readonly
 from ..storage.sqlite.trace_store import SqliteTraceStore
 from ..storage.sqlite.database import Database
 
-_PRECISION_NOTE = (
-    "单轮指标已写入 turns.payload_json。"
+_PERCEPTION_NOTE = (
+    "单轮指标已写入 turns.turn_json。"
     "滚动窗口（p95 / p99 / P3 命中率）只在当前进程，重启后丢失。"
 )
 
@@ -66,7 +66,7 @@ def list_traces(
     }
 
 
-_PRECISION_COLUMNS = (
+_PERCEPTION_COLUMNS = (
     "trace_id",
     "session_id",
     "turn_id",
@@ -127,11 +127,11 @@ def _trace_filter_options(
             return {"operation": values} if 0 < len(values) <= 40 else {}
         if not _has_table(conn, "turns"):
             return {}
-        expression = "json_extract(payload_json,'$.precision_trace.metrics.anchor_status')"
+        expression = "json_extract(turn_json,'$.perception_trace.metrics.anchor_status')"
         values = [row[0] for row in conn.execute(
             f"SELECT DISTINCT {expression} FROM turns WHERE "
             "(? IS NULL OR session_id=?) AND "
-            "json_type(payload_json,'$.precision_trace')='object' AND "
+            "json_type(turn_json,'$.perception_trace')='object' AND "
             f"{expression} IS NOT NULL ORDER BY {expression} LIMIT 41",
             (session_id, session_id),
         )]
@@ -140,42 +140,42 @@ def _trace_filter_options(
         conn.close()
 
 
-def _read_precision(
+def _read_perception(
     databases: Mapping[str, Path], *, session_id: str | None, limit: int, offset: int,
     filters: Mapping[str, object],
 ) -> tuple[list[str], list[dict]]:
     path = _memory_file(databases)
     if path is None:
-        return list(_PRECISION_COLUMNS), [], 0
+        return list(_PERCEPTION_COLUMNS), [], 0
     conn = open_readonly(path)
     try:
         if not _has_table(conn, "turns"):
-            return list(_PRECISION_COLUMNS), [], 0
+            return list(_PERCEPTION_COLUMNS), [], 0
         conn.execute("BEGIN")
-        where = " WHERE (? IS NULL OR session_id=?) AND json_type(payload_json,'$.precision_trace')='object'"
+        where = " WHERE (? IS NULL OR session_id=?) AND json_type(turn_json,'$.perception_trace')='object'"
         params: tuple[object, ...] = (session_id, session_id)
         if "anchor_status" in filters:
-            where += " AND json_extract(payload_json,'$.precision_trace.metrics.anchor_status') IS ?"
+            where += " AND json_extract(turn_json,'$.perception_trace.metrics.anchor_status') IS ?"
             params += (filters["anchor_status"],)
         total = conn.execute("SELECT COUNT(*) FROM turns"+where, params).fetchone()[0]
         stored = conn.execute(
-            "SELECT turn_id, session_id, created_at, payload_json FROM turns "
+            "SELECT turn_id, session_id, created_at, turn_json FROM turns "
             + where + " ORDER BY created_at DESC,turn_id DESC LIMIT ? OFFSET ?",
             (*params, limit, offset),
         ).fetchall()
         matched = []
-        for turn_id, row_session_id, created_at, payload_json in stored:
-            trace = _precision_payload(payload_json)
+        for turn_id, row_session_id, created_at, turn_json in stored:
+            trace = _perception_payload(turn_json)
             if trace is not None:
                 matched.append((turn_id, row_session_id, created_at, trace))
         talks = _conversations(conn, [item[0] for item in matched])
     finally:
         conn.close()
     rows = [
-        _precision_row(turn_id, row_session_id, created_at, trace, talks.get(turn_id, ""))
+        _perception_row(turn_id, row_session_id, created_at, trace, talks.get(turn_id, ""))
         for turn_id, row_session_id, created_at, trace in matched
     ]
-    return _columns(_PRECISION_COLUMNS, rows), rows, total
+    return _columns(_PERCEPTION_COLUMNS, rows), rows, total
 
 
 def _read_memory(
@@ -204,7 +204,7 @@ def _read_memory(
     return _columns(_MEMORY_COLUMNS, rows), rows, total
 
 
-def _precision_row(
+def _perception_row(
     turn_id: str, session_id: str, created_at: object, trace: dict, conversation: str
 ) -> dict:
     metrics = trace.get("metrics") if isinstance(trace.get("metrics"), dict) else {}
@@ -282,12 +282,12 @@ def _json_cell(value: object) -> object:
     return json.dumps(value, ensure_ascii=False)
 
 
-def _precision_payload(payload_json: str) -> dict | None:
+def _perception_payload(turn_json: str) -> dict | None:
     try:
-        payload = json.loads(payload_json)
+        payload = json.loads(turn_json)
     except json.JSONDecodeError:
         return None
-    trace = payload.get("precision_trace") if isinstance(payload, dict) else None
+    trace = payload.get("perception_trace") if isinstance(payload, dict) else None
     return trace if isinstance(trace, dict) else None
 
 
@@ -308,11 +308,11 @@ def _has_table(conn, name: str) -> bool:
 
 _MODULES = (
     {
-        "module": "precision",
-        "label": "Precision",
+        "module": "perception",
+        "label": "Perception",
         "persisted": True,
-        "note": _PRECISION_NOTE,
-        "read": _read_precision,
+        "note": _PERCEPTION_NOTE,
+        "read": _read_perception,
     },
     {
         "module": "memory",

@@ -1,7 +1,7 @@
 """Session 事实进入 Memory 审查流程时使用的不可变信封。"""
 from __future__ import annotations
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from agent.types.memory.scope import MemoryScope
 
@@ -38,5 +38,7 @@ class TurnRecord(BaseModel):
     completed: bool
     interrupted: bool
     error: str | None
-    # 可选的 Precision Trace 持久化投影；使用普通映射，避免本信封依赖 Precision 实现。
-    precision_trace: dict | None = None
+    # 可选的 Perception Trace 持久化投影；使用普通映射，避免本信封依赖 Perception 实现。
+    perception_trace: dict | None = None
+    input_token_count: int | None = Field(default=None, ge=0)
+    output_token_count: int | None = Field(default=None, ge=0)

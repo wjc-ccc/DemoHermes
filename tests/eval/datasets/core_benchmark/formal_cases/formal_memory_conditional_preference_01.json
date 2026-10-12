@@ -1,0 +1,578 @@
+{
+  "case_id": "formal_memory_conditional_preference_01",
+  "title": "conditional_preference：课程排期与80轮历史",
+  "description": "先定义事实时间线；三个独立历史截止；不同工作讨论、相关干扰和工具观察交错。",
+  "scenario": "conditional_preference",
+  "difficulty": "long_benchmark",
+  "abilities": [
+    "long_history",
+    "length:80",
+    "family:conditional_preference",
+    "normal_noise"
+  ],
+  "history": [
+    {
+      "session_id": "formal_memory_conditional_preference_01.s1",
+      "occurred_at": "2026-11-01T09:00:00+08:00",
+      "turns": [
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t001",
+          "user_text": "协作讨论第1段：其他项目的说明书写着默认值五十，但维护者还没有确认更新。",
+          "assistant_text": "这属于其他项目且更新尚未确认；如果引用，需说明来源与状态。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t002",
+          "user_text": "以后手机上阅读总结时，我希望先给三点短结论。",
+          "assistant_text": "已记录这条明确说明。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t003",
+          "user_text": "问题清单第3段：今天讨论邮件标题应该先写主题还是先写日期，你能给两个版本吗？",
+          "assistant_text": "可以先写主题便于识别，也可以先写日期便于排序，需要按收件人的习惯选择。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t004",
+          "user_text": "评审记录第4段：客户反馈文字包含肯定和担忧两部分，分别归纳。",
+          "assistant_text": "肯定部分说明已有价值，担忧部分说明仍需确认的风险，两者不能相互替代。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t005",
+          "user_text": "邮件草稿第5段：整理这段评审讨论：有人看重响应速度，有人更担心数据完整性。",
+          "assistant_text": "这两点需要分别列出：响应速度影响交互体验，数据完整性影响结果可靠性，讨论尚未给出取舍。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t006",
+          "user_text": "协作讨论第6段：为这份匿名样稿把三段内容排序，顺序只用于当前草稿。",
+          "assistant_text": "可以按背景、过程、结论排序；这次排法不改变其他项目的约定。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t007",
+          "user_text": "演示说明第7段：午间讨论提到一种新的排版方法，现在只比较阅读效果。",
+          "assistant_text": "可以比较行宽、留白和层次，目前的讨论不能证明该方法适合所有读者。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t008",
+          "user_text": "问题清单第8段：给这段示例中的人物观点换一种表达，不要将人物当成我。",
+          "assistant_text": "可以保留原观点换一种措辞，人物的意见不代表你的身份或偏好。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t009",
+          "user_text": "评审记录第9段：解释为什么同一张截图在两种窗口宽度下显示不同，不用修改程序。",
+          "assistant_text": "可能来自布局与缩放；只有截图不足以确定具体原因，需要窗口尺寸和样式信息。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t010",
+          "user_text": "邮件草稿第10段：对比一下纸质笔记和电子笔记在临时会议中的便利性。",
+          "assistant_text": "纸质记录快、干扰少；电子记录易检索和共享。会议结束后可以统一整理。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t011",
+          "user_text": "协作讨论第11段：会议里有人猜测一次失败与网络有关，但日志尚未支持这个结论。",
+          "assistant_text": "保留它作为待验证假设，不能把猜测写成根因或已验证经验。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t012",
+          "user_text": "演示说明第12段：演示数据中的东区记录数量比西区多，说明图表应该怎样标注。",
+          "assistant_text": "注明这是演示数据，保留数量差异；不要据此解释真实地区的原因。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t013",
+          "user_text": "问题清单第13段：其他项目的说明书写着默认值五十，但维护者还没有确认更新。",
+          "assistant_text": "这属于其他项目且更新尚未确认；如果引用，需说明来源与状态。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t014",
+          "user_text": "评审记录第14段：我收到另一组同事的草稿，其中几个数字还未核对，怎样安排检查顺序？",
+          "assistant_text": "先核对来源与计算口径，再检查总数与分项是否一致，最后检查单位和日期。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t015",
+          "user_text": "邮件草稿第15段：今天讨论邮件标题应该先写主题还是先写日期，你能给两个版本吗？",
+          "assistant_text": "可以先写主题便于识别，也可以先写日期便于排序，需要按收件人的习惯选择。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t016",
+          "user_text": "但我电脑上排查故障时，请先给复现步骤，再给逐项诊断；前面的组织方式只用于对应条件。",
+          "assistant_text": "已记录这条明确说明。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t017",
+          "user_text": "演示说明第17段：整理这段评审讨论：有人看重响应速度，有人更担心数据完整性。",
+          "assistant_text": "这两点需要分别列出：响应速度影响交互体验，数据完整性影响结果可靠性，讨论尚未给出取舍。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t018",
+          "user_text": "问题清单第18段：为这份匿名样稿把三段内容排序，顺序只用于当前草稿。",
+          "assistant_text": "可以按背景、过程、结论排序；这次排法不改变其他项目的约定。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t019",
+          "user_text": "评审记录第19段：午间讨论提到一种新的排版方法，现在只比较阅读效果。",
+          "assistant_text": "可以比较行宽、留白和层次，目前的讨论不能证明该方法适合所有读者。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t020",
+          "user_text": "邮件草稿第20段：给这段示例中的人物观点换一种表达，不要将人物当成我。",
+          "assistant_text": "可以保留原观点换一种措辞，人物的意见不代表你的身份或偏好。"
+        }
+      ]
+    },
+    {
+      "session_id": "formal_memory_conditional_preference_01.s2",
+      "occurred_at": "2026-11-02T09:00:00+08:00",
+      "turns": [
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t021",
+          "user_text": "协作讨论第21段：解释为什么同一张截图在两种窗口宽度下显示不同，不用修改程序。",
+          "assistant_text": "可能来自布局与缩放；只有截图不足以确定具体原因，需要窗口尺寸和样式信息。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t022",
+          "user_text": "演示说明第22段：对比一下纸质笔记和电子笔记在临时会议中的便利性。",
+          "assistant_text": "纸质记录快、干扰少；电子记录易检索和共享。会议结束后可以统一整理。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t023",
+          "user_text": "问题清单第23段：会议里有人猜测一次失败与网络有关，但日志尚未支持这个结论。",
+          "assistant_text": "保留它作为待验证假设，不能把猜测写成根因或已验证经验。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t024",
+          "user_text": "评审记录第24段：演示数据中的东区记录数量比西区多，说明图表应该怎样标注。",
+          "assistant_text": "注明这是演示数据，保留数量差异；不要据此解释真实地区的原因。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t025",
+          "user_text": "邮件草稿第25段：其他项目的说明书写着默认值五十，但维护者还没有确认更新。",
+          "assistant_text": "这属于其他项目且更新尚未确认；如果引用，需说明来源与状态。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t026",
+          "user_text": "协作讨论第26段：我收到另一组同事的草稿，其中几个数字还未核对，怎样安排检查顺序？",
+          "assistant_text": "先核对来源与计算口径，再检查总数与分项是否一致，最后检查单位和日期。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t027",
+          "user_text": "演示说明第27段：今天讨论邮件标题应该先写主题还是先写日期，你能给两个版本吗？",
+          "assistant_text": "可以先写主题便于识别，也可以先写日期便于排序，需要按收件人的习惯选择。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t028",
+          "user_text": "问题清单第28段：客户反馈文字包含肯定和担忧两部分，分别归纳。",
+          "assistant_text": "肯定部分说明已有价值，担忧部分说明仍需确认的风险，两者不能相互替代。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t029",
+          "user_text": "评审记录第29段：整理这段评审讨论：有人看重响应速度，有人更担心数据完整性。",
+          "assistant_text": "这两点需要分别列出：响应速度影响交互体验，数据完整性影响结果可靠性，讨论尚未给出取舍。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t030",
+          "user_text": "邮件草稿第30段：为这份匿名样稿把三段内容排序，顺序只用于当前草稿。",
+          "assistant_text": "可以按背景、过程、结论排序；这次排法不改变其他项目的约定。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t031",
+          "user_text": "协作讨论第31段：午间讨论提到一种新的排版方法，现在只比较阅读效果。",
+          "assistant_text": "可以比较行宽、留白和层次，目前的讨论不能证明该方法适合所有读者。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t032",
+          "user_text": "演示说明第32段：给这段示例中的人物观点换一种表达，不要将人物当成我。",
+          "assistant_text": "可以保留原观点换一种措辞，人物的意见不代表你的身份或偏好。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t033",
+          "user_text": "问题清单第33段：解释为什么同一张截图在两种窗口宽度下显示不同，不用修改程序。",
+          "assistant_text": "可能来自布局与缩放；只有截图不足以确定具体原因，需要窗口尺寸和样式信息。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t034",
+          "user_text": "评审记录第34段：对比一下纸质笔记和电子笔记在临时会议中的便利性。",
+          "assistant_text": "纸质记录快、干扰少；电子记录易检索和共享。会议结束后可以统一整理。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t035",
+          "user_text": "邮件草稿第35段：会议里有人猜测一次失败与网络有关，但日志尚未支持这个结论。",
+          "assistant_text": "保留它作为待验证假设，不能把猜测写成根因或已验证经验。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t036",
+          "user_text": "协作讨论第36段：演示数据中的东区记录数量比西区多，说明图表应该怎样标注。",
+          "assistant_text": "注明这是演示数据，保留数量差异；不要据此解释真实地区的原因。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t037",
+          "user_text": "演示说明第37段：其他项目的说明书写着默认值五十，但维护者还没有确认更新。",
+          "assistant_text": "这属于其他项目且更新尚未确认；如果引用，需说明来源与状态。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t038",
+          "user_text": "问题清单第38段：我收到另一组同事的草稿，其中几个数字还未核对，怎样安排检查顺序？",
+          "assistant_text": "先核对来源与计算口径，再检查总数与分项是否一致，最后检查单位和日期。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t039",
+          "user_text": "评审记录第39段：今天讨论邮件标题应该先写主题还是先写日期，你能给两个版本吗？",
+          "assistant_text": "可以先写主题便于识别，也可以先写日期便于排序，需要按收件人的习惯选择。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t040",
+          "user_text": "邮件草稿第40段：客户反馈文字包含肯定和担忧两部分，分别归纳。",
+          "assistant_text": "肯定部分说明已有价值，担忧部分说明仍需确认的风险，两者不能相互替代。"
+        }
+      ]
+    },
+    {
+      "session_id": "formal_memory_conditional_preference_01.s3",
+      "occurred_at": "2026-11-04T09:00:00+08:00",
+      "turns": [
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t041",
+          "user_text": "协作讨论第41段：整理这段评审讨论：有人看重响应速度，有人更担心数据完整性。",
+          "assistant_text": "这两点需要分别列出：响应速度影响交互体验，数据完整性影响结果可靠性，讨论尚未给出取舍。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t042",
+          "user_text": "演示说明第42段：为这份匿名样稿把三段内容排序，顺序只用于当前草稿。",
+          "assistant_text": "可以按背景、过程、结论排序；这次排法不改变其他项目的约定。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t043",
+          "user_text": "问题清单第43段：午间讨论提到一种新的排版方法，现在只比较阅读效果。",
+          "assistant_text": "可以比较行宽、留白和层次，目前的讨论不能证明该方法适合所有读者。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t044",
+          "user_text": "评审记录第44段：给这段示例中的人物观点换一种表达，不要将人物当成我。",
+          "assistant_text": "可以保留原观点换一种措辞，人物的意见不代表你的身份或偏好。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t045",
+          "user_text": "邮件草稿第45段：解释为什么同一张截图在两种窗口宽度下显示不同，不用修改程序。",
+          "assistant_text": "可能来自布局与缩放；只有截图不足以确定具体原因，需要窗口尺寸和样式信息。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t046",
+          "user_text": "协作讨论第46段：对比一下纸质笔记和电子笔记在临时会议中的便利性。",
+          "assistant_text": "纸质记录快、干扰少；电子记录易检索和共享。会议结束后可以统一整理。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t047",
+          "user_text": "演示说明第47段：会议里有人猜测一次失败与网络有关，但日志尚未支持这个结论。",
+          "assistant_text": "保留它作为待验证假设，不能把猜测写成根因或已验证经验。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t048",
+          "user_text": "问题清单第48段：演示数据中的东区记录数量比西区多，说明图表应该怎样标注。",
+          "assistant_text": "注明这是演示数据，保留数量差异；不要据此解释真实地区的原因。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t049",
+          "user_text": "评审记录第49段：其他项目的说明书写着默认值五十，但维护者还没有确认更新。",
+          "assistant_text": "这属于其他项目且更新尚未确认；如果引用，需说明来源与状态。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t050",
+          "user_text": "邮件草稿第50段：我收到另一组同事的草稿，其中几个数字还未核对，怎样安排检查顺序？",
+          "assistant_text": "先核对来源与计算口径，再检查总数与分项是否一致，最后检查单位和日期。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t051",
+          "user_text": "协作讨论第51段：今天讨论邮件标题应该先写主题还是先写日期，你能给两个版本吗？",
+          "assistant_text": "可以先写主题便于识别，也可以先写日期便于排序，需要按收件人的习惯选择。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t052",
+          "user_text": "演示说明第52段：客户反馈文字包含肯定和担忧两部分，分别归纳。",
+          "assistant_text": "肯定部分说明已有价值，担忧部分说明仍需确认的风险，两者不能相互替代。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t053",
+          "user_text": "问题清单第53段：整理这段评审讨论：有人看重响应速度，有人更担心数据完整性。",
+          "assistant_text": "这两点需要分别列出：响应速度影响交互体验，数据完整性影响结果可靠性，讨论尚未给出取舍。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t054",
+          "user_text": "评审记录第54段：为这份匿名样稿把三段内容排序，顺序只用于当前草稿。",
+          "assistant_text": "可以按背景、过程、结论排序；这次排法不改变其他项目的约定。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t055",
+          "user_text": "邮件草稿第55段：午间讨论提到一种新的排版方法，现在只比较阅读效果。",
+          "assistant_text": "可以比较行宽、留白和层次，目前的讨论不能证明该方法适合所有读者。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t056",
+          "user_text": "协作讨论第56段：给这段示例中的人物观点换一种表达，不要将人物当成我。",
+          "assistant_text": "可以保留原观点换一种措辞，人物的意见不代表你的身份或偏好。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t057",
+          "user_text": "演示说明第57段：解释为什么同一张截图在两种窗口宽度下显示不同，不用修改程序。",
+          "assistant_text": "可能来自布局与缩放；只有截图不足以确定具体原因，需要窗口尺寸和样式信息。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t058",
+          "user_text": "问题清单第58段：对比一下纸质笔记和电子笔记在临时会议中的便利性。",
+          "assistant_text": "纸质记录快、干扰少；电子记录易检索和共享。会议结束后可以统一整理。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t059",
+          "user_text": "评审记录第59段：会议里有人猜测一次失败与网络有关，但日志尚未支持这个结论。",
+          "assistant_text": "保留它作为待验证假设，不能把猜测写成根因或已验证经验。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t060",
+          "user_text": "邮件草稿第60段：演示数据中的东区记录数量比西区多，说明图表应该怎样标注。",
+          "assistant_text": "注明这是演示数据，保留数量差异；不要据此解释真实地区的原因。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t061",
+          "user_text": "协作讨论第61段：其他项目的说明书写着默认值五十，但维护者还没有确认更新。",
+          "assistant_text": "这属于其他项目且更新尚未确认；如果引用，需说明来源与状态。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t062",
+          "user_text": "演示说明第62段：我收到另一组同事的草稿，其中几个数字还未核对，怎样安排检查顺序？",
+          "assistant_text": "先核对来源与计算口径，再检查总数与分项是否一致，最后检查单位和日期。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t063",
+          "user_text": "问题清单第63段：今天讨论邮件标题应该先写主题还是先写日期，你能给两个版本吗？",
+          "assistant_text": "可以先写主题便于识别，也可以先写日期便于排序，需要按收件人的习惯选择。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t064",
+          "user_text": "刚才那段给儿童读者的语气只限那份草稿，不改变我的长期要求。",
+          "assistant_text": "已记录这条明确说明。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t065",
+          "user_text": "邮件草稿第65段：整理这段评审讨论：有人看重响应速度，有人更担心数据完整性。",
+          "assistant_text": "这两点需要分别列出：响应速度影响交互体验，数据完整性影响结果可靠性，讨论尚未给出取舍。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t066",
+          "user_text": "协作讨论第66段：为这份匿名样稿把三段内容排序，顺序只用于当前草稿。",
+          "assistant_text": "可以按背景、过程、结论排序；这次排法不改变其他项目的约定。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t067",
+          "user_text": "演示说明第67段：午间讨论提到一种新的排版方法，现在只比较阅读效果。",
+          "assistant_text": "可以比较行宽、留白和层次，目前的讨论不能证明该方法适合所有读者。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t068",
+          "user_text": "问题清单第68段：给这段示例中的人物观点换一种表达，不要将人物当成我。",
+          "assistant_text": "可以保留原观点换一种措辞，人物的意见不代表你的身份或偏好。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t069",
+          "user_text": "评审记录第69段：解释为什么同一张截图在两种窗口宽度下显示不同，不用修改程序。",
+          "assistant_text": "可能来自布局与缩放；只有截图不足以确定具体原因，需要窗口尺寸和样式信息。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t070",
+          "user_text": "邮件草稿第70段：对比一下纸质笔记和电子笔记在临时会议中的便利性。",
+          "assistant_text": "纸质记录快、干扰少；电子记录易检索和共享。会议结束后可以统一整理。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t071",
+          "user_text": "协作讨论第71段：会议里有人猜测一次失败与网络有关，但日志尚未支持这个结论。",
+          "assistant_text": "保留它作为待验证假设，不能把猜测写成根因或已验证经验。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t072",
+          "user_text": "演示说明第72段：演示数据中的东区记录数量比西区多，说明图表应该怎样标注。",
+          "assistant_text": "注明这是演示数据，保留数量差异；不要据此解释真实地区的原因。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t073",
+          "user_text": "问题清单第73段：其他项目的说明书写着默认值五十，但维护者还没有确认更新。",
+          "assistant_text": "这属于其他项目且更新尚未确认；如果引用，需说明来源与状态。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t074",
+          "user_text": "评审记录第74段：我收到另一组同事的草稿，其中几个数字还未核对，怎样安排检查顺序？",
+          "assistant_text": "先核对来源与计算口径，再检查总数与分项是否一致，最后检查单位和日期。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t075",
+          "user_text": "邮件草稿第75段：今天讨论邮件标题应该先写主题还是先写日期，你能给两个版本吗？",
+          "assistant_text": "可以先写主题便于识别，也可以先写日期便于排序，需要按收件人的习惯选择。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t076",
+          "user_text": "协作讨论第76段：客户反馈文字包含肯定和担忧两部分，分别归纳。",
+          "assistant_text": "肯定部分说明已有价值，担忧部分说明仍需确认的风险，两者不能相互替代。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t077",
+          "user_text": "演示说明第77段：整理这段评审讨论：有人看重响应速度，有人更担心数据完整性。",
+          "assistant_text": "这两点需要分别列出：响应速度影响交互体验，数据完整性影响结果可靠性，讨论尚未给出取舍。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t078",
+          "user_text": "问题清单第78段：为这份匿名样稿把三段内容排序，顺序只用于当前草稿。",
+          "assistant_text": "可以按背景、过程、结论排序；这次排法不改变其他项目的约定。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t079",
+          "user_text": "评审记录第79段：午间讨论提到一种新的排版方法，现在只比较阅读效果。",
+          "assistant_text": "可以比较行宽、留白和层次，目前的讨论不能证明该方法适合所有读者。"
+        },
+        {
+          "turn_id": "formal_memory_conditional_preference_01.t080",
+          "user_text": "邮件草稿第80段：给这段示例中的人物观点换一种表达，不要将人物当成我。",
+          "assistant_text": "可以保留原观点换一种措辞，人物的意见不代表你的身份或偏好。"
+        }
+      ]
+    }
+  ],
+  "expected_memories": [
+    {
+      "memory_id": "analogy",
+      "kind": "stable_preference",
+      "claim": "先给三点短结论",
+      "anchors": [
+        [
+          "手机"
+        ],
+        [
+          "三点"
+        ]
+      ],
+      "query": "手机 三点",
+      "conditions": [
+        "手机上阅读总结"
+      ],
+      "evidence_turn_ids": [
+        "formal_memory_conditional_preference_01.t002"
+      ],
+      "valid_from": null,
+      "valid_until": null,
+      "outcome_status": null
+    },
+    {
+      "memory_id": "steps",
+      "kind": "stable_preference",
+      "claim": "先给复现步骤，再给逐项诊断",
+      "anchors": [
+        [
+          "电脑"
+        ],
+        [
+          "诊断"
+        ]
+      ],
+      "query": "电脑 诊断",
+      "conditions": [
+        "电脑上排查故障"
+      ],
+      "evidence_turn_ids": [
+        "formal_memory_conditional_preference_01.t016"
+      ],
+      "valid_from": null,
+      "valid_until": null,
+      "outcome_status": null
+    }
+  ],
+  "ignored_information": [
+    "其他项目记录、未批准建议、第三方资料及普通讨论不自动成为本项目事实"
+  ],
+  "forbidden_memories": [],
+  "questions": [
+    {
+      "question_id": "q1",
+      "text": "手机上阅读总结时，我希望怎样组织？",
+      "asked_at": "2026-11-01T13:00:00+08:00",
+      "history_session_count": null,
+      "expected_memory_ids": [
+        "analogy",
+        "steps"
+      ],
+      "evidence_turn_ids": [
+        "formal_memory_conditional_preference_01.t002"
+      ],
+      "expected_action": "answer",
+      "reference_answer": "先给三点短结论",
+      "required_meaning": [
+        "先给三点短结论"
+      ],
+      "forbidden_meaning": [],
+      "answer_contains": [],
+      "answer_lacks": [],
+      "required_tools": [],
+      "requires_semantic_review": true,
+      "question_schema_version": "2",
+      "history_end_turn_id": "formal_memory_conditional_preference_01.t020",
+      "expected_active_memory_ids": [
+        "analogy",
+        "steps"
+      ]
+    },
+    {
+      "question_id": "q2",
+      "text": "我电脑上排查故障，你应怎样回答？",
+      "asked_at": "2026-11-04T13:00:00+08:00",
+      "history_session_count": null,
+      "expected_memory_ids": [
+        "analogy",
+        "steps"
+      ],
+      "evidence_turn_ids": [
+        "formal_memory_conditional_preference_01.t016"
+      ],
+      "expected_action": "answer",
+      "reference_answer": "先给复现步骤，再给逐项诊断",
+      "required_meaning": [
+        "先给复现步骤，再给逐项诊断"
+      ],
+      "forbidden_meaning": [],
+      "answer_contains": [],
+      "answer_lacks": [],
+      "required_tools": [],
+      "requires_semantic_review": true,
+      "question_schema_version": "2",
+      "history_end_turn_id": "formal_memory_conditional_preference_01.t048",
+      "expected_active_memory_ids": [
+        "analogy",
+        "steps"
+      ]
+    },
+    {
+      "question_id": "q3",
+      "text": "儿童语气是否变成永久要求？我电脑上排查故障时又如何组织？",
+      "asked_at": "2026-11-04T13:00:00+08:00",
+      "history_session_count": null,
+      "expected_memory_ids": [
+        "analogy",
+        "steps"
+      ],
+      "evidence_turn_ids": [
+        "formal_memory_conditional_preference_01.t016",
+        "formal_memory_conditional_preference_01.t064"
+      ],
+      "expected_action": "answer",
+      "reference_answer": "儿童语气只限那份草稿；先给复现步骤，再给逐项诊断。",
+      "required_meaning": [
+        "儿童语气只限那份草稿；先给复现步骤，再给逐项诊断。"
+      ],
+      "forbidden_meaning": [
+        "把一次儿童读者语气当永久偏好"
+      ],
+      "answer_contains": [],
+      "answer_lacks": [],
+      "required_tools": [],
+      "requires_semantic_review": true,
+      "question_schema_version": "2",
+      "history_end_turn_id": "formal_memory_conditional_preference_01.t080",
+      "expected_active_memory_ids": [
+        "analogy",
+        "steps"
+      ]
+    }
+  ],
+  "strict_card_count": false
+}

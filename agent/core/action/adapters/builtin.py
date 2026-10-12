@@ -1,5 +1,5 @@
 """适配现有 Tool，不绕过业务模块的最终权限/版本校验。"""
-import json
+from agent.prompt.renderers import render_tool_result
 from .resources import card_in_scope, resource_for
 from agent.types.tools import ToolInvocationContext
 
@@ -28,12 +28,13 @@ class BuiltinToolAdapter:
         result = self.tool.execute(values, context=ToolInvocationContext(
             session_id=context.session_id, turn_id=context.turn_id, session_key=context.session_key,
             source_message_id=context.source_message_id, memory_scope=context.memory_scope, skills=context.skills,
+            result_token_budget=(max(0,context.result_token_budget-32) if context.result_token_budget is not None else None),
         ))
         # 整段读前后版本一致才补充 read 的版本；不把新版本盖到旧内容上。
         if result.ok and result.data is not None and before == self.resource(arguments, context):
             if self.tool.name == "memory_read" and before[0] and before[1]:
                 result = result.model_copy(update={"data": {**result.data, "revision": int(before[1])}})
-                result.result_text = json.dumps(result.data, ensure_ascii=False)
+                result.result_text = render_tool_result(self.tool.name, result.data)
         return result
 
     def observations(self, result, arguments, context):

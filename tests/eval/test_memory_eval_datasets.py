@@ -79,7 +79,7 @@ def test_keyword_success_does_not_mark_a_golden_question_semantically_passed(tmp
         name = "boundary_fixture"
 
         def chat(self, messages, tools=None, **kwargs):
-            return ModelResponse(text="[]" if "长期记忆提炼器" in messages[0]["content"] else "你好。")
+            return ModelResponse(text='{"cards":[],"skipped":[]}' if "长期记忆提炼器" in messages[0]["content"] else "你好。")
 
     registry = ModelRegistry()
     registry.register(Model())

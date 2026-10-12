@@ -46,6 +46,9 @@ def require_lease(conn, job, now):
 
 def complete_job(conn, job, result, *, now):
     current = read_job(conn,job.id)
+    history=(current.result or {}).get("failure_history",[]) if current else []
+    if history:
+        result={**result,"failure_history":history}
     if current is not None and current.status == 'completed':
         if current.lease_token == job.lease_token and current.result == result:
             return current
@@ -130,11 +133,16 @@ class SqliteJobStore:
         with self.db.write() as conn:
             return complete_job(conn,job,result,now=self.clock() if now is None else now)
 
-    def fail(self, job, error, *, available_at, max_attempts=3, now=None):
+    def fail(self, job, error, *, available_at, max_attempts=3, now=None, details=None):
         now = self.clock() if now is None else now
         with self.db.write() as conn:
             current = require_lease(conn,job,now)
             status = 'terminal_failed' if current.attempt_count >= max_attempts else 'retryable_failed'
+            if details is not None:
+                previous=dict(current.result or {})
+                previous["failure_history"]=[*previous.get("failure_history",[]),
+                    {"attempt":current.attempt_count,"failed_at":now,"error":error,"details":details}]
+                conn.execute("UPDATE jobs SET result_json=? WHERE id=?",(dumps(previous),job.id))
             conn.execute('UPDATE jobs SET status=?,last_error=?,available_at=?,lease_token=NULL,'
                          'lease_owner=NULL,lease_expires_at=NULL,revision=revision+1 WHERE id=?',
                          (status,error,available_at,job.id))
