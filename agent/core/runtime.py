@@ -15,6 +15,10 @@ from agent.core.perception.perception_anchor import ModelAnchorBuilder
 from agent.types.perception.result import PerceptionConfig
 from agent.core.environment_snapshot import EnvironmentSnapshotter
 from agent.core.event_bus import EventBus
+from agent.core.cron.jobs import JobStore
+from agent.core.cron.mail import NeteaseMailbox
+from agent.core.cron.schedule_tool import ScheduleTool
+from agent.core.cron.scheduler import CronScheduler
 from agent.core.memory.memory_builder import MemoryBuilder
 from agent.core.memory.memory_extractor import MemoryExtractor
 from agent.core.perception.perception_trace import PerceptionTrace
@@ -41,9 +45,11 @@ logger = logging.getLogger(__name__)
 ### 负责所有后台进程 或者 线程的启动 （memory reviewer or gateway or cron 管理 or 邮件监督） 
 class AgentRuntime:
     def __init__(self, *, config, gateway, loop, models, tools, skills, storage,
-                 memory, action, events, perception_trace, environment, tool_handler, tool_dispatch):
+                 memory, action, events, perception_trace, environment, tool_handler, tool_dispatch,
+                 scheduler=None):
         self.config = config
         self.gateway = gateway
+        self.scheduler = scheduler
         self.loop = loop
         self.models = models
         self.tools = tools
@@ -69,6 +75,8 @@ class AgentRuntime:
         if self.action is not None:
             self.action.recover()
         self.gateway.start()
+        if self.scheduler is not None:
+            self.scheduler.start()
         if self.memory is not None:
             self.memory.reviewer.start()
         self._started = True
@@ -76,6 +84,8 @@ class AgentRuntime:
     def stop(self) -> None:
         if self._stopped:
             return
+        if self.scheduler is not None:
+            self.scheduler.stop()
         self.gateway.stop()
         if self.memory is not None:
             self.storage.review_scheduler.flush_all()
@@ -176,6 +186,8 @@ def build_runtime(config: RuntimeConfig | None = None, *, model_registry=None) -
     tools.register(GrepTool())
     tools.register(BashTool())
     tools.register(UseSkillTool(skills))
+    cron_jobs = JobStore(data_root / "users")
+    tools.register(ScheduleTool(cron_jobs))
     tools.register(SkillManageTool(repository))
 
 
@@ -239,6 +251,7 @@ def build_runtime(config: RuntimeConfig | None = None, *, model_registry=None) -
         skills=skills, storage=storage, memory=memory, action=action,
         events=events, perception_trace=perception_trace, tool_handler=handler, tool_dispatch=dispatch,
         environment=EnvironmentSnapshotter(storage.executions) if config.use_memory else None,
+        scheduler=CronScheduler(gateway, cron_jobs, mailbox=NeteaseMailbox.from_env()),
     )
     gateway.describe_agent = runtime.describe
     gateway.on_turn_committed = runtime.on_turn_committed

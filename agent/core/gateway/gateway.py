@@ -53,6 +53,8 @@ ASK_TIMEOUT = 120.0
 
 _HELP_TEXT = "可用命令：/new 或 /reset 新开会话；/help 查看帮助。其他内容直接对话。"
 _FAILURE_TEXT = "处理失败，请稍后重试。"
+# 回复正文恰好等于它时只落库、唤醒等待者，不投递到 channel（后台唤醒判断无需打扰用户时使用）
+SILENT_REPLY = "[NO_NOTIFY]"
 
 
 class Gateway:
@@ -413,6 +415,8 @@ class Gateway:
                 if waiter is not None:
                     waiter.set_result(reply)
 
+            if reply.text.strip() == SILENT_REPLY:
+                continue
             ch = self._channels.get(reply.source.channel)
             if ch is None:
                 logger.warning("出站找不到 channel=%s", reply.source.channel)
