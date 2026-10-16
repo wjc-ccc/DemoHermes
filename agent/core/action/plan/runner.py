@@ -24,7 +24,7 @@ class PlanRunner:
                     "error": "reconciliation_pending" if uncertain else "resume_from_ledger", "lease_token": None,
                     "lease_expires_at": None})
         while True:
-            step = runtime.plans.claim(plan_id)
+            step = runtime.plans.claim(plan_id, lease_ms=runtime.config.plan_lease_ms)
             if step is None:
                 break
             plan = runtime.plans.get(plan_id)

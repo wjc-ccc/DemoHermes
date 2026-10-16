@@ -1,4 +1,4 @@
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
 
 
 def test_job_failure_history_keeps_actual_auxiliary_calls_after_retry_and_completion(tmp_path):

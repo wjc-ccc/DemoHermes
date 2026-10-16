@@ -4,7 +4,7 @@ from agent.types.tools import ToolInvocationContext
 import time
 from datetime import datetime, timezone
 
-from agent.storage.sqlite.markdown_documents import MarkdownDocuments
+from agent.core.storage.sqlite.markdown_documents import MarkdownDocuments
 
 
 def test_manual_tool_rejects_model_supplied_path_and_target_user(tmp_path):
@@ -21,8 +21,8 @@ from agent.types.memory.scope import MemoryScope
 from agent.types.memory.items import UserMemoryItem, content_sha256
 from agent.types.memory.source import EvidenceRef, TurnRecord
 from agent.types.conversation import Message, ToolCall
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
-from agent.tools.memory_edit_tool import MemoryEditTool
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.tools.memory_edit_tool import MemoryEditTool
 
 
 def _seed_card(storage, scope):

@@ -4,16 +4,16 @@
 
 ## 装配与职责
 
-main.py → agent.main.main → agent.runtime.build_runtime(RuntimeConfig) → AgentRuntime。
+main.py → agent.main.main → agent.core.runtime.build_runtime(RuntimeConfig) → AgentRuntime。
 
-Runtime 装配模型、SQLite、技能与工具、可选 MemoryBuilder、ToolHandler/ToolDispatch、PerceptionBuilder、AgentLoop 和 Gateway。core 保留原路径，属于 Runtime 内部能力。
+Runtime 装配模型、SQLite、技能与工具、可选 MemoryBuilder、ToolHandler/ToolDispatch、PerceptionBuilder、AgentLoop 和 Gateway。这些实现都在 agent/core；共享契约在 agent/types。
 
 Action 的账本、Guard、计划、工件和恢复位于 agent/core/action，属于 Runtime 内部的执行控制能力；共享契约仍在 agent/types/action。Gateway 必须接收装配好的 SQLite 会话存储，dict 存储与回退路径已删除。
 
 | 模块 | 行为 | 实现 |
 | --- | --- | --- |
-| AgentRuntime | 装配、启停、能力说明、提交后通知 | agent/runtime.py |
-| Gateway | 路由、会话排队、冻结 Memory、提交与回复 | agent/gateway/gateway.py |
+| AgentRuntime | 装配、启停、能力说明、提交后通知 | agent/core/runtime.py |
+| Gateway | 路由、会话排队、冻结 Memory、提交与回复 | agent/core/gateway/gateway.py |
 | AgentLoop | 技能冻结、模型迭代、状态更新、工具事实回注 | agent/core/agent_loop.py |
 | MemoryBuilder | 装配快照加载器、工具和 Reviewer | agent/core/memory/memory_builder.py |
 | ToolHandler | PRE、审批、版本、预算、资源领取及分配 | agent/core/tool_handler.py |
@@ -21,7 +21,7 @@ Action 的账本、Guard、计划、工件和恢复位于 agent/core/action，�
 | ActionRuntime | 装配执行控制、账本、计划、工件与恢复 | agent/core/action/runtime.py |
 | PerceptionBuilder | 保护、准入、Anchor、渲染及预算 | agent/core/perception/perception_engine.py |
 | Trace | 事件载荷、完整输入快照、指标窗口 | agent/core/agent_loop_trace.py、perception/perception_trace.py |
-| RuntimeStorage | SQLite 初始化与 Store 装配 | agent/storage/sqlite/runtime_storage.py |
+| RuntimeStorage | SQLite 初始化与 Store 装配 | agent/core/storage/sqlite/runtime_storage.py |
 
 ## 一轮请求
 

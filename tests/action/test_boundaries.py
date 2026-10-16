@@ -11,7 +11,7 @@ from agent.types.action.config import ActionConfig
 from agent.types.action.policy import Toolset, ToolPolicy
 from agent.core.action.runtime import ActionRuntime
 from agent.core.action.adapters.builtin import BuiltinToolAdapter
-from agent.tools.base import Tool
+from agent.core.tools.base import Tool
 from agent.types.tools import ToolCallResult
 from conftest import context, payment
 

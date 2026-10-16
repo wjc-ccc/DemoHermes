@@ -2,9 +2,9 @@ from __future__ import annotations
 from agent.types.runtime import RuntimeConfig
 
 from agent import main
-from agent.runtime import build_runtime
+from agent.core.runtime import build_runtime
 from agent.types.model import ModelResponse
-from agent.model.registry import ModelRegistry
+from agent.core.model.registry import ModelRegistry
 from agent.types.conversation import Message, Session
 
 

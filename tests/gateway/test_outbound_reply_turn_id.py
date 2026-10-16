@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import time
 
-from agent.channel.channel_cli import CliChannel
+from agent.core.channel.channel_cli import CliChannel
 from agent.core.event_bus import EventBus
 from tests.loop_fakes import make_loop
 from agent.types.channel import InboundEvent, SessionSource
-from agent.gateway.gateway import Gateway
+from agent.core.gateway.gateway import Gateway
 from agent.types.model import ModelResponse
 
 

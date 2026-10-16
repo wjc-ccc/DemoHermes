@@ -15,8 +15,8 @@ from agent.core.action.adapters.builtin import BuiltinToolAdapter
 from agent.core.action.storage.migrations import schema_directory
 from agent.types.conversation import Session, Message
 from agent.types.model import ToolCallRequest
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
-from agent.tools.base import Tool
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.tools.base import Tool
 from agent.types.tools import ToolCallResult
 
 

@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from agent.runtime import build_runtime
+from agent.core.runtime import build_runtime
 from agent.types.channel import InboundEvent, SessionSource
 from agent.types.model import ModelResponse, ToolCallRequest
 from agent.types.runtime import RuntimeConfig
@@ -164,7 +164,7 @@ def test_disabled_action_does_not_load_action_implementation(tmp_path):
     script = """
 import sys
 from pathlib import Path
-from agent.runtime import build_runtime
+from agent.core.runtime import build_runtime
 from agent.types.runtime import RuntimeConfig
 from agent.types.model import ModelResponse
 class Models:

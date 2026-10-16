@@ -7,8 +7,8 @@ from threading import Thread
 
 import pytest
 
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
-from agent.channel.channel_frontier import FrontierChannel
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.channel.channel_frontier import FrontierChannel
 from tests.loop_fakes import make_loop
 from agent.core.memory.memory_context_loader import MemoryContextLoader
 from agent.types.memory.scope import MemoryScope
@@ -16,11 +16,11 @@ from agent.core.memory.memory_scope import build_memory_scope, ensure_scope_dir
 from agent.types.memory.source import TurnRecord
 from agent.types.conversation import Message
 from agent.types.channel import SessionSource
-from agent.gateway.gateway import Gateway
-from agent.gateway.http_api import FrontierHttpServer
-from agent.gateway.session_key import build_session_key
-from agent.storage.sqlite.document_registry import SqliteDocumentRegistry
-from agent.storage.sqlite.session_store import SqliteSessionStore
+from agent.core.gateway.gateway import Gateway
+from agent.core.gateway.http_api import FrontierHttpServer
+from agent.core.gateway.session_key import build_session_key
+from agent.core.storage.sqlite.document_registry import SqliteDocumentRegistry
+from agent.core.storage.sqlite.session_store import SqliteSessionStore
 
 
 def _free_port():

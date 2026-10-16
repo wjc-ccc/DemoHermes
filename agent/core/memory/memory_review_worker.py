@@ -33,6 +33,7 @@ class MemoryReviewWorker:
         poll_interval: float = 0.5,
         shutdown_grace: float = 5.0,
         clock=time.time,
+        maintenance=(),
     ) -> None:
         self._queue = queue
         self._reviewer = reviewer
@@ -45,6 +46,7 @@ class MemoryReviewWorker:
         self._poll_interval = poll_interval
         self._shutdown_grace = shutdown_grace
         self._clock = clock
+        self._maintenance = tuple(maintenance)
         self._wakeup = threading.Event()
         self._running = False
         self._thread: threading.Thread | None = None
@@ -90,6 +92,8 @@ class MemoryReviewWorker:
                 lease_ms=int(self._lease_seconds*1000),
             )
             if job is None:
+                if not processed:
+                    self._run_maintenance()
                 return processed
             stopped = threading.Event()
             def heartbeat():
@@ -133,4 +137,13 @@ class MemoryReviewWorker:
             finally:
                 stopped.set()
                 heartbeat_thread.join()
+            self._run_maintenance()
             processed += 1
+
+    def _run_maintenance(self):
+        """提取批次之间也处理一批反馈，避免提取积压饿死经验更新。"""
+        for step in self._maintenance:
+            try:
+                step.run_once()
+            except Exception:
+                logger.exception("经验后台维护失败，不影响提取队列")

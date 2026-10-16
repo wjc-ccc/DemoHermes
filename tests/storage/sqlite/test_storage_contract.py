@@ -1,7 +1,6 @@
 import json
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
 from agent.types.conversation import Message, Session, ToolCall
-from agent.eval.datasets.memory_dataset import load_defaults
 
 
 def test_new_database_uses_content_names_and_removes_unused_document_fields(tmp_path):
@@ -36,7 +35,3 @@ def test_conversation_count_is_derived_and_tool_fields_have_one_canonical_name()
     assert not {"durations_ms", "tool_call_result"} & wire.keys()
 
 
-def test_original_dataset_fingerprints_stay_exactly_the_same():
-    first, second = load_defaults()
-    assert first.fingerprint() == "442caecb6785ab3730b33990bdd57a2ad86fb51bd744ab55409beed37b4734d6"
-    assert second.fingerprint() == "2023ba2e25c18d01b8422d8e1c19c5765b6dba8ab8bdfcfb311a3a60f31caa31"

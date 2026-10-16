@@ -1,14 +1,14 @@
 """Slice 8: 整轮 ContextBudget——最终 messages 不超过输入预算，协议组不可拆（§4.3）。"""
 from agent.types.context import ContextBudget
 from tests.loop_fakes import make_loop
-from agent.storage.sqlite.markdown_documents import MarkdownDocuments
+from agent.core.storage.sqlite.markdown_documents import MarkdownDocuments
 from agent.core.memory.memory_context_loader import MemoryContextLoader
 from agent.types.memory.layers import MemoryLayer
 from agent.types.memory.scope import MemoryScope
 from agent.types.memory.snapshot import MemorySnapshot
 from agent.core.memory.memory_scope import ensure_scope_dir
 from agent.types.conversation import Message, Session
-from agent.model.baseStructure import BaseModel
+from agent.core.model.baseStructure import BaseModel
 from agent.types.model import ModelResponse
 from tests.anchor_fakes import DeterministicAnchorBuilder
 

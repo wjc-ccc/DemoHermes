@@ -9,6 +9,7 @@
 | `memory_cards`、`memory_experiences` | 四类原子用户卡及经验结构 |
 | `memory_evidence`、`memory_terms` | 逐字证据引用与关键词索引 |
 | `memory_card_versions`、`memory_conflicts` | 历史版本、无法自动解决的同槽位冲突 |
+| `memory_card_decisions` | 实际卡片曝光、事后JEV使用/合并判定及幂等统计标记；详见[经验卡反馈](memory-card-feedback.md) |
 | `memory_document_versions`、`context_documents` | 个人手册版本及已登记 Markdown 路径/指纹 |
 | `traces`、`trace_items`、`audit_events` | 提取/校验/写入观测与审计 |
 | `eval_datasets`、`eval_cases`、`eval_questions` | 冻结的标准、内容版本、问题字段版本与历史检查点 |

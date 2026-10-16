@@ -11,8 +11,8 @@ from agent.types.model import ModelResponse, ToolCallRequest
 from agent.types.perception.admission import AdmissionPolicy
 from agent.types.perception.result import PerceptionMetrics, PerceptionResult
 from agent.types.tools import ToolCallResult
-from agent.tools.base import Tool
-from agent.tools.registry import ToolRegistry
+from agent.core.tools.base import Tool
+from agent.core.tools.registry import ToolRegistry
 from tests.loop_fakes import make_loop
 
 
@@ -38,8 +38,8 @@ from tests.core.test_perception_admission import (
 
 
 def test_admission_recovery_uses_fact_id_and_keeps_provider_pairing(tmp_path):
-    from agent.storage.sqlite.runtime_storage import RuntimeStorage
-    from agent.storage.sqlite.memory_retrieval import MemoryRetriever
+    from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
+    from agent.core.storage.sqlite.memory_retrieval import MemoryRetriever
     from agent.types.memory.scope import MemoryScope
     storage = RuntimeStorage.open(tmp_path / "agent.db")
     scope = MemoryScope(tenant_id="test", user_id="synthetic")
@@ -202,7 +202,7 @@ def test_reused_protocol_id_does_not_change_which_request_a_result_belongs_to():
 
 
 def test_failed_turn_keeps_actual_tool_error_in_next_context():
-    from agent.gateway.gateway import Gateway
+    from agent.core.gateway.gateway import Gateway
     session = Session()
     _tool_turn(session, "迁移检查", name="bash", arguments={"command":"check"},
                call_id="failed", result="missing index", error=True)

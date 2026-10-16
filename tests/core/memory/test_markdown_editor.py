@@ -4,9 +4,9 @@ import pytest
 
 from agent.types.memory.document import MarkdownRevisionConflictError
 from agent.types.memory.document import MemoryManualContentError, MemoryManualFileInvalidError, MemoryManualScopeError
-from agent.storage.sqlite.markdown_documents import MarkdownDocuments
+from agent.core.storage.sqlite.markdown_documents import MarkdownDocuments
 from agent.types.memory.scope import MemoryScope
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
 
 
 def _editor(tmp_path, *, max_tokens=1200):

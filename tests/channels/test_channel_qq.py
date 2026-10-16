@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 from unittest.mock import MagicMock
 
-from agent.channel.channel_qq import (
+from agent.core.channel.channel_qq import (
     GATEWAY_URL,
     TOKEN_URL,
     QQChannel,

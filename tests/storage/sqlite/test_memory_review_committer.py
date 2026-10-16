@@ -1,7 +1,7 @@
 from __future__ import annotations
 from agent.types.memory.mutation import MemoryMutationItem
 
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
 from agent.types.memory.scope import MemoryScope
 from agent.core.memory.memory_validator import MemoryValidator
 from agent.core.memory.memory_batch_reviewer import MemoryBatchReviewer
@@ -9,10 +9,10 @@ from agent.core.memory.memory_review_worker import MemoryReviewWorker
 from agent.types.memory.extraction import MemoryProposal, MemoryExtractionBatch
 from agent.types.memory.source import TurnRecord
 from agent.types.conversation import Message
-from agent.storage.sqlite.memory_review_committer import SqliteMemoryReviewCommitter
-from agent.storage.sqlite.session_store import SqliteSessionStore
-from agent.storage.sqlite.database import connect
-from agent.storage.sqlite.memory_card_mutation import SqliteMemoryCardMutationService
+from agent.core.storage.sqlite.memory_review_committer import SqliteMemoryReviewCommitter
+from agent.core.storage.sqlite.session_store import SqliteSessionStore
+from agent.core.storage.sqlite.database import connect
+from agent.core.storage.sqlite.memory_card_mutation import SqliteMemoryCardMutationService
 
 
 class _Extractor:

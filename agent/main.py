@@ -1,7 +1,7 @@
 """
 后端装配与启动逻辑
 
-build_runtime() 装配 AgentRuntime，模块职责见 agent/runtime.py：
+build_runtime() 装配 AgentRuntime，模块职责见 agent/core/runtime.py：
     ModelRegistry（provider 访问入口）
     ToolRegistry + calculator + use_skill
     SkillRegistry（扫描 builtin 技能）
@@ -24,10 +24,10 @@ import argparse
 import logging
 from pathlib import Path
 
-from .channel.channel_cli import CliChannel
-from .channel.registry import autostart_channels
-from agent.gateway.http_api import FrontierHttpServer
-from agent.runtime import AgentRuntime, build_runtime
+from .core.channel.channel_cli import CliChannel
+from .core.channel.registry import autostart_channels
+from agent.core.gateway.http_api import FrontierHttpServer
+from agent.core.runtime import AgentRuntime, build_runtime
 from agent.types.runtime import RuntimeConfig
 
 logger = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ def _print_runtime_banner(runtime: AgentRuntime) -> None:
 
 def _run_http(port: int, *, use_memory: bool, enable_memory_debug: bool, use_action: bool = False) -> None:
     """HTTP 模式：Gateway + FrontierHttpServer，供 frontier 前端调用。"""
-    from .provider import AGENT_HTTP_ALLOWED_ORIGINS, AGENT_HTTP_TOKEN
+    from .core.provider import AGENT_HTTP_ALLOWED_ORIGINS, AGENT_HTTP_TOKEN
 
     runtime = build_runtime(RuntimeConfig(use_memory=use_memory, use_action=use_action))
     gateway = runtime.gateway

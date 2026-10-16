@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
 from agent.types.storage import AuditEntry
 from agent.core.environment_snapshot import EnvironmentSnapshotter
 

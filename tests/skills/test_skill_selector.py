@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent.skills.selector import SkillSelector
-from agent.skills.registry import SkillRegistry
+from agent.core.skills.selector import SkillSelector
+from agent.core.skills.registry import SkillRegistry
 from agent.types.skills import Skill
 
 

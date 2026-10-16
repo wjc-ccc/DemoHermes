@@ -16,9 +16,9 @@ from agent.core.perception.perception_judge import SystemOneContextJudge
 from agent.core.perception.perception_admission import mark_readback_miss
 from agent.types.conversation import Message, Session
 from agent.types.model import ModelResponse, ToolCallRequest
-from agent.tools.base import Tool
+from agent.core.tools.base import Tool
 from agent.types.tools import ToolCallResult
-from agent.tools.registry import ToolRegistry
+from agent.core.tools.registry import ToolRegistry
 from tests.anchor_fakes import DeterministicAnchorBuilder
 
 _BIG = 5000
@@ -169,7 +169,7 @@ def test_three_probability_zones_map_to_keep_trim_defer():
     contents = _tool_contents(result)
 
     assert contents["c_keep"] == _body("keep")
-    assert contents["c_trim"].startswith("HEAD-trim") and contents["c_trim"].endswith("TAIL-trim")
+    assert contents["c_trim"].startswith(_PREFIX) and "HEAD-trim" in contents["c_trim"] and contents["c_trim"].endswith("TAIL-trim")
     assert _PREFIX in contents["c_trim"] and len(contents["c_trim"]) < len(_body("trim"))
     assert contents["c_defer"].startswith(_PREFIX)
     assert "tool:c_defer" in contents["c_defer"]
@@ -501,7 +501,7 @@ def test_system_one_requires_injected_endpoint_and_model():
 
 def test_provider_builds_judge_from_jev_config(monkeypatch):
     """provider 决定端点、模型与超时；没有 key 时不构造判官。"""
-    from agent import provider
+    from agent.core import provider
 
     monkeypatch.setattr(provider, "JEVMODEL_API_KEY", None)
     assert provider.build_context_judge() is None
@@ -517,7 +517,7 @@ def test_provider_builds_judge_from_jev_config(monkeypatch):
 
 def test_provider_admission_mode_falls_back_to_shadow(monkeypatch):
     """非法 CONTEXT_ADMISSION_MODE 按 shadow 处理。"""
-    from agent import provider
+    from agent.core import provider
 
     monkeypatch.setattr(provider, "CONTEXT_ADMISSION_MODE", "bogus")
     assert provider.build_admission_policy().mode == "shadow"

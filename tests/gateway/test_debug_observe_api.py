@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
 from agent.core.memory.memory_context_loader import MemoryContextLoader
 from agent.core.memory.memory_scope import build_memory_scope
 from agent.types.memory.trace import MemoryItemTrace, MemoryTrace
@@ -11,9 +11,9 @@ from agent.types.memory.trace_categories import MemoryTraceDecision, MemoryTrace
 from agent.types.memory.source import TurnRecord
 from agent.types.conversation import Message
 from agent.types.channel import SessionSource
-from agent.storage.sqlite.document_registry import SqliteDocumentRegistry
-from agent.storage.sqlite.session_store import SqliteSessionStore
-from agent.storage.sqlite.trace_store import SqliteTraceStore
+from agent.core.storage.sqlite.document_registry import SqliteDocumentRegistry
+from agent.core.storage.sqlite.session_store import SqliteSessionStore
+from agent.core.storage.sqlite.trace_store import SqliteTraceStore
 from tests.gateway.test_debug_memory_api import _gateway, _get, _start_server, _stop_server, _turn
 
 

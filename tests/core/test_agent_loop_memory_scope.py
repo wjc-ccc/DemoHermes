@@ -7,9 +7,9 @@ from tests.loop_fakes import make_loop
 from agent.types.memory.scope import MemoryScope
 from agent.types.conversation import Message, Session
 from agent.types.model import ModelResponse, ToolCallRequest
-from agent.tools.base import Tool
+from agent.core.tools.base import Tool
 from agent.types.tools import ToolCallResult
-from agent.tools.registry import ToolRegistry
+from agent.core.tools.registry import ToolRegistry
 
 
 class _Search(Tool):

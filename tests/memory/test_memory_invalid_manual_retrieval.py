@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from agent.core.memory.memory_context_loader import MemoryContextLoader
-from agent.storage.sqlite.markdown_documents import MarkdownDocuments
+from agent.core.storage.sqlite.markdown_documents import MarkdownDocuments
 from agent.types.memory.scope import MemoryScope
-from agent.storage.sqlite.memory_retrieval import MemoryRetriever
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.storage.sqlite.memory_retrieval import MemoryRetriever
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
 
 
 def test_invalid_external_manual_is_not_exposed_by_raw_search_or_read(tmp_path):

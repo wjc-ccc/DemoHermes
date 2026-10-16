@@ -1,8 +1,8 @@
 from datetime import datetime,timezone
 import pytest
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
-from agent.storage.sqlite.memory_review_committer import SqliteMemoryReviewCommitter
-from agent.storage.sqlite.errors import IntegrityError
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.storage.sqlite.memory_review_committer import SqliteMemoryReviewCommitter
+from agent.core.storage.sqlite.errors import IntegrityError
 from tests.core.memory.test_memory_extractor import _stored_card
 
 

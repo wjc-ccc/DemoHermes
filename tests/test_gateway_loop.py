@@ -41,14 +41,14 @@ from agent.types.memory.scope import MemoryScope
 from agent.types.channel import InboundEvent, SessionSource
 from agent.types.conversation import Session, ToolCall, TurnResult
 from agent.core.perception.perception_engine import PerceptionBuilder
-from agent.gateway.gateway import Gateway
-from agent.gateway.session_key import build_session_key
-from agent.model.baseStructure import BaseModel
+from agent.core.gateway.gateway import Gateway
+from agent.core.gateway.session_key import build_session_key
+from agent.core.model.baseStructure import BaseModel
 from agent.types.model import ModelResponse, ToolCallRequest
-from agent.skills.registry import SkillRegistry
-from agent.skills.skill_tool import UseSkillTool
-from agent.tools.calculator_tools import CalculatorTool
-from agent.tools.registry import ToolRegistry
+from agent.core.skills.registry import SkillRegistry
+from agent.core.skills.skill_tool import UseSkillTool
+from agent.core.tools.calculator_tools import CalculatorTool
+from agent.core.tools.registry import ToolRegistry
 
 
 # ================= Mock 模型 =================
@@ -344,7 +344,7 @@ def test_loop_max_iterations_fallback():
 # ================= 9. Gateway 总线回路 =================
 def _make_gateway(script, store) -> Gateway:
     loop, _ = _make_loop(script)
-    from agent.channel.channel_cli import CliChannel
+    from agent.core.channel.channel_cli import CliChannel
     gateway = Gateway(loop=loop, store=store)
     gateway.register_channel(CliChannel())
     gateway.start()
@@ -443,7 +443,7 @@ def _user_event(text: str, user: str) -> InboundEvent:
 
 
 def _start(loop, *, store, workers: int) -> Gateway:
-    from agent.channel.channel_cli import CliChannel
+    from agent.core.channel.channel_cli import CliChannel
     gateway = Gateway(loop=loop, store=store, workers=workers)
     gateway.register_channel(CliChannel())
     gateway.start()
@@ -503,7 +503,7 @@ def test_queued_turn_does_not_block_other_sessions_and_keeps_order(session_store
 
 
 # ================= 10. ClaudeModel 协议转换（纯本地，不发请求） =================
-from agent.model.claude import ClaudeModel
+from agent.core.model.claude import ClaudeModel
 
 
 def test_claude_convert_messages_basic():

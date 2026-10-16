@@ -1,7 +1,7 @@
 """案例版本是公开存储契约：旧版可重读，同版不能被另一份答案覆盖。"""
 import pytest
 
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
 
 
 def _dataset(version="1.0.0", text="我是 Python 后端工程师。"):
@@ -36,7 +36,7 @@ def test_two_versions_keep_their_own_history_questions_and_answers_after_reopen(
 
 
 def test_published_version_cannot_be_silently_replaced(tmp_path):
-    from agent.storage.sqlite.memory_eval_store import DatasetVersionConflictError
+    from agent.core.storage.sqlite.memory_eval_store import DatasetVersionConflictError
     store = RuntimeStorage.open(tmp_path / "agent.db").memory_evals
     first = _dataset()
     store.publish(first)

@@ -20,7 +20,7 @@ def make_loop(model=None, *, tools=None, skills=None, event_bus=None,
               models=None, model_name=None):
     if model is None:
         if models is None:
-            from agent.model.registry import ModelRegistry
+            from agent.core.model.registry import ModelRegistry
             models = ModelRegistry.default()
         model = models.get(model_name)
     events = event_bus if event_bus is not None else EventBus()

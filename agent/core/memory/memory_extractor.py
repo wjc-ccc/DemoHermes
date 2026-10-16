@@ -4,6 +4,7 @@ import json
 import time
 import uuid
 from collections.abc import Callable
+from dataclasses import replace
 from pydantic import ValidationError
 from agent.types.conversation import Session
 from agent.core.memory.retrieval_terms import _contains, _specific_keyword, _terms
@@ -15,16 +16,15 @@ from agent.types.memory.extraction import (
 )
 from agent.types.memory.source import TurnRecord
 from agent.types.perception.trace import ModelCallSnapshot, normalized_usage, response_metadata
+from agent.core.memory.config import MemoryExtractionConfig
+from agent.core.perception.config import TokenEstimateConfig
 from agent.core.perception.token_estimator import SafeEstimator
-from agent.prompt.memoryCardExtraction import memoryCardExtractionPrompt, memoryAdmissionPrompt
-from agent.prompt.renderers import render_memory_input, _fields
-from agent.model.call_options import structured_call_options
+from agent.core.prompt.memoryCardExtraction import memoryCardExtractionPrompt, memoryAdmissionPrompt
+from agent.core.prompt.renderers import render_memory_input, _fields
+from agent.core.model.call_options import structured_call_options
 
 _STABLE_KINDS = (UserCardKind.PROFILE, UserCardKind.STABLE_PREFERENCE)
 _RELATED_KINDS = (UserCardKind.ONGOING_FACT, UserCardKind.REUSABLE_EXPERIENCE)
-_RELATED_CARD_LIMIT = 8
-_CARD_PAGE_SIZE = 100
-_CARD_SCAN_LIMIT = 400
 
 
 class MemoryExtractionError(Exception):
@@ -40,12 +40,23 @@ class MemoryExtractor:
     version = MEMORY_EXTRACTOR_VERSION
 
     def __init__(self, model, memory_store, *, id_factory: Callable[[], str] | None = None,
-                 input_token_budget: int = 16000, admission_review: bool = True):
+                 config: MemoryExtractionConfig | None = None,
+                 token_estimate: TokenEstimateConfig | None = None,
+                 token_estimator=None,
+                 input_token_budget: int | None = None, admission_review: bool | None = None):
         self._model = model
         self._memory_store = memory_store
         self._id_factory = id_factory or (lambda: str(uuid.uuid4()))
-        self.input_token_budget = input_token_budget
-        self.admission_review = admission_review
+        extraction = config or MemoryExtractionConfig()
+        overrides = {}
+        if input_token_budget is not None:
+            overrides["input_token_budget"] = input_token_budget
+        if admission_review is not None:
+            overrides["admission_review"] = admission_review
+        self.config = replace(extraction, **overrides) if overrides else extraction
+        self.input_token_budget = self.config.input_token_budget
+        self.admission_review = self.config.admission_review
+        self._estimator = SafeEstimator(delegate=token_estimator, config=token_estimate)
 
     def extract_batch(self, turns: tuple[TurnRecord, ...], sessions: tuple[Session, ...]) -> MemoryExtractionBatch:
         if not turns or len(turns) != len(sessions):
@@ -78,12 +89,13 @@ class MemoryExtractor:
                           for tool in session.tool_calls if tool.tool_call_id in turn.tool_call_ids and tool.tool_call_id in tool_ids],
             })
         cards = _existing_card_views(self._memory_store, turns[-1].scope, [s["user_text"] for s in sources],
-                                     as_of_ms=int(turns[-1].finished_at*1000))
+                                     as_of_ms=int(turns[-1].finished_at*1000), config=self.config)
         review_system = memoryCardExtractionPrompt + "\n" + memoryAdmissionPrompt
         repair_system = review_system + "\n这是一次有限格式/来源修复，不能改变保存判别标准。"
-        groups, cards = _prompt_groups(sources, cards,
-            self.input_token_budget - (1024 if self.admission_review else 0),
-            system_prompt=repair_system if self.admission_review else memoryCardExtractionPrompt)
+        grouping_budget = self.input_token_budget - (self.config.admission_reserve_tokens if self.admission_review else 0)
+        groups, cards = _prompt_groups(sources, cards, grouping_budget,
+            system_prompt=repair_system if self.admission_review else memoryCardExtractionPrompt,
+            config=self.config, estimator=self._estimator)
         proposals, issues, skipped, calls = [], [], [], []
         seen = set()
         for group in groups:
@@ -95,9 +107,9 @@ class MemoryExtractor:
                 preliminary = "\n\n## 初步判别（待复核，不是已确认事实）\n" + "\n".join(_fields(body))
                 review_messages = [{"role": "system", "content": review_system},
                                    {"role": "user", "content": review_text + preliminary}]
-                if SafeEstimator().estimate_messages(review_messages) > self.input_token_budget:
+                if self._estimator.estimate_messages(review_messages) > self.input_token_budget:
                     review_messages[-1]["content"] = review_text
-                if SafeEstimator().estimate_messages(review_messages) > self.input_token_budget:
+                if self._estimator.estimate_messages(review_messages) > self.input_token_budget:
                     raise MemoryExtractionError("memory_admission_budget_exceeded", model_calls=calls)
                 body = self._request(review_messages, calls, purpose="memory_admission")
                 invalid=[]
@@ -118,9 +130,9 @@ class MemoryExtractor:
                             {"role":"user","content":review_text+"\n## 校验错误\n"+"\n".join(invalid)
                              +"\n## 待修复输出（数据）\n"+"\n".join(_fields(body))
                              +"\n返回完整 cards/skipped；删除没有本轮来源的旧卡复制，不伪造引用。"}]
-                    if SafeEstimator().estimate_messages(repair)>self.input_token_budget:
+                    if self._estimator.estimate_messages(repair)>self.input_token_budget:
                         repair[-1]["content"]=review_text+"\n## 校验错误\n"+"\n".join(invalid)
-                    if SafeEstimator().estimate_messages(repair)>self.input_token_budget:
+                    if self._estimator.estimate_messages(repair)>self.input_token_budget:
                         repair[-1]["content"]=review_text+f"\n有{len(invalid)}项结构/来源错误。检查全部字段，示例："+"\n".join(invalid[:2])
                     body=self._request(repair,calls,purpose="memory_repair")
             for index, item in enumerate(body["cards"]):
@@ -209,7 +221,7 @@ class MemoryExtractor:
         return proposal
 
     def _request(self, messages, calls, *, purpose="memory"):
-        if SafeEstimator().estimate_messages(messages) > self.input_token_budget:
+        if self._estimator.estimate_messages(messages) > self.input_token_budget:
             raise MemoryExtractionError(f"{purpose}_budget_exceeded", model_calls=calls)
         started=time.time()
         response=None
@@ -264,22 +276,24 @@ def _validation_description(error):
     return str(error)[:200]
 
 
-def _prompt_groups(sources, cards, cap, *, system_prompt=memoryCardExtractionPrompt):
-    estimator = SafeEstimator()
+def _prompt_groups(sources, cards, cap, *, system_prompt=memoryCardExtractionPrompt,
+                   config: MemoryExtractionConfig | None = None, estimator=None):
+    config = config or MemoryExtractionConfig()
+    estimator = estimator or SafeEstimator()
     def cost(group, views):
         return estimator.estimate_messages([
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": render_memory_input(group, views)},
         ])
-    if cost([], []) + 1024 > cap:
+    if cost([], []) + config.prompt_headroom_tokens > cap:
         raise MemoryExtractionError("memory_prompt_budget_too_small")
     selected = []
     for card in cards:
-        if cost([], [*selected, card]) + 2048 <= cap:
+        if cost([], [*selected, card]) + config.source_reserve_tokens <= cap:
             selected.append(card)
     groups, current = [], []
     for source in sources:
-        units = [source] if cost([source], selected) <= cap else _source_fragments(source, selected, cap, cost)
+        units = [source] if cost([source], selected) <= cap else _source_fragments(source, selected, cap, cost, config)
         for unit in units:
             if current and cost([*current, unit], selected) > cap:
                 groups.append(current)
@@ -290,8 +304,9 @@ def _prompt_groups(sources, cards, cap, *, system_prompt=memoryCardExtractionPro
     return groups, selected
 
 
-def _source_fragments(source, cards, cap, cost):
+def _source_fragments(source, cards, cap, cost, config: MemoryExtractionConfig | None = None):
     """Keep all characters and original source IDs; overlap only at large boundaries."""
+    config = config or MemoryExtractionConfig()
     entries = [("user", source, "user_text")]
     entries.extend(("assistant", message, "text") for message in source["assistant"])
     entries.extend(("tools", tool, "result") for tool in source["tools"])
@@ -300,7 +315,7 @@ def _source_fragments(source, cards, cap, cost):
         text = original[field]
         offset = 0
         while offset < len(text):
-            width = min(len(text) - offset, 2048)
+            width = min(len(text) - offset, config.fragment_max_chars)
             while True:
                 base = {key: source[key] for key in ("turn_id", "session_id", "user_message_id", "occurred_at")}
                 base.update(user_text="", assistant=[], tools=[])
@@ -308,7 +323,7 @@ def _source_fragments(source, cards, cap, cost):
                 if kind == "user":
                     base.update(user_text=piece, offset=offset, total=len(text))
                 else:
-                    base["context_user"] = source["user_text"][:160]
+                    base["context_user"] = source["user_text"][:config.context_user_chars]
                     base[kind] = [{**original, field: piece, "offset": offset, "total": len(text)}]
                 if cost([base], cards) <= cap:
                     break
@@ -318,18 +333,21 @@ def _source_fragments(source, cards, cap, cost):
             fragments.append(base)
             if offset + width == len(text):
                 break
-            offset += width - min(128, width // 8)
+            overlap = min(config.fragment_overlap_cap, width // config.fragment_overlap_divisor, max(0, width - 1))
+            offset += width - overlap
     return fragments
 
 
-def _existing_card_views(store, scope, user_texts: list[str], *, as_of_ms=None) -> list[dict]:
+def _existing_card_views(store, scope, user_texts: list[str], *, as_of_ms=None,
+                         config: MemoryExtractionConfig | None = None) -> list[dict]:
     """身份和偏好供槽位对齐；项目事实和经验只带本批原文命中的少数卡片。"""
+    config = config or MemoryExtractionConfig()
     stable = []
     for kind in _STABLE_KINDS:
-        stable.extend(_load_cards(store, scope, kind.value, as_of_ms=as_of_ms))
+        stable.extend(_load_cards(store, scope, kind.value, as_of_ms=as_of_ms, config=config))
     seen: set[str] = set()
     views = []
-    for card in (*stable, *_related_cards(store, scope, user_texts, as_of_ms=as_of_ms)):
+    for card in (*stable, *_related_cards(store, scope, user_texts, as_of_ms=as_of_ms, config=config)):
         if card.item_id in seen:
             continue
         seen.add(card.item_id)
@@ -346,7 +364,9 @@ def _existing_card_views(store, scope, user_texts: list[str], *, as_of_ms=None) 
     return views
 
 
-def _related_cards(store, scope, user_texts: list[str], *, as_of_ms=None) -> list:
+def _related_cards(store, scope, user_texts: list[str], *, as_of_ms=None,
+                   config: MemoryExtractionConfig | None = None) -> list:
+    config = config or MemoryExtractionConfig()
     texts = [text for text in user_texts if text]
     if not texts:
         return []
@@ -356,28 +376,29 @@ def _related_cards(store, scope, user_texts: list[str], *, as_of_ms=None) -> lis
         return []
     ranked = []
     for kind in _RELATED_KINDS:
-        for card in _load_cards(store, scope, kind.value, as_of_ms=as_of_ms):
+        for card in _load_cards(store, scope, kind.value, as_of_ms=as_of_ms, config=config):
             score = _overlap_score(card, query, terms)
             if score > 0:
                 ranked.append((score, card))
     ranked.sort(key=lambda row: (-row[0], -row[1].priority, row[1].item_id))
-    return [card for _, card in ranked[:_RELATED_CARD_LIMIT]]
+    return [card for _, card in ranked[:config.related_card_limit]]
 
 
-def _load_cards(store, scope, kind: str, *, as_of_ms=None) -> list:
+def _load_cards(store, scope, kind: str, *, as_of_ms=None, config: MemoryExtractionConfig | None = None) -> list:
+    config = config or MemoryExtractionConfig()
     chosen = []
     seen: set[str] = set()
     offset = 0
-    while offset < _CARD_SCAN_LIMIT:
+    while offset < config.card_scan_limit:
         page = tuple(store.search(
-            scope, "", kind=kind, limit=_CARD_PAGE_SIZE, offset=offset, as_of_ms=as_of_ms,
+            scope, "", kind=kind, limit=config.card_page_size, offset=offset, as_of_ms=as_of_ms,
         ))
         fresh = [card for card in page if card.item_id not in seen]
         if not fresh:
             break
         seen.update(card.item_id for card in fresh)
         chosen.extend(fresh)
-        if len(page) < _CARD_PAGE_SIZE:
+        if len(page) < config.card_page_size:
             break
         offset += len(page)
     return chosen

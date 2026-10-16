@@ -16,21 +16,10 @@ from typing import Callable, Mapping, Sequence
 from agent.types.context import AdmissionVerdict
 from agent.types.perception.judge import ContextJudge, ContextJudgeRequest
 from agent.core.perception.errors import ContextJudgeError
-from agent.types.perception.admission import AdmissionAction, AdmissionBand, AdmissionPolicy
+from agent.types.perception.admission import AdmissionAction, AdmissionBand, AdmissionConfig, AdmissionPolicy
 from agent.core.perception.context_item import ContextItem, HistoryTurn
 
 _SEVERITY: dict[str, int] = {"keep": 0, "trim": 1, "defer": 2}
-# 没有可信判官答案时，每类输出日后仍被需要的先验。
-_PRIOR: dict[str, float] = {
-    "error": 0.30,
-    "listing": 0.30,
-    "log": 0.25,
-    "content": 0.55,
-    "data": 0.65,
-    "other": 0.50,
-}
-_JUDGE_WEIGHT = 0.8
-_PRIOR_WEIGHT = 0.6
 _PATH_KEYS = ("path", "file_path", "filePath", "file", "filename")
 _READ_MARKERS = ("read", "view", "cat", "open")
 _WRITE_MARKERS = ("write", "edit", "patch", "replace", "create", "delete", "move", "rename")
@@ -49,7 +38,6 @@ _LIVE_TEXT_CHARS = 4000
 _GOAL_USER_TURNS = 3
 _GOAL_CHARS = 200
 _CALL_CHARS = 160
-_TRIM_MIN_SAVING = 200
 
 
 @dataclass(frozen=True)
@@ -102,7 +90,7 @@ def admit(
     covered_count: int,
     live_items: Sequence[ContextItem],
     usage: float,
-    policy: AdmissionPolicy,
+    policy: AdmissionConfig,
     judge: ContextJudge | None,
     stored: Mapping[str, AdmissionVerdict],
     estimate: Callable[[dict], int],
@@ -194,12 +182,13 @@ def mark_readback_miss(
 ) -> tuple[dict[str, AdmissionVerdict], AdmissionVerdict | None]:
     """模型读回了被移出/裁剪的结果：该定案判错，钉住为全文。"""
     prefix, _, tool_call_id = reference.partition(":")
-    if prefix != "tool" or not tool_call_id:
+    if prefix not in {"tool", "message"} or not tool_call_id:
         return dict(verdicts), None
     for key, verdict in verdicts.items():
         if key not in applied_message_ids:
             continue
-        if verdict.tool_call_id != tool_call_id or verdict.missed:
+        identity = verdict.tool_call_id if prefix == "tool" else verdict.message_id
+        if identity != tool_call_id or verdict.missed:
             continue
         if verdict.action == "keep":
             return dict(verdicts), None
@@ -211,14 +200,14 @@ def mark_readback_miss(
 def _judge_pending(
     pending: Sequence[_Candidate],
     goal: str,
-    policy: AdmissionPolicy,
+    policy: AdmissionConfig,
     judge: ContextJudge | None,
     band: AdmissionBand,
     plan: AdmissionPlan,
 ) -> list[AdmissionVerdict]:
     """送判最长的若干条；判官缺席或失败时按工具类别先验兜底。"""
     if judge is None:
-        return [_prior_verdict(candidate, band, None, "") for candidate in pending]
+        return [_prior_verdict(candidate, band, None, "", policy) for candidate in pending]
 
     ordered = sorted(pending, key=lambda candidate: -len(candidate.content))
     selected = ordered[: policy.max_judged]
@@ -241,14 +230,14 @@ def _judge_pending(
         plan.judge_failures += 1
         plan.judge_latency_ms = int((time.perf_counter() - started) * 1000)
         return [
-            _prior_verdict(candidate, band, None, f"判官不可用 {exc.code}")
+            _prior_verdict(candidate, band, None, f"判官不可用 {exc.code}", policy)
             for candidate in selected
         ]
     except Exception as exc:  # 判官故障绝不阻断主链
         plan.judge_failures += 1
         plan.judge_latency_ms = int((time.perf_counter() - started) * 1000)
         return [
-            _prior_verdict(candidate, band, None, f"判官异常 {type(exc).__name__}")
+            _prior_verdict(candidate, band, None, f"判官异常 {type(exc).__name__}", policy)
             for candidate in selected
         ]
     plan.judge_latency_ms = int((time.perf_counter() - started) * 1000)
@@ -260,12 +249,12 @@ def _judge_pending(
         result = by_id.get(request.item_id)
         if result is None or result.still_needed is None:
             verdicts.append(_prior_verdict(
-                candidate, band, result.kind if result else None, "判官未给出需要度"
+                candidate, band, result.kind if result else None, "判官未给出需要度", policy
             ))
             continue
         score = (
-            _JUDGE_WEIGHT * result.still_needed
-            + (1 - _JUDGE_WEIGHT) * candidate.relevance
+            policy.judge_weight * result.still_needed
+            + (1 - policy.judge_weight) * candidate.relevance
         )
         verdicts.append(_verdict(
             candidate,
@@ -287,12 +276,13 @@ def _prior_verdict(
     band: AdmissionBand,
     kind: str | None,
     note: str,
+    policy: AdmissionConfig,
 ) -> AdmissionVerdict:
     """kind 先验与相关度的确定性兜底分。"""
     resolved = kind or _fallback_kind(candidate)
     score = (
-        _PRIOR_WEIGHT * _PRIOR.get(resolved, _PRIOR["other"])
-        + (1 - _PRIOR_WEIGHT) * candidate.relevance
+        policy.prior_weight * policy.prior(resolved)
+        + (1 - policy.prior_weight) * candidate.relevance
     )
     reason = f"先验 {resolved} 相关度={candidate.relevance:.2f}"
     return _verdict(
@@ -363,7 +353,7 @@ def _band_for(
 
 def _candidate_of(
     item: ContextItem,
-    policy: AdmissionPolicy,
+    policy: AdmissionConfig,
     calls: Sequence[_Call],
     user_seqs: Sequence[int],
     live_texts: Sequence[tuple[int, str]],
@@ -419,7 +409,7 @@ def _stale_reason(candidate: _Candidate, calls: Sequence[_Call]) -> str | None:
 def _project(
     candidate: _Candidate,
     verdict: AdmissionVerdict,
-    policy: AdmissionPolicy,
+    policy: AdmissionConfig,
     estimate: Callable[[dict], int],
 ) -> ContextItem | None:
     """渲染 trim/defer 后的工具消息；不省 token 时返回 None。"""
@@ -430,11 +420,11 @@ def _project(
     if verdict.action == "trim":
         edge = policy.edge_chars
         omitted = len(content) - 2 * edge
-        if omitted < _TRIM_MIN_SAVING:
+        if omitted < policy.trim_min_saving:
             return None
         text = (
-            f"{content[:edge]}\n"
-            f"[上下文准入] 中间 {omitted} 字已省略（{verdict.reason}）。{hint}\n"
+            f"[上下文准入] {hint}\n{content[:edge]}\n"
+            f"[上下文准入] 中间 {omitted} 字已省略（{verdict.reason}）。\n"
             f"{content[-edge:]}"
         )
     else:
@@ -456,7 +446,9 @@ def _project(
 def _recover_hint(tool_call_id: str, readback: bool) -> str:
     """告诉主模型如何取回全文。"""
     if readback and tool_call_id:
-        return f'需要原文时调用 memory_read(reference="tool:{tool_call_id}")。'
+        return (f'原文保存在数据库，引用=tool:{tool_call_id}；缺少证据时直接调用 '
+                f'memory_read(reference="tool:{tool_call_id}")，可用query定位目标片段。'
+                '原样复制引用，不拼接目录，不通过read_file或bash读取数据库原文。')
     return "需要原文时重新执行该调用。"
 
 

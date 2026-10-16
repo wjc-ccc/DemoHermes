@@ -1,4 +1,4 @@
-from agent.prompt.renderers import render_anchor_input
+from agent.core.prompt.renderers import render_anchor_input
 
 
 def test_repeated_tool_lines_are_compacted_without_losing_unique_middle_or_tail():

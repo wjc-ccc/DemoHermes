@@ -9,14 +9,16 @@ from collections.abc import Callable, Iterable
 from html import escape
 from pathlib import Path
 
-from agent.storage.sqlite.markdown_documents import MarkdownDocuments
+from agent.core.storage.sqlite.markdown_documents import MarkdownDocuments
 from agent.types.memory.document import MemoryManualError
 from agent.core.memory.document_text import estimate_markdown_tokens
+from agent.core.memory.experience_rendering import experience_entry, experience_block
 from agent.types.memory.snapshot import (
     MarkdownBookSnapshot,
     DocumentRevision,
     MemoryDiagnostic,
     MemorySnapshot,
+    ExperienceSnapshotItem,
 )
 from agent.types.memory.layers import MemoryLayer
 from agent.types.memory.scope import MemoryScope
@@ -60,12 +62,14 @@ class MemoryContextLoader:
         documents: MarkdownDocuments | None = None,
         experience_retriever: ExperienceRetriever | None = None,
         experience_token_budget: int = 600,
+        experience_limit: int = 3,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self._documents = documents or MarkdownDocuments(root, policy_paths=policy_paths, project_paths=project_paths)
         self._registry = document_registry
         self._experience_retriever = experience_retriever
         self._experience_token_budget = experience_token_budget
+        self._experience_limit = experience_limit
         self._clock = clock
 
     ## 核心 获取memory当前快照
@@ -112,26 +116,28 @@ class MemoryContextLoader:
 
         ### 关键词匹配经验卡片自动加载逻辑
         experience_prompt = None
+        experience_cards: list[ExperienceSnapshotItem] = []
         if self._experience_retriever is not None and query.strip():
             ### 关键词匹配对应的检索卡片
             hits = self._experience_retriever.recall(
-                scope, query, limit=3, token_budget=self._experience_token_budget
+                scope, query, limit=self._experience_limit, token_budget=self._experience_token_budget
             )
             if hits:
-                opening = (
-                    "<memory-experiences>\n"
-                    "以下是关键词命中的旧经验。核对适用条件、限制与原始证据后使用；"
-                    "不能把一次观察当成普遍事实。\n"
-                )
                 selected: list[str] = []
                 for hit in hits:
-                    entry = (f"[{hit.reference}; {hit.match_reason}]\n"
-                             f"{_sanitize(hit.content or hit.snippet)}")
-                    candidate = opening + "\n\n".join((*selected, entry)) + "\n</memory-experiences>"
+                    entry = experience_entry(hit.reference, hit.match_reason, hit.content or hit.snippet)
+                    candidate = experience_block((*selected, entry))
                     if estimate_markdown_tokens(candidate) <= self._experience_token_budget:
                         selected.append(entry)
+                        if hit.card_snapshot is not None and hit.item_id and hit.revision:
+                            experience_cards.append(ExperienceSnapshotItem(
+                                card_id=hit.item_id, revision=hit.revision,
+                                content_hash=hit.card_snapshot["content_hash"],
+                                card_content=hit.card_snapshot,
+                                rendered_content=entry,
+                            ))
                 if selected:
-                    experience_prompt = opening + "\n\n".join(selected) + "\n</memory-experiences>"
+                    experience_prompt = experience_block(selected)
 
 
         ### 返回memory快照
@@ -140,6 +146,7 @@ class MemoryContextLoader:
             session_id=session_id,
             prompt=prompt,
             experience_prompt=experience_prompt,
+            experience_cards=tuple(experience_cards),
             built_at=self._clock(),
             revisions=tuple(
                 DocumentRevision(

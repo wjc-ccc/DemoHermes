@@ -5,12 +5,12 @@
 """
 import pytest
 
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
 from agent.types.context import Anchor, AnchorFact
 from agent.types.conversation import ContentPart, Message, Session, ToolCall
 from agent.types.memory.scope import MemoryScope
-from agent.storage.sqlite.errors import AuditConflictError, SessionIntegrityError
-from agent.storage.sqlite.session_store import SqliteSessionStore
+from agent.core.storage.sqlite.errors import AuditConflictError, SessionIntegrityError
+from agent.core.storage.sqlite.session_store import SqliteSessionStore
 from agent.types.memory.source import TurnRecord
 
 _SCOPE = MemoryScope(tenant_id="cli", user_id="u1")

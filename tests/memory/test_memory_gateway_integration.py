@@ -1,18 +1,18 @@
 from dataclasses import replace
 """Gateway、冻结 MemorySnapshot 与 SQLite Session 的端到端接线。"""
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
-from agent.storage.sqlite.database import connect
-from agent.channel.channel_cli import CliChannel
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.storage.sqlite.database import connect
+from agent.core.channel.channel_cli import CliChannel
 from tests.loop_fakes import make_loop
 from agent.core.event_bus import EventBus
 from agent.core.memory.memory_context_loader import MemoryContextLoader
 from agent.core.memory.memory_scope import build_memory_scope, ensure_scope_dir
 from agent.types.channel import InboundEvent, SessionSource
 from agent.types.conversation import Message, ToolCall
-from agent.gateway.gateway import Gateway
-from agent.gateway.session_key import build_session_key
+from agent.core.gateway.gateway import Gateway
+from agent.core.gateway.session_key import build_session_key
 from agent.types.model import ModelResponse
-from agent.storage.sqlite.session_store import SqliteSessionArchiveReader, SqliteSessionStore
+from agent.core.storage.sqlite.session_store import SqliteSessionArchiveReader, SqliteSessionStore
 
 
 class _MockModel:

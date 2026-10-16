@@ -4,7 +4,7 @@ from agent.types.action.policy import Toolset
 from agent.core.action.storage.migrations import schema_directory
 from agent.core.action.storage.tool_store import SqliteToolLedgerStore, ActionConflictError
 from agent.types.model import ToolCallRequest
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
 
 
 def test_ledger_claims_are_persistent_and_success_cannot_be_reset(tmp_path):

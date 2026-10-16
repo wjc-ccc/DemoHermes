@@ -30,8 +30,8 @@ def test_explicit_json_file_text_keeps_its_original_bytes():
 
 
 def test_error_only_tool_fact_remains_searchable_and_readable_after_restart(tmp_path):
-    from agent.storage.sqlite.runtime_storage import RuntimeStorage
-    from agent.storage.sqlite.memory_retrieval import MemoryRetriever
+    from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
+    from agent.core.storage.sqlite.memory_retrieval import MemoryRetriever
     from agent.types.conversation import Session, Message, ToolCall
     from agent.types.memory.scope import MemoryScope
     from agent.types.memory.source import TurnRecord

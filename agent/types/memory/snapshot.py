@@ -29,6 +29,18 @@ class DocumentRevision(BaseModel):
     revision: str
     token_count: int = 0
 
+
+class ExperienceSnapshotItem(BaseModel):
+    """实际选入本轮经验段的卡片正文版本，不随后台写入变化。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    card_id: str
+    revision: int
+    content_hash: str
+    card_content: dict
+    rendered_content: str
+
 ## 所有类型的memory的核心字段 用于按照存在情况提取对应路径下的记忆
 class MemorySnapshot(BaseModel):
     """Memory → Perception 的稳定 Interface；同一 Turn 内不可变。"""
@@ -42,6 +54,7 @@ class MemorySnapshot(BaseModel):
     revisions: tuple[DocumentRevision, ...]
     diagnostics: tuple[MemoryDiagnostic, ...] = ()
     experience_prompt: str | None = None
+    experience_cards: tuple[ExperienceSnapshotItem, ...] = ()
 
 
 ## 转化为markdown快照 

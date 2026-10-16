@@ -1,6 +1,6 @@
 """普通用户手册经冻结快照进入 Perception。"""
 
-from agent.storage.sqlite.markdown_documents import MarkdownDocuments
+from agent.core.storage.sqlite.markdown_documents import MarkdownDocuments
 from agent.core.memory.memory_context_loader import MemoryContextLoader
 from agent.types.memory.layers import MemoryLayer
 from agent.types.memory.scope import MemoryScope

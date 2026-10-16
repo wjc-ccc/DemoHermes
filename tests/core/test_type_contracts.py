@@ -15,15 +15,21 @@ def test_contracts_import_without_loading_implementations():
         for module in pkgutil.walk_packages(agent.types.__path__, agent.types.__name__ + '.'):
             importlib.import_module(module.name)
 
+        config_modules = {
+            'agent.core', 'agent.core.config',
+            'agent.core.memory', 'agent.core.memory.config',
+            'agent.core.perception', 'agent.core.perception.config',
+        }
         forbidden = []
         for name in sys.modules:
             if name.startswith((
-                'agent.gateway', 'agent.storage', 'agent.model', 'agent.tools',
-                'agent.core.action', 'agent.eval', 'agent.evolution', 'agent.skills', 'agent.provider',
+                'agent.core.gateway', 'agent.core.storage', 'agent.core.model', 'agent.core.tools',
+                'agent.core.channel', 'agent.core.action', 'agent.eval', 'agent.evolution',
+                'agent.core.skills', 'agent.core.provider',
                 'httpx', 'openai', 'claude_agent_sdk', 'lark_oapi',
             )):
                 forbidden.append(name)
-            elif name.startswith('agent.core'):
+            elif name.startswith('agent.core') and name not in config_modules:
                 forbidden.append(name)
         assert not forbidden, forbidden
     """)

@@ -5,17 +5,17 @@ import pytest
 from datetime import datetime, timezone
 from agent.core.action.bootstrap import build_action_runtime
 from agent.core.action.storage.migrations import schema_directory
-from agent.storage.sqlite.markdown_documents import MarkdownDocuments
+from agent.core.storage.sqlite.markdown_documents import MarkdownDocuments
 from agent.types.memory.scope import MemoryScope
 from agent.types.memory.items import UserMemoryItem, content_sha256
-from agent.storage.sqlite.memory_retrieval import MemoryRetriever
+from agent.core.storage.sqlite.memory_retrieval import MemoryRetriever
 from agent.types.memory.source import EvidenceRef, TurnRecord
 from agent.types.conversation import Message
 from agent.types.model import ToolCallRequest
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
-from agent.tools.memory_edit_tool import MemoryEditTool
-from agent.tools.memory_tools import MemorySearchTool
-from agent.tools.registry import ToolRegistry
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.tools.memory_edit_tool import MemoryEditTool
+from agent.core.tools.memory_tools import MemorySearchTool
+from agent.core.tools.registry import ToolRegistry
 
 
 def prepared_edit(tmp_path):

@@ -306,7 +306,7 @@ def test_legacy_anchor_never_filters_raw_before_v2_migration():
 def test_agent_loop_persists_structured_anchor_on_session():
     """AgentLoop 只写 context_anchor，不再依赖 summary 字符串。"""
     from tests.loop_fakes import make_loop
-    from agent.model.baseStructure import BaseModel
+    from agent.core.model.baseStructure import BaseModel
     from agent.types.model import ModelResponse
 
     class _Model(BaseModel):
@@ -373,7 +373,7 @@ def test_model_anchor_builder_uses_no_tools_and_strict_prompt():
 def test_agent_loop_maps_closed_compaction_failure_without_main_model_call():
     """失败关闭由 Loop 映射成稳定错误，且不会调用主模型。"""
     from tests.loop_fakes import make_loop
-    from agent.model.baseStructure import BaseModel
+    from agent.core.model.baseStructure import BaseModel
     from agent.types.model import ModelResponse
 
     class _MainModel(BaseModel):

@@ -1,13 +1,13 @@
 """Gateway 只在事实提交成功后唤醒 Memory reviewer。"""
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
-from agent.channel.channel_cli import CliChannel
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.channel.channel_cli import CliChannel
 from tests.loop_fakes import make_loop
 from agent.core.event_bus import EventBus
 from agent.core.memory.memory_context_loader import MemoryContextLoader
 from agent.types.channel import InboundEvent, SessionSource
-from agent.gateway.gateway import Gateway
+from agent.core.gateway.gateway import Gateway
 from agent.types.model import ModelResponse
-from agent.storage.sqlite.session_store import SqliteSessionStore
+from agent.core.storage.sqlite.session_store import SqliteSessionStore
 
 
 class _MockModel:

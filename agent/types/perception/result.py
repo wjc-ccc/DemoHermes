@@ -11,8 +11,39 @@ from agent.types.perception.admission import AdmissionAction, AdmissionMode
 
 @dataclass(frozen=True)
 class PerceptionConfig:
+    """感知配置：窗口、压缩时机、保留轮数和 Anchor 上限。"""
+
     budget: ContextBudget | None = None
     token_estimator: TokenEstimator | None = None
+    compression_trigger_tokens: int | None = None
+    anchor_enabled: bool = True
+    # 默认 None。有物理窗口且未开软触发时，上限为输入预算 × anchor_budget_ratio。
+    # 软触发下显式传入 None 时，不另设语义输出上限。
+    anchor_output_token_limit: int | None = None
+    # 独立于语义压缩目标，限制实际Anchor模型调用的输出量。
+    anchor_provider_output_limit: int = 4096
+    anchor_reserve_tokens: int | None = None
+    compact_ratio: float = 0.85
+    keep_recent_turns: int = 2
+    p0_share_warning: float = 0.10
+    anchor_budget_ratio: float = 0.15
+
+    def __post_init__(self) -> None:
+        """软触发和规划预留不改变模型物理窗口；比例与可选 token 配置分开校验。"""
+        if (isinstance(self.anchor_provider_output_limit, bool)
+                or not isinstance(self.anchor_provider_output_limit, int)
+                or self.anchor_provider_output_limit <= 0):
+            raise ValueError("anchor_provider_output_limit 必须为正整数")
+        for name in ("compression_trigger_tokens", "anchor_output_token_limit", "anchor_reserve_tokens"):
+            value = getattr(self, name)
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value <= 0):
+                raise ValueError(f"{name} 必须为正整数或 None")
+        for name in ("compact_ratio", "p0_share_warning", "anchor_budget_ratio"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < float(value) <= 1:
+                raise ValueError(f"{name} 必须在 (0, 1] 内")
+        if isinstance(self.keep_recent_turns, bool) or not isinstance(self.keep_recent_turns, int) or self.keep_recent_turns < 0:
+            raise ValueError("keep_recent_turns 必须是大于等于 0 的整数")
 
 
 Decision = Literal["selected", "compressed", "lazyload", "dropped"]

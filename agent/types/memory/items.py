@@ -5,7 +5,7 @@ import re
 import unicodedata
 from datetime import datetime
 from typing import Any, Literal, Mapping
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 from agent.types.memory.layers import MemoryLayer, validate_item_type
 from agent.types.memory.scope import MemoryScope
 from agent.types.memory.source import EvidenceRef
@@ -134,6 +134,25 @@ class UserMemoryItem(BaseModel):
     outcome: str | None = None
     limitations: str | None = None
     outcome_status: ExperienceOutcome | None = None
+    used_count: int = Field(default=0, ge=0)
+    judge_count: int = Field(default=0, ge=0)
+    effective_count: int = Field(default=0, ge=0)
+    helpful_count: int = Field(default=0, ge=0)
+    harmful_count: int = Field(default=0, ge=0)
+    recall_enabled: bool = True
+
+    @computed_field
+    @property
+    def source_message_ids(self) -> tuple[str, ...]:
+        """直接从证据投影来源，避免另一份来源列表与证据表失去同步。"""
+        return tuple(dict.fromkeys(ref.source_id for ref in self.evidence
+                                   if ref.source_type == "message"))
+
+    @computed_field
+    @property
+    def maturity(self) -> float:
+        """只由具有明确正负观察的反馈计算；未知与未采纳不作为负面。"""
+        return (self.helpful_count - self.harmful_count) / (self.helpful_count + self.harmful_count + 3)
 
     @model_validator(mode="after")
     def _validate_card(self) -> "UserMemoryItem":
@@ -144,6 +163,9 @@ class UserMemoryItem(BaseModel):
                 raise ValueError("经验卡片没有事实槽位")
         elif not self.slot_key:
             raise ValueError("事实卡片必须有 slot_key")
+        if not (self.helpful_count + self.harmful_count <= self.effective_count
+                <= self.judge_count <= self.used_count):
+            raise ValueError("卡片反馈计数不满足正负观察、采纳、判定与曝光的包含关系")
         return self
 
 

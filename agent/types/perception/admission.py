@@ -35,8 +35,8 @@ _DEFAULT_BANDS = (
 
 
 ### admission的策略 如何设定admit的处理参数（包含jev参数 和 处理字段参数）
-class AdmissionPolicy(BaseModel):
-    """条目级上下文准入的开关与阈值；off 时 Perception 行为与未接入前完全一致。"""
+class AdmissionConfig(BaseModel):
+    """准入配置：开关、档位、裁剪长度，以及判官和先验的混合权重。"""
 
     model_config = ConfigDict(frozen=True)
 
@@ -55,11 +55,35 @@ class AdmissionPolicy(BaseModel):
     max_judged: int = Field(default=24, ge=0)
     # 当前 Agent 是否注册了 memory_read；没有时占位符改为提示重新执行。
     readback: bool = True
+    # 有判官：judge_weight * 仍需要的概率 + (1 - judge_weight) * 相关度。
+    judge_weight: float = Field(default=0.8, ge=0.0, le=1.0)
+    # 判官缺席：prior_weight * 类别先验 + (1 - prior_weight) * 相关度。
+    prior_weight: float = Field(default=0.6, ge=0.0, le=1.0)
+    trim_min_saving: int = Field(default=200, ge=0)
+    min_kind_probability: float = Field(default=0.5, gt=0.0, le=1.0)
+    prior_error: float = Field(default=0.30, ge=0.0, le=1.0)
+    prior_listing: float = Field(default=0.30, ge=0.0, le=1.0)
+    prior_log: float = Field(default=0.25, ge=0.0, le=1.0)
+    prior_content: float = Field(default=0.55, ge=0.0, le=1.0)
+    prior_data: float = Field(default=0.65, ge=0.0, le=1.0)
+    prior_other: float = Field(default=0.50, ge=0.0, le=1.0)
+
+    def prior(self, kind: str | None) -> float:
+        return {
+            "error": self.prior_error,
+            "listing": self.prior_listing,
+            "log": self.prior_log,
+            "content": self.prior_content,
+            "data": self.prior_data,
+        }.get(kind or "", self.prior_other)
 
     @model_validator(mode="after")
-    def _sorted_bands(self) -> "AdmissionPolicy":
+    def _sorted_bands(self) -> "AdmissionConfig":
         """档位必须按用量严格升序。"""
         usages = [band.usage for band in self.bands]
         if usages != sorted(set(usages)):
             raise ValueError("bands 必须按 usage 严格升序")
         return self
+
+
+AdmissionPolicy = AdmissionConfig

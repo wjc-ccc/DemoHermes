@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
 from agent.types.memory.scope import MemoryScope
 from agent.types.memory.source import TurnRecord
 from agent.types.conversation import Message
-from agent.storage.sqlite.session_store import SqliteSessionStore
-from agent.storage.sqlite.database import connect
+from agent.core.storage.sqlite.session_store import SqliteSessionStore
+from agent.core.storage.sqlite.database import connect
 
 
 def test_turn_facts_and_review_job_commit_atomically(tmp_path) -> None:

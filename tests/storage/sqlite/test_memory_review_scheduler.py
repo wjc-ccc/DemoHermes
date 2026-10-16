@@ -6,8 +6,8 @@ from agent.types.memory.scope import MemoryScope
 from agent.core.memory.memory_extractor import MemoryExtractor
 from agent.types.memory.source import TurnRecord
 from agent.types.conversation import Message
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
-from agent.storage.sqlite.codec import milliseconds
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.storage.sqlite.codec import milliseconds
 
 
 def _commit(storage, scope, index: int, *, route: str, completed: bool = True):

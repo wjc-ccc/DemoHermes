@@ -1,7 +1,7 @@
 """Gateway 测试使用独立临时 SQLite，会话提交路径与 Runtime 一致。"""
 import pytest
 
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
 
 
 @pytest.fixture

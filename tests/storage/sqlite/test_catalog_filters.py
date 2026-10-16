@@ -3,7 +3,7 @@ import sqlite3
 
 import pytest
 
-from agent.storage.sqlite.catalog import CatalogError, read_table_page
+from agent.core.storage.sqlite.catalog import CatalogError, read_table_page
 
 
 def test_categorical_filters_apply_before_count_and_pagination(tmp_path):

@@ -5,9 +5,9 @@ import threading
 from pathlib import Path
 
 from agent.types.skills import Skill, SkillChangeRequest, SkillDraft
-from agent.skills.registry import SkillRegistry
-from agent.skills.repository import SkillRepository
-from agent.skills.base import load_skill
+from agent.core.skills.registry import SkillRegistry
+from agent.core.skills.repository import SkillRepository
+from agent.core.skills.base import load_skill
 
 
 def test_create_is_always_draft_and_strips_frontmatter_injection(tmp_path: Path):

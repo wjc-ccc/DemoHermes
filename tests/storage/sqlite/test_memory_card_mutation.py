@@ -9,8 +9,8 @@ from agent.types.memory.scope import MemoryScope
 from agent.types.memory.items import UserMemoryItem, content_sha256
 from agent.types.memory.source import EvidenceRef, TurnRecord
 from agent.types.conversation import Message
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
-from agent.storage.sqlite.memory_card_mutation import SqliteMemoryCardMutationService
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.storage.sqlite.memory_card_mutation import SqliteMemoryCardMutationService
 
 
 def test_mutation_requires_existing_card_revision_and_scoped_source(tmp_path):

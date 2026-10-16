@@ -5,16 +5,16 @@ from tests.prompt_fakes import memory_output, decode_memory_input
 from types import SimpleNamespace
 
 from agent.core.memory.memory_context_loader import MemoryContextLoader
-from agent.storage.sqlite.markdown_documents import MarkdownDocuments
+from agent.core.storage.sqlite.markdown_documents import MarkdownDocuments
 from agent.types.memory.scope import MemoryScope
 from agent.core.memory.memory_extractor import MemoryExtractor
 from agent.core.memory.memory_batch_reviewer import MemoryBatchReviewer
 from agent.core.memory.memory_review_worker import MemoryReviewWorker
-from agent.storage.sqlite.memory_retrieval import MemoryRetriever
+from agent.core.storage.sqlite.memory_retrieval import MemoryRetriever
 from agent.core.perception.perception_engine import PerceptionBuilder
 from agent.types.memory.source import TurnRecord
 from agent.types.conversation import Message
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
 
 
 class _ExperienceModel:

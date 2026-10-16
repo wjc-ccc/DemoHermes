@@ -15,8 +15,8 @@ import logging
 
 import pytest
 
-from agent.channel.baseChannel import BaseChannel
-from agent.channel.registry import (
+from agent.core.channel.baseChannel import BaseChannel
+from agent.core.channel.registry import (
     PLATFORM_CHANNELS,
     autostart_channels,
     resolve_channel_credentials,
@@ -109,7 +109,7 @@ def test_optional_env_is_injected_with_credentials(monkeypatch):
 
 
 def test_wechat_account_id_is_optional(monkeypatch):
-    from agent.channel.channel_wechat import WechatChannel
+    from agent.core.channel.channel_wechat import WechatChannel
 
     monkeypatch.setenv("WEIXIN_TOKEN", "tok")
     monkeypatch.delenv("WEIXIN_ACCOUNT_ID", raising=False)

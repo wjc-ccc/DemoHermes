@@ -6,7 +6,7 @@ from agent.core.memory.memory_batch_reviewer import MemoryBatchReviewer
 from agent.core.memory.memory_review_worker import MemoryReviewWorker
 from agent.types.memory.source import TurnRecord
 from agent.types.conversation import Message
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
 
 
 def _commit(storage, scope):

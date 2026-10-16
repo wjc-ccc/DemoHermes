@@ -10,11 +10,11 @@ from agent.types.conversation import Session, Message
 from agent.types.channel import InboundEvent, SessionSource
 from agent.types.memory.scope import MemoryScope
 from agent.types.action.policy import AssemblyPolicy
-from agent.runtime import build_runtime
+from agent.core.runtime import build_runtime
 from agent.types.model import ModelResponse, ToolCallRequest
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
-from agent.tools.calculator_tools import CalculatorTool
-from agent.tools.registry import ToolRegistry
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.tools.calculator_tools import CalculatorTool
+from agent.core.tools.registry import ToolRegistry
 
 
 class CalculatorModel:

@@ -6,11 +6,11 @@ import sqlite3
 
 import pytest
 
-from agent.storage.sqlite import migrations
-from agent.storage.sqlite.database import connect
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.storage.sqlite import migrations
+from agent.core.storage.sqlite.database import connect
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
 from agent.types.eval.datasets import EvalDataset
-from tests.eval.test_long_dialogue_contract import _definition
+from tests.storage.sqlite.eval_fixtures import _definition
 
 
 def _hash(value):

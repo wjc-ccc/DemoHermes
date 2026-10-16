@@ -9,6 +9,7 @@
 1. [模块架构总览](模块架构总览.md)：感知、推理、执行、反思、记忆、治理、协作的运行链路、代码落点和现状。
 2. [架构认知索引](recognitionDocs/README.md)：types、channel、gateway、agent loop、tool/skill、memory 的详细接口与职责。
 3. [SQLite 与 Memory 存储](sqlite-memory-storage.md)：数据库结构与升级规则。具体运行路径以 [Memory 运行链路](recognitionDocs/memory.md) 为准。
+4. [经验卡片反馈与场景合并](memory-card-feedback.md)：单卡成熟度、唯一决策表、异步JEV和可退回的向量近邻合并。
 
 ## 历史与过程记录
 

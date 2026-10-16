@@ -11,15 +11,15 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
-from agent.channel.channel_cli import CliChannel
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.channel.channel_cli import CliChannel
 from agent.types.context import ContextBudget
 from agent.core.event_bus import EventBus
 from tests.loop_fakes import make_loop
 from agent.core.memory.memory_context_loader import MemoryContextLoader
 from agent.types.channel import InboundEvent, SessionSource
-from agent.gateway.gateway import Gateway
-from agent.storage.sqlite.session_store import SqliteSessionStore
+from agent.core.gateway.gateway import Gateway
+from agent.core.storage.sqlite.session_store import SqliteSessionStore
 from agent.types.model import ModelResponse
 
 

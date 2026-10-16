@@ -11,7 +11,7 @@ import pytest
 import httpx
 from unittest.mock import MagicMock
 
-from agent.channel.channel_wechat import (
+from agent.core.channel.channel_wechat import (
     EP_GET_UPDATES,
     EP_SEND_MESSAGE,
     WechatChannel,

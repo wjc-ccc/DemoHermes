@@ -1,5 +1,5 @@
 """适配现有 Tool，不绕过业务模块的最终权限/版本校验。"""
-from agent.prompt.renderers import render_tool_result
+from agent.core.prompt.renderers import render_tool_result
 from .resources import card_in_scope, resource_for
 from agent.types.tools import ToolInvocationContext
 

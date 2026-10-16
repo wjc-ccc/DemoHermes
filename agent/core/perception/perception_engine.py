@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from functools import wraps
 from typing import TYPE_CHECKING, Callable, Mapping, Sequence
 
-from agent.prompt.systemPrompt import systemPrompt
+from agent.core.prompt.systemPrompt import systemPrompt
 from agent.types.context import (
     ContextBudget,
     TokenEstimator,
@@ -29,6 +29,7 @@ from agent.types.perception.result import (
 )
 from agent.core.perception.context_item import ContextItem, HistoryTurn, _LoadedContext
 from agent.types.perception.priority import Priority
+from agent.core.perception.config import TokenEstimateConfig
 from .token_estimator import ConservativeEstimator, SafeEstimator
 
 if TYPE_CHECKING:
@@ -43,11 +44,7 @@ logger = logging.getLogger(__name__)
 _P0_KINDS = frozenset({"system_prompt", "skill", "ephemeral", "memory_manual"})
 _P1_KINDS = frozenset({"memory_experience"})
 _TOOL_FAIL_PREFIX = "工具执行失败"
-_KEEP_RECENT_P2_TURNS = 2
-_COMPACT_RATIO = 0.85
-_P0_SHARE_WARNING = 0.10
 _UNLIMITED = 2**31 - 1
-_MESSAGE_OVERHEAD_BYTES = 16
 
 
 def _capture_auxiliary(method):
@@ -96,6 +93,7 @@ class _ProtectedContext:
     covered_count: int
     anchor_tokens: int
     anchor: Anchor | None
+    compression_trigger_tokens: int | None
 
 
 @dataclass(frozen=True)
@@ -110,7 +108,8 @@ class _AdmittedHistory:
 class _AnchorPlan:
     candidate_turns: tuple[HistoryTurn, ...]
     refresh: bool
-    token_limit: int
+    reserve_tokens: int
+    output_token_limit: int | None
 
 
 @dataclass(frozen=True)
@@ -137,6 +136,7 @@ class PerceptionBuilder:
         context_judge: ContextJudge | None = None,
         admission_policy: AdmissionPolicy | None = None,
         config: PerceptionConfig | None = None,
+        token_estimate: TokenEstimateConfig | None = None,
     ) -> None:
         """注入旁路 Trace、Anchor 模型 Adapter 与准入判官。"""
         self._trace = trace
@@ -144,6 +144,7 @@ class PerceptionBuilder:
         self._context_judge = context_judge
         self._admission_policy = admission_policy or AdmissionPolicy()
         self.config = config or PerceptionConfig()
+        self.token_estimate = token_estimate or TokenEstimateConfig()
 
     @_capture_auxiliary
     def build(
@@ -161,7 +162,7 @@ class PerceptionBuilder:
     ) -> PerceptionResult:
         """从所有固定来源构建一次可直接发送给模型的 messages。"""
         budget = budget if budget is not None else self.config.budget
-        estimator = SafeEstimator(token_estimator or self.config.token_estimator)
+        estimator = SafeEstimator(token_estimator or self.config.token_estimator, config=self.token_estimate)
         schema_cost = estimator.estimate_tools(tool_schemas or ())
         message_budget = budget
         if budget is not None and schema_cost:
@@ -179,7 +180,7 @@ class PerceptionBuilder:
             ephemeral_prompt=ephemeral_prompt,
         )
         ## 按照规则分好级别
-        graded = self._grade(loaded, budget=message_budget, estimator=estimator)
+        graded = self._grade(loaded, budget=message_budget, estimator=estimator, schema_cost=schema_cost)
         ## 最终传入的信息（包含selected的部分 和 懒加载的部分）
         messages = self._build_messages(graded.selected, graded.lazyload)
         ## 最终token消耗
@@ -263,7 +264,7 @@ class PerceptionBuilder:
             p0_over_share=bool(
                 budget is not None
                 and budget.max_input_tokens
-                and p0_tokens / budget.max_input_tokens > _P0_SHARE_WARNING
+                and p0_tokens / budget.max_input_tokens > self.config.p0_share_warning
             ),
             anchor_status=graded.anchor_status,
             anchor_covered_turns=(
@@ -311,7 +312,9 @@ class PerceptionBuilder:
                         if item.tool_fact_id in calls else item for item in history)
         history_turns = _history_turns(history)
 
-        stored_anchor, anchor_error_code = _anchor.coerce_anchor(session.context_anchor)
+        stored_anchor, anchor_error_code = _anchor.coerce_anchor(
+            session.context_anchor if self.config.anchor_enabled else None
+        )
         if stored_anchor is not None:
             anchor_error_code = _anchor.validate_stored_anchor(
                 stored_anchor,
@@ -332,7 +335,7 @@ class PerceptionBuilder:
 
         legacy_anchor_content = (
             None
-            if stored_anchor is not None
+            if stored_anchor is not None or not self.config.anchor_enabled
             else _anchor.parse_legacy_anchor(session.summary or "")
         )
         return _LoadedContext(
@@ -424,15 +427,15 @@ class PerceptionBuilder:
             ))
         return tuple(items)
 
-    def _grade(self, loaded, *, budget, estimator) -> _GradeResult:
+    def _grade(self, loaded, *, budget, estimator, schema_cost=0) -> _GradeResult:
         """阶段输入输出固定；预算与历史取舍继续沿用原规则。"""
-        protected = self._protect_context(loaded, budget=budget, estimator=estimator)
+        protected = self._protect_context(loaded, budget=budget, estimator=estimator, schema_cost=schema_cost)
         admitted = self._admit_history(loaded, protected, budget=budget, estimator=estimator)
         plan = self._plan_anchor(loaded, admitted, budget=budget, estimator=estimator)
         selected = self._select_history(loaded, admitted, plan, estimator=estimator)
         return self._finish_grade(admitted, selected, estimator=estimator)
 
-    def _protect_context(self, loaded, *, budget, estimator) -> _ProtectedContext:
+    def _protect_context(self, loaded, *, budget, estimator, schema_cost=0) -> _ProtectedContext:
         estimated = tuple(_with_estimate(item, estimator) for item in loaded.items)
         item_by_name = {item.name: item for item in estimated}
         history_turns = tuple(
@@ -480,12 +483,13 @@ class PerceptionBuilder:
         if anchor_item is not None:
             selected.append(anchor_item)
             reasons[anchor_item.name] = ("selected", "p2_anchor_reused")
-        if must_tokens + anchor_tokens > cap:
-            raise ContextBudgetExceededError()
+        # 已存 Anchor 的真实来源引用可能放大投影，留到规划阶段按剩余额度重压。
 
         return _ProtectedContext(
             estimated, cap, tuple(mustload), must_tokens, tuple(selected), reasons,
             all_p2_turns, covered_count, anchor_tokens, current_anchor,
+            (max(1, self.config.compression_trigger_tokens - schema_cost)
+             if self.config.compression_trigger_tokens is not None else None),
         )
 
     def _admit_history(self, loaded, protected, *, budget, estimator) -> _AdmittedHistory:
@@ -495,6 +499,12 @@ class PerceptionBuilder:
         uncovered_turns = all_p2_turns[covered_count:]
         record_items = list(estimated)
         # 第一级：条目级准入（可读回）；之后仍超阈值才由 Anchor 做整轮语义压缩。
+        raw_tokens = must_tokens + anchor_tokens + sum(_turn_cost(turn) for turn in uncovered_turns)
+        trigger_tokens = protected.compression_trigger_tokens
+        # 软触发前不产生首次定案；已有定案继续复用，不能因压缩后低于阈值恢复旧投影。
+        if trigger_tokens is not None and raw_tokens < trigger_tokens and not loaded.verdicts:
+            return _AdmittedHistory(protected, all_p2_turns, tuple(record_items), AdmissionPlan())
+        usage_cap = min(cap, trigger_tokens) if trigger_tokens is not None else cap
         admission = self._admit(
             loaded,
             all_p2_turns,
@@ -507,11 +517,9 @@ class PerceptionBuilder:
             ],
             usage=(
                 (
-                    must_tokens
-                    + anchor_tokens
-                    + sum(_turn_cost(turn) for turn in uncovered_turns)
-                ) / cap
-                if budget is not None and cap
+                    raw_tokens
+                ) / usage_cap
+                if (budget is not None or trigger_tokens is not None) and usage_cap
                 else 0.0
             ),
             estimator=estimator,
@@ -535,38 +543,57 @@ class PerceptionBuilder:
         uncovered_turns = admitted.turns[protected.covered_count:]
         raw_uncovered_cost = sum(_turn_cost(turn) for turn in uncovered_turns)
         raw_with_anchor_cost = must_tokens + anchor_tokens + raw_uncovered_cost
-        anchor_limit = _anchor.anchor_token_limit(cap) if budget is not None else 0
+        trigger_tokens = protected.compression_trigger_tokens
+        planning_cap = min(cap, trigger_tokens) if trigger_tokens is not None else cap
+        legacy_limit = _anchor.anchor_token_limit(
+            cap, ratio=self.config.anchor_budget_ratio,
+        ) if budget is not None else 0
+        output_limit = self.config.anchor_output_token_limit
+        # 未单独指定语义上限时，输出上限就是输入预算的比例份额。
+        # 软触发把规划预留和语义输出上限分开，显式 None 表示不设语义上限。
+        if (budget is not None and trigger_tokens is None
+                and self.config.anchor_reserve_tokens is None and output_limit is None):
+            output_limit = legacy_limit
+        reserve = self.config.anchor_reserve_tokens
+        if reserve is None:
+            reserve = legacy_limit if trigger_tokens is None else max(1, int(planning_cap * self.config.anchor_budget_ratio))
+        if not self.config.anchor_enabled:
+            return _AnchorPlan((), False, reserve, output_limit)
         trigger = bool(
-            budget is not None
-            and cap
+            (budget is not None or trigger_tokens is not None)
+            and planning_cap
             and (
                 raw_with_anchor_cost > cap
-                or raw_with_anchor_cost / cap >= _COMPACT_RATIO
-                or anchor_tokens > anchor_limit
+                or (raw_with_anchor_cost >= trigger_tokens if trigger_tokens is not None
+                    else raw_with_anchor_cost / cap >= self.config.compact_ratio)
+                or (output_limit is not None and anchor_tokens > output_limit)
             )
         )
 
         candidate_turns: tuple[HistoryTurn, ...] = ()
         needs_anchor_refresh = bool(
-            budget is not None
+            (budget is not None or trigger_tokens is not None)
             and current_anchor is not None
-            and anchor_tokens > anchor_limit
+            and output_limit is not None
+            and anchor_tokens > output_limit
         )
-        if trigger and len(uncovered_turns) > _KEEP_RECENT_P2_TURNS:
+        keep_recent = self.config.keep_recent_turns
+        if trigger and len(uncovered_turns) > keep_recent:
             remaining = list(uncovered_turns)
             candidates: list[HistoryTurn] = []
-            reserve = max(1, anchor_limit)
-            if loaded.legacy_anchor_content is not None:
-                candidates = remaining[:-_KEEP_RECENT_P2_TURNS]
-                remaining = remaining[-_KEEP_RECENT_P2_TURNS:]
+            reserve = max(1, reserve)
+            if current_anchor is None:
+                candidates = remaining[:len(remaining) - keep_recent]
             else:
-                while len(remaining) > _KEEP_RECENT_P2_TURNS:
+                while len(remaining) > keep_recent:
                     projected = (
                         must_tokens
                         + reserve
                         + sum(_turn_cost(turn) for turn in remaining)
                     )
-                    if projected / cap < _COMPACT_RATIO and projected <= cap:
+                    below_target = (projected < trigger_tokens if trigger_tokens is not None
+                                    else projected / cap < self.config.compact_ratio)
+                    if below_target and projected <= cap:
                         break
                     candidates.append(remaining.pop(0))
             candidate_turns = tuple(candidates)
@@ -574,13 +601,22 @@ class PerceptionBuilder:
         if candidate_turns:
             recent_cost = sum(
                 _turn_cost(turn)
-                for turn in uncovered_turns[-_KEEP_RECENT_P2_TURNS:]
+                for turn in (uncovered_turns[-keep_recent:] if keep_recent else ())
             )
             minimum_anchor_cost = estimator.estimate_messages([{"role": "system", "content": ""}])
             if must_tokens + recent_cost + minimum_anchor_cost > cap:
                 raise ContextBudgetExceededError()
 
-        return _AnchorPlan(candidate_turns, needs_anchor_refresh, anchor_limit)
+        if current_anchor is not None and budget is not None:
+            remaining_cost = sum(_turn_cost(turn) for turn in uncovered_turns[len(candidate_turns):])
+            headroom = cap - must_tokens - remaining_cost
+            if anchor_tokens > headroom:
+                if headroom <= 0:
+                    raise ContextBudgetExceededError()
+                output_limit = min(output_limit, headroom) if output_limit is not None else headroom
+                needs_anchor_refresh = True
+
+        return _AnchorPlan(candidate_turns, needs_anchor_refresh, reserve, output_limit)
 
     def _select_history(self, loaded, admitted, plan, *, estimator) -> _AnchorSelection:
         protected = admitted.protected
@@ -590,7 +626,7 @@ class PerceptionBuilder:
         all_p2_turns, covered_count = admitted.turns, protected.covered_count
         uncovered_turns = all_p2_turns[covered_count:]
         current_anchor = protected.anchor
-        candidate_turns, needs_anchor_refresh, anchor_limit = plan.candidate_turns, plan.refresh, plan.token_limit
+        candidate_turns, needs_anchor_refresh, anchor_limit = plan.candidate_turns, plan.refresh, plan.output_token_limit
         attempts = 0
         anchor_error_code = loaded.anchor_error_code
         anchor_status: AnchorStatus = (

@@ -5,7 +5,7 @@ import queue
 from types import SimpleNamespace
 
 from agent.types.events import LoopEvent
-from agent.gateway.http_api import _Handler
+from agent.core.gateway.http_api import _Handler
 
 
 class _DisconnectingWriter:

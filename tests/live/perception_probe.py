@@ -15,9 +15,9 @@ from agent.core.building_messages import build_assistant_message, build_tool_mes
 from agent.core.perception.perception_admission import mark_readback_miss
 from agent.core.perception.perception_anchor import ModelAnchorBuilder, anchor_facts
 from agent.core.perception.perception_engine import PerceptionBuilder
-from agent.model.registry import ModelRegistry
-from agent.storage.sqlite.memory_retrieval import MemoryRetriever
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.model.registry import ModelRegistry
+from agent.core.storage.sqlite.memory_retrieval import MemoryRetriever
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
 from agent.types.context import ContextBudget, render_anchor
 from agent.types.conversation import Message, ToolCall
 from agent.types.memory.scope import MemoryScope

@@ -1,7 +1,7 @@
 """统一文档入口的读取、并发写入和路径权限。"""
 import pytest
 
-from agent.storage.sqlite.markdown_documents import MarkdownDocuments
+from agent.core.storage.sqlite.markdown_documents import MarkdownDocuments
 from agent.types.memory.document import MarkdownRevisionConflictError, MemoryManualScopeError
 from agent.types.memory.layers import MemoryLayer
 from agent.types.memory.scope import MemoryScope

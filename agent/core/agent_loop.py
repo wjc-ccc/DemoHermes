@@ -18,7 +18,8 @@ from agent.core.perception.errors import AnchorCompactionError, ContextBudgetExc
 from .building_messages import build_assistant_message, build_tool_message
 from agent.core.perception.perception_admission import mark_readback_miss
 from agent.types.conversation import Message, Session, TurnResult
-from agent.types.runtime import LoopConfig, TurnContext
+from agent.core.config import LoopConfig
+from agent.types.runtime import TurnContext
 from agent.types.perception.trace import ModelCallSnapshot, normalized_usage, response_metadata
 
 if TYPE_CHECKING:
@@ -35,7 +36,7 @@ _PREVIEW = 100
 class AgentLoop:
     """执行单个会话 turn 的 ReAct 循环，并把上下文治理委托给 Perception。"""
     ## 进程级别的loop 就应该具备进程级别的模块配置  skill tool anchor admission budget
-    def __init__(self, model, *, perception, tool_handler, skills=None, trace, config=None):
+    def __init__(self, model, *, perception, tool_handler, skills=None, trace, config=None, memory_usage=None):
         """注入完整模块；预算、Anchor 和执行控制由对应模块管理。"""
         self.model = model
         self.perception = perception
@@ -44,12 +45,13 @@ class AgentLoop:
         self.trace = trace
         self.config = config or LoopConfig()
         self.agent_id = self.config.agent_id
+        self._memory_usage = memory_usage
 
 
     ## retry适合网络波动  对于有error的 一部分是阻止二次尝试 + 工具出错的熔断工具并返回工具错误信息 + 参数错误的传出工具提示的错误信息
     def _chat_with_retry(self, messages: list[dict], *, tool_schemas=None, turn_id=None, iteration=None, output_token_limit=None):
         """仅针对主模型瞬时异常执行有限次数重试。"""
-        from ..model.media_messages import prepare_model_messages
+        from .model.media_messages import prepare_model_messages
 
         messages = prepare_model_messages(
             messages, supports_images=bool(getattr(self.model, "supports_images", False))
@@ -66,7 +68,7 @@ class AgentLoop:
             try:
                 response = self.model.chat(messages, tools=tools or None,
                     **({"max_tokens": output_token_limit} if output_token_limit is not None else {}))
-                if not (response.text or "").strip() and not response.tool_calls:
+                if not (response.text or "").strip() and not response.tool_calls and response.finish_reason != "length":
                     raise RuntimeError("empty_model_response")
                 return response
             except Exception as e:
@@ -195,8 +197,19 @@ class AgentLoop:
             )
             try:
                 ## TODO：针对于不同的错误信息应该使用不同的 retry方法 
+                request_started_at = time.time()
                 response = self._chat_with_retry(messages, tool_schemas=schemas, turn_id=turn_id, iteration=iteration,
                                                  output_token_limit=perception_result.output_token_limit)
+                self._record_memory_exposure(
+                    memory_snapshot, memory_scope, session, user_message.message_id,
+                    turn_id, iteration, request_started_at, messages,
+                    max((message.seq_id for message in session.messages), default=-1),
+                )
+                self._record_manual_memory_exposure(
+                    memory_scope, session, user_message.message_id, turn_id, iteration,
+                    request_started_at, messages,
+                    max((message.seq_id for message in session.messages), default=-1),
+                )
 
             except Exception as e:
                 logger.exception("模型调用最终失败 turn_id=%s", turn_id)
@@ -217,23 +230,45 @@ class AgentLoop:
             )
 
 
+            if response.finish_reason == "length":
+                # 截断载荷保留为失败事实，不执行未生成完的工具批次，也不伪装成终答。
+                partial = build_assistant_message(response.text, response.tool_calls)
+                partial.trajectory_id = turn_id
+                partial.metadata["iteration"] = iteration
+                partial.status = "failed"
+                partial.metadata["finish_reason"] = response.finish_reason
+                session.add_message(partial)
+                self.trace.emit("turn_error", turn_id, session, session_key, error="model_output_truncated")
+                return TurnResult(
+                    final_text=response.text or None, session_id=session.session_id,
+                    turn_id=turn_id, completed=False, error="model_output_truncated",
+                )
+
             ## 判断是否工具调用
             if response.has_tool_calls:
                 for request in response.tool_calls:
                     if not request.id:
                         request.id = uuid.uuid4().hex
-                session.add_message(build_assistant_message(response.text, response.tool_calls))
+                assistant_message = build_assistant_message(response.text, response.tool_calls)
+                assistant_message.trajectory_id = turn_id
+                assistant_message.metadata["iteration"] = iteration
+                session.add_message(assistant_message)
                 # ACTION-HOOK-04：Handler 审批/分配，Dispatch 执行，Loop 统一记录和回注。
                 budget = self.perception.config.budget
                 response_context = tool_context
                 if budget is not None:
-                    remaining = max(256, budget.max_input_tokens - perception_result.metrics.tokens_used - 512)
-                    limit = max(128, min(2048, remaining // (2 * max(1, len(response.tool_calls)))))
+                    limit = self.config.tool_result_limit(
+                        input_tokens=budget.max_input_tokens,
+                        tokens_used=perception_result.metrics.tokens_used,
+                        call_count=len(response.tool_calls),
+                    )
                     response_context = replace(tool_context, invocation=replace(tool_context.invocation,
                         result_token_budget=limit), action=(tool_context.action.model_copy(
                             update={"result_token_budget": limit}) if tool_context.action is not None else None))
                 records = self.tool_handler.handle_batch(response.tool_calls, response_context)
-                for record in records:
+                for tool_index, record in enumerate(records):
+                    record.metadata.update(assistant_message_id=assistant_message.message_id,
+                                           iteration=iteration, response_tool_index=tool_index)
                     session.tool_calls.append(record)
                     if record.ok and record.readback_reference is not None:
                         self.trace.perception.record_memory_read(turn_id, record.readback_reference)
@@ -244,7 +279,10 @@ class AgentLoop:
             ## 记录当前结果messages
             ## TODO 是否应该记录类型为action or observation
             ## 不需要 这里使用jev来判断对应的工具回复了 不需要定死类别
-            session.add_message(build_assistant_message(response.text))
+            assistant_message = build_assistant_message(response.text)
+            assistant_message.trajectory_id = turn_id
+            assistant_message.metadata["iteration"] = iteration
+            session.add_message(assistant_message)
             self.trace.emit(
                 "turn_end", turn_id, session, session_key,
                 final_text=response.text[:_PREVIEW],
@@ -260,7 +298,10 @@ class AgentLoop:
 
         fallback = "（抱歉，这个问题需要的推理步骤超出了我的上限，请换个问法或拆小一点再试。）"
         logger.warning("turn 超过最大迭代 turn_id=%s max=%d", turn_id, iteration_limit)
-        session.add_message(build_assistant_message(fallback))
+        fallback_message = build_assistant_message(fallback)
+        fallback_message.trajectory_id = turn_id
+        fallback_message.metadata["iteration"] = iteration_limit
+        session.add_message(fallback_message)
         self.trace.emit("turn_error", turn_id, session, session_key, error="max_iterations")
         return TurnResult(
             final_text=fallback,
@@ -283,6 +324,70 @@ class AgentLoop:
             scope_key=scope_key,
             available_tools=available,
         )
+
+    def _record_memory_exposure(self, snapshot, scope, session, source_message_id,
+                                turn_id, iteration, exposed_at, messages, after_seq):
+        """实际请求成功后暂存曝光，由轮次事务统一提交计数和反馈作业。"""
+        if (self._memory_usage is None or snapshot is None or scope is None
+                or snapshot.scope.storage_key != scope.storage_key
+                or snapshot.session_id != session.session_id or not snapshot.experience_cards):
+            return
+        if not any(message.get("role") == "system"
+                   and message.get("content") == snapshot.experience_prompt for message in messages):
+            return
+        for card in snapshot.experience_cards:
+            self._stage_memory_exposure(
+                session, source_message_id, card.card_id, card.revision, card.rendered_content,
+                {"first_iteration": iteration, "exposed_at": exposed_at,
+                 "source_user_message_id": source_message_id, "after_seq": after_seq},
+            )
+
+    def _record_manual_memory_exposure(self, scope, session, source_message_id,
+                                       turn_id, iteration, exposed_at, messages, after_seq):
+        """手动读卡结果完整进入实际请求后才记曝光，搜索摘要不计入。"""
+        if self._memory_usage is None or scope is None:
+            return
+        visible = {(message.get("tool_call_id"), message.get("content"))
+                   for message in messages if message.get("role") == "tool"
+                   and isinstance(message.get("content"), str)}
+        candidates = []
+        for record in session.tool_calls:
+            if (record.trajectory_id != turn_id or not record.ok or record.tool_name != "memory_read"
+                    or not record.readback_reference or not record.readback_reference.startswith("card:")):
+                continue
+            data = record.result_data or {}
+            revision = data.get("card_revision")
+            if (isinstance(revision, bool) or not isinstance(revision, int) or revision < 1
+                    or data.get("reference") != record.readback_reference):
+                continue
+            protocol_id = record.provider_tool_call_id or record.tool_call_id
+            if not record.result_text or (protocol_id, record.result_text) not in visible:
+                continue
+            candidates.append((record, revision))
+        for record, revision in candidates:
+            self._stage_memory_exposure(
+                session, source_message_id, record.readback_reference.partition(":")[2], revision,
+                record.result_text,
+                {"first_iteration": iteration, "exposed_at": exposed_at,
+                 "source_user_message_id": source_message_id, "after_seq": after_seq,
+                 "exposure_source": "memory_read", "tool_call_id": record.tool_call_id},
+            )
+
+    def _stage_memory_exposure(self, session, source_message_id, card_id, card_revision,
+                               card_content, context):
+        """记录仅附着于当前轮次的用户消息，不在共享 Loop 中保存轮次状态。"""
+        from agent.core.memory.config import experience_model_key
+        source = next((message for message in session.messages
+                       if message.message_id == source_message_id and message.role == "user"), None)
+        if source is None:
+            return
+        model_key = experience_model_key(self.model)
+        exposures = source.metadata.setdefault("memory_exposures", [])
+        identity = (card_id, card_revision, model_key)
+        if any((item["card_id"], item["card_revision"], item["model_key"]) == identity for item in exposures):
+            return
+        exposures.append({"card_id": card_id, "card_revision": card_revision, "model_key": model_key,
+                          "card_content": card_content, "context": context})
 
     ### 如果模型工具调用读会这个字段信息 那么就不在context_verdicts里删除
     def _pin_readback(

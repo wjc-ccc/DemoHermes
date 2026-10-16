@@ -7,11 +7,11 @@ from pathlib import Path
 from agent.types.memory.scope import MemoryScope
 from agent.types.memory.items import UserMemoryItem, content_sha256
 from agent.types.memory.source import EvidenceRef
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
-from agent.storage.sqlite.database import connect
-from agent.storage.sqlite.migrations import migrate
-from agent.storage.sqlite.memory_store import put_user_memory
-from agent.storage.sqlite.job_store import enqueue_job
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.storage.sqlite.database import connect
+from agent.core.storage.sqlite.migrations import migrate
+from agent.core.storage.sqlite.memory_store import put_user_memory
+from agent.core.storage.sqlite.job_store import enqueue_job
 
 
 def test_migrations_create_all_schema_versions(tmp_path) -> None:
@@ -36,10 +36,10 @@ def test_migrations_create_all_schema_versions(tmp_path) -> None:
 
     assert versions == ["001_runtime", "002_memory_cycle", "003_manual_sync_and_legacy",
                         "004_atomic_cards", "005_memory_cleanup", "006_memory_eval_datasets", "010_storage_contract",
-                        "011_perception_naming", "012_perception_eval_naming"]
+                        "011_perception_naming", "012_perception_eval_naming", "013_memory_card_decisions"]
     assert {"turns", "jobs", "memory_cards", "memory_experiences", "memory_evidence",
             "memory_terms", "memory_card_versions", "memory_conflicts",
-            "memory_review_turns", "memory_document_versions"} <= tables
+            "memory_review_turns", "memory_document_versions", "memory_card_decisions"} <= tables
     assert "memory_items" not in tables
     assert "memory_document_sync" not in tables
     assert "session_state_items" not in tables
@@ -47,7 +47,7 @@ def test_migrations_create_all_schema_versions(tmp_path) -> None:
 
 def test_upgrade_from_001_preserves_proposed_card_and_marks_it_for_revalidation(tmp_path):
     path = tmp_path / "agent.db"
-    sql = (Path(__file__).resolve().parents[3] / "agent" / "storage" / "sqlite" /
+    sql = (Path(__file__).resolve().parents[3] / "agent" / "core" / "storage" / "sqlite" /
            "schema" / "001_runtime.sql").read_text(encoding="utf-8")
     conn = connect(path)
     try:
@@ -88,7 +88,7 @@ def test_upgrade_from_001_preserves_proposed_card_and_marks_it_for_revalidation(
 
 def test_upgrade_deduplicates_old_aliases_and_keeps_versions(tmp_path):
     path = tmp_path / "agent.db"
-    sql = (Path(__file__).resolve().parents[3] / "agent" / "storage" / "sqlite" /
+    sql = (Path(__file__).resolve().parents[3] / "agent" / "core" / "storage" / "sqlite" /
            "schema" / "001_runtime.sql").read_text(encoding="utf-8")
     scope = MemoryScope(tenant_id="cli", user_id="u1")
     conn = connect(path)
@@ -132,7 +132,7 @@ def test_upgrade_deduplicates_old_aliases_and_keeps_versions(tmp_path):
 
 def test_005_quarantines_manual_only_card_and_cancels_sync_job(tmp_path):
     path = tmp_path / "agent.db"
-    schema = Path(__file__).resolve().parents[3] / "agent" / "storage" / "sqlite" / "schema"
+    schema = Path(__file__).resolve().parents[3] / "agent" / "core" / "storage" / "sqlite" / "schema"
     conn = connect(path)
     try:
         conn.execute("CREATE TABLE schema_migrations(version TEXT PRIMARY KEY,"
@@ -146,14 +146,28 @@ def test_005_quarantines_manual_only_card_and_cancels_sync_job(tmp_path):
             conn.commit()
         scope = MemoryScope(tenant_id="cli", user_id="u1")
         content = "以后用中文回答"
-        put_user_memory(conn, UserMemoryItem(
+        old_card = UserMemoryItem(
             item_id="manual-card", kind="stable_preference",
             slot_key="stable_preference:assistant:response_language",
             source_type="manual_document", source_ref="1", scope=scope,
             summary=content, content=content, content_hash=content_sha256(content),
             source_authority="manual",
             evidence=(EvidenceRef(source_type="manual", source_id="1"),),
-        ))
+        )
+        # 构造004版本的历史数据；当前写入接口只服务完成迁移后的最新结构。
+        conn.execute(
+            "INSERT INTO memory_cards(id,scope_key,tenant_id,user_id,kind,slot_key,summary,content,"
+            "source_type,source_ref,source_authority,status,priority,confidence,revision,content_hash,"
+            "token_count,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (old_card.item_id, scope.storage_key, scope.tenant_id, scope.user_id, old_card.kind.value,
+             old_card.slot_key, content, content, old_card.source_type, old_card.source_ref,
+             old_card.source_authority, old_card.status.value, old_card.priority, old_card.confidence,
+             old_card.revision, old_card.content_hash, 0, 1, 1),
+        )
+        conn.execute("INSERT INTO memory_evidence(card_id,source_type,source_id) VALUES (?,?,?)",
+                     (old_card.item_id, "manual", "1"))
+        conn.execute("INSERT INTO memory_card_versions VALUES (?,?,?,?)",
+                     (old_card.item_id, 1, old_card.model_dump_json(), 1))
         enqueue_job(conn, job_type="memory.manual_sync", handler_version="legacy",
                     input={"revision": 1}, dedupe_key="old-sync")
         conn.commit()

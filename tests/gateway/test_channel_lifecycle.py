@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import threading
 
-from agent.channel.baseChannel import BaseChannel
+from agent.core.channel.baseChannel import BaseChannel
 from agent.types.channel import InboundEvent, OutboundReply, SessionSource
-from agent.gateway.gateway import Gateway
+from agent.core.gateway.gateway import Gateway
 
 
 class RecordingChannel(BaseChannel):

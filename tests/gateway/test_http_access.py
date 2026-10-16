@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import pytest
 
-from agent.channel.channel_frontier import FrontierChannel
+from agent.core.channel.channel_frontier import FrontierChannel
 from tests.loop_fakes import make_loop
 from agent.core.event_bus import EventBus
-from agent.gateway.gateway import Gateway
-from agent.gateway.http_api import FrontierHttpServer
+from agent.core.gateway.gateway import Gateway
+from agent.core.gateway.http_api import FrontierHttpServer
 from agent.types.model import ModelResponse
 from tests.gateway.test_debug_memory_api import _request, _start_server, _stop_server
 

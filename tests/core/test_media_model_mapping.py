@@ -1,12 +1,12 @@
 """附件只在视觉模型请求时转为图像块，持久化消息保留本地引用。"""
 from __future__ import annotations
 
-from agent.channel import media
+from agent.core.channel import media
 from agent.core.building_messages import build_user_message
 from agent.core.perception.perception_engine import PerceptionBuilder
 from agent.types.channel import InboundEvent, SessionSource
-from agent.model.claude import ClaudeModel
-from agent.model.media_messages import prepare_model_messages
+from agent.core.model.claude import ClaudeModel
+from agent.core.model.media_messages import prepare_model_messages
 
 
 def test_image_model_mapping_and_text_fallback(tmp_path, monkeypatch):
@@ -27,7 +27,7 @@ def test_image_model_mapping_and_text_fallback(tmp_path, monkeypatch):
 
 
 def test_custom_anthropic_endpoint_needs_explicit_image_capability(monkeypatch):
-    monkeypatch.setattr("agent.model.claude.ANTHROPIC_BASE_URL", "https://ark.example.com")
+    monkeypatch.setattr("agent.core.model.claude.ANTHROPIC_BASE_URL", "https://ark.example.com")
     monkeypatch.delenv("MODEL_SUPPORTS_IMAGES", raising=False)
     assert ClaudeModel().supports_images is False
     monkeypatch.setenv("MODEL_SUPPORTS_IMAGES", "true")

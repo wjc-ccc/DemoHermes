@@ -34,7 +34,7 @@ class ToolDispatch:
             result, item = self._dispatch_basic(ticket), None
         request = ticket.request
         if result.ok and not result.result_text and result.data is not None:
-            from agent.prompt.renderers import render_tool_result
+            from agent.core.prompt.renderers import render_tool_result
             result = result.model_copy(update={"result_text": render_tool_result(request.name, result.data)})
         record = ToolCall(
             tool_call_id=ticket.fact_id, session_id=ticket.invocation.session_id,
@@ -69,6 +69,13 @@ class ToolDispatch:
         tool = self.registry.get(ticket.request.name)
         if tool is None:
             return ToolCallResult(ok=False, error=f"工具不存在: {ticket.request.name}（可用: {self.registry.list_tools()}）")
+        if ticket.request.arguments_raw:
+            try:
+                parsed = json.loads(ticket.request.arguments_raw)
+                if not isinstance(parsed, dict) or parsed != ticket.request.arguments:
+                    return ToolCallResult(ok=False, error="invalid_argument_syntax")
+            except (ValueError, TypeError):
+                return ToolCallResult(ok=False, error="invalid_argument_syntax")
         try:
             return tool.execute(ticket.effective_args or {}, context=ticket.invocation)
         except Exception as exc:

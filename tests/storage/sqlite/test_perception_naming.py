@@ -4,10 +4,10 @@ import shutil
 
 import pytest
 
-from agent.gateway.trace_modules import list_modules, list_traces
-from agent.storage.sqlite import migrations
-from agent.storage.sqlite.errors import AuditConflictError
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.gateway.trace_modules import list_modules, list_traces
+from agent.core.storage.sqlite import migrations
+from agent.core.storage.sqlite.errors import AuditConflictError
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
 from agent.types.conversation import Message
 from agent.types.memory.scope import MemoryScope
 from agent.types.memory.source import TurnRecord

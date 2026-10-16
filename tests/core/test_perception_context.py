@@ -10,8 +10,8 @@ from agent.types.conversation import Message, Session
 from agent.types.model import ModelResponse, ToolCallRequest
 from agent.types.perception.result import PerceptionMetrics, PerceptionResult
 from agent.types.tools import ToolCallResult
-from agent.tools.base import Tool
-from agent.tools.registry import ToolRegistry
+from agent.core.tools.base import Tool
+from agent.core.tools.registry import ToolRegistry
 
 
 class _LongTool(Tool):

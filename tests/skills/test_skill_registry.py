@@ -1,6 +1,6 @@
 """删除自动演化后，普通技能仍按状态和可信管理变化可见性。"""
-from agent.skills.registry import SkillRegistry
-from agent.skills.repository import SkillRepository
+from agent.core.skills.registry import SkillRegistry
+from agent.core.skills.repository import SkillRepository
 from agent.types.skills import SkillChangeRequest, SkillDraft
 
 

@@ -8,13 +8,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent.channel import media
-from agent.channel.channel_feishu import FeishuChannel
-from agent.channel.channel_qq import QQChannel
-from agent.channel.channel_wechat import WechatChannel
+from agent.core.channel import media
+from agent.core.channel.channel_feishu import FeishuChannel
+from agent.core.channel.channel_qq import QQChannel
+from agent.core.channel.channel_wechat import WechatChannel
 from agent.core.building_messages import build_user_message
 from agent.core.perception.perception_engine import PerceptionBuilder
-from agent.model.media_messages import prepare_model_messages
+from agent.core.model.media_messages import prepare_model_messages
 
 
 @pytest.fixture(autouse=True)
@@ -59,7 +59,7 @@ def test_feishu_resource_becomes_content_part(message_type, resource, filename, 
     [("image/jpeg", "image"), ("application/pdf", "file")],
 )
 def test_qq_attachment_becomes_content_part(monkeypatch, mime, expected_type):
-    monkeypatch.setattr("agent.channel.channel_qq.download_media", lambda *a, **k: b"qq bytes")
+    monkeypatch.setattr("agent.core.channel.channel_qq.download_media", lambda *a, **k: b"qq bytes")
     channel = QQChannel()
     event = channel.parse_to_InboundEvent({
         "message_id": "m1", "chat_id": "u1", "chat_type": "dm", "user_id": "u1",
@@ -85,7 +85,7 @@ def test_wechat_decrypts_media(monkeypatch, item_type, detail_key, name, expecte
     padded = plain + bytes([16 - len(plain) % 16]) * (16 - len(plain) % 16)
     encryptor = Cipher(algorithms.AES(key), modes.ECB()).encryptor()
     encrypted = encryptor.update(padded) + encryptor.finalize()
-    monkeypatch.setattr("agent.channel.channel_wechat.download_media", lambda *a, **k: encrypted)
+    monkeypatch.setattr("agent.core.channel.channel_wechat.download_media", lambda *a, **k: encrypted)
     channel = WechatChannel()
     event = channel.parse_to_InboundEvent({
         "message_id": "wx1", "chat_id": "peer", "chat_type": "dm", "user_id": "peer",
@@ -101,7 +101,7 @@ def test_wechat_decrypts_media(monkeypatch, item_type, detail_key, name, expecte
 
 
 def test_wechat_multiple_images_and_file_keep_order_and_unique_paths(monkeypatch, tmp_path):
-    monkeypatch.setattr("agent.channel.channel_wechat.download_media", lambda *a, **k: b"media")
+    monkeypatch.setattr("agent.core.channel.channel_wechat.download_media", lambda *a, **k: b"media")
     channel = WechatChannel()
     event = channel.parse_to_InboundEvent({
         "message_id": "wx-many", "chat_id": "peer", "chat_type": "dm", "user_id": "peer",
@@ -121,7 +121,7 @@ def test_wechat_multiple_images_and_file_keep_order_and_unique_paths(monkeypatch
 
 
 def test_qq_multiple_attachments_get_distinct_fallback_names(monkeypatch):
-    monkeypatch.setattr("agent.channel.channel_qq.download_media", lambda *a, **k: b"media")
+    monkeypatch.setattr("agent.core.channel.channel_qq.download_media", lambda *a, **k: b"media")
     channel = QQChannel()
     event = channel.parse_to_InboundEvent({
         "message_id": "qq-many", "chat_id": "peer", "chat_type": "dm", "user_id": "peer",
@@ -139,7 +139,7 @@ def test_download_failure_is_visible_in_event(monkeypatch):
     def fail(*args, **kwargs):
         raise ValueError("附件超过 20 MiB 限制")
 
-    monkeypatch.setattr("agent.channel.channel_qq.download_media", fail)
+    monkeypatch.setattr("agent.core.channel.channel_qq.download_media", fail)
     channel = QQChannel()
     event = channel.parse_to_InboundEvent({
         "message_id": "m1", "chat_id": "u1", "chat_type": "dm", "user_id": "u1",
@@ -166,7 +166,7 @@ def test_qq_media_callback_is_queued_and_duplicate_dropped(monkeypatch):
         def submit(self, event):
             self.events.append(event)
 
-    monkeypatch.setattr("agent.channel.channel_qq.download_media", lambda *a, **k: b"image")
+    monkeypatch.setattr("agent.core.channel.channel_qq.download_media", lambda *a, **k: b"image")
     gateway = Gateway()
     channel = QQChannel()
     channel.bind_gateway(gateway)

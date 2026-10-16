@@ -8,9 +8,9 @@ from agent.types.tools import ToolInvocationContext
 
 from pathlib import Path
 
-from agent.skills.registry import SkillRegistry
-from agent.skills.repository import SkillRepository
-from agent.skills.skill_manage_tool import SkillManageTool
+from agent.core.skills.registry import SkillRegistry
+from agent.core.skills.repository import SkillRepository
+from agent.core.skills.skill_manage_tool import SkillManageTool
 
 
 def test_skill_manage_create_and_patch(tmp_path: Path):

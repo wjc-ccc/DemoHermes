@@ -97,7 +97,7 @@ class TokenEstimator(Protocol):
 
 ## anchor实际prompt传入（结构化 -> 提示词）
 def render_anchor(anchor: Anchor) -> str:
-    """渲染给主模型的稳定 P2-A 消息，不暴露冗长来源 ID。"""
+    """渲染给主模型的 P2-A 消息，每条事实保留可读回的完整来源。"""
     lines = [
         (
             f'<context-anchor version="{anchor.version}" id="{anchor.anchor_id}" '
@@ -108,10 +108,13 @@ def render_anchor(anchor: Anchor) -> str:
         "与近期原文冲突时，以近期原文为准。",
         "Anchor 未提及的细节视为未知，不得自行补全。",
         "status=failed 的动作没有成功，不得当作已完成修改。",
+        '需要原文细节时，原样复制来源调用 memory_read(reference="message:<id>")；多个来源可分别读回。',
     ]
     for slot, title in ANCHOR_SECTIONS:
         facts = getattr(anchor, slot)
         lines.append(f"{title}:")
-        lines.extend(f"- [{fact.status}] {fact.text}" for fact in facts)
+        lines.extend(f"- [{fact.status}] {fact.text}（来源："
+                     + "、".join(f"message:{identity}" for identity in fact.source_message_ids) + "）"
+                     for fact in facts)
     lines.append("</context-anchor>")
     return "\n".join(lines)

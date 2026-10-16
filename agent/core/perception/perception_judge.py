@@ -2,12 +2,13 @@
 
 判官看到的是小状态（调用描述、结果开头、字数、轮龄），不是正文全文。
 SystemOneContextJudge 只实现 System One 协议，端点、模型、密钥全部注入；
-具体用哪个 provider 由 agent/provider.py 的 build_context_judge 决定。
+具体用哪个 provider 由 agent/core/provider.py 的 build_context_judge 决定。
 替换 provider 时只需实现 ContextJudge 协议。
 """
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import math
 from typing import Sequence
 
 import httpx
@@ -24,7 +25,6 @@ KIND_CRITERIA = {
     "data": "Facts or values looked up for the task",
     "other": "Something else",
 }
-_MIN_KIND_PROBABILITY = 0.5
 _MAX_ERROR_DETAIL = 300
 _MAX_BATCH_ITEMS = 4  # System One 每次最多 8 道题，每条结果占 choice + noul 两题。
 
@@ -41,6 +41,7 @@ class SystemOneContextJudge:
         timeout: float = 6.0,
         batch_size: int = 4,
         max_workers: int = 4,
+        min_kind_probability: float = 0.5,
         client: httpx.Client | None = None,
     ) -> None:
         """端点、模型、密钥由 provider 配置注入；client 仅供测试替换传输层。"""
@@ -52,6 +53,9 @@ class SystemOneContextJudge:
         self._timeout = timeout
         self._batch_size = max(1, min(batch_size, _MAX_BATCH_ITEMS))
         self._max_workers = max(1, max_workers)
+        if isinstance(min_kind_probability, bool) or not isinstance(min_kind_probability, (int, float)) or not 0 < float(min_kind_probability) <= 1:
+            raise ValueError("min_kind_probability 必须在 (0, 1] 内")
+        self._min_kind_probability = float(min_kind_probability)
         self._client = client
         self.id = f"systemone:{httpx.URL(self._base_url).host}:{self._model}"
 
@@ -101,13 +105,13 @@ class SystemOneContextJudge:
                 ),
             }
         body = self._post({"model": self._model, "state": state, "questions": questions})
-        answers = body.get("answers")
+        answers = _normalize_answers(body.get("answers"), questions)
         if not isinstance(answers, dict):
             raise ContextJudgeError("invalid_response", "判官响应缺少 answers")
         return [
             ContextJudgeResult(
                 item_id=request.item_id,
-                kind=_kind_of(answers.get(f"k{index}")),
+                kind=_kind_of(answers.get(f"k{index}"), min_probability=self._min_kind_probability),
                 still_needed=_probability_of(answers.get(f"n{index}")),
             )
             for index, request in enumerate(batch, start=1)
@@ -145,7 +149,7 @@ class SystemOneContextJudge:
         return body
 
 
-def _kind_of(raw: object) -> str | None:
+def _kind_of(raw: object, *, min_probability: float = 0.5) -> str | None:
     """取选中类别；逃生选项或概率过低视为没有答案。"""
     if not isinstance(raw, dict):
         return None
@@ -155,7 +159,8 @@ def _kind_of(raw: object) -> str | None:
     probabilities = raw.get("probabilities")
     if isinstance(probabilities, dict):
         probability = probabilities.get(choice)
-        if isinstance(probability, (int, float)) and probability < _MIN_KIND_PROBABILITY:
+        if (isinstance(probability, bool) or not isinstance(probability, (int, float))
+                or not math.isfinite(probability) or probability < min_probability):
             return None
     return choice
 
@@ -165,7 +170,7 @@ def _probability_of(raw: object) -> float | None:
     if not isinstance(raw, dict):
         return None
     value = raw.get("noul")
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         return None
     return min(1.0, max(0.0, float(value)))
 
@@ -188,3 +193,27 @@ def _error_message(response: httpx.Response) -> str:
         elif isinstance(body.get("detail"), str):
             message = body["detail"]
     return (message or f"HTTP {response.status_code}")[:_MAX_ERROR_DETAIL]
+
+
+def _normalize_answers(answers, questions):
+    """统一判官返回的结构差异；不猜测缺失或冲突分数，不改变置信门槛。"""
+    if not isinstance(answers, dict):
+        return answers
+    normalized = {}
+    for key, question in questions.items():
+        candidates = []
+        if key in answers:
+            candidates.append(answers[key])
+        item = answers.get("i" + key[1:])
+        if isinstance(item, dict):
+            if key in item:
+                candidates.append(item[key])
+            if question["type"] == "choice" and "choice" in item:
+                candidates.append({k: item[k] for k in ("choice", "probabilities") if k in item})
+        if question["type"] == "noul":
+            candidates = [{"noul": value} if type(value) in (int, float) and math.isfinite(value)
+                          else value for value in candidates]
+        if candidates:
+            # 同一题的平铺和嵌套答案冲突时保持未知，不能随便取一个数值。
+            normalized[key] = candidates[0] if all(value == candidates[0] for value in candidates) else None
+    return normalized

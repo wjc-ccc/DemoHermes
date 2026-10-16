@@ -11,5 +11,6 @@ class ActionConfig(BaseModel):
     agent_toolsets: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     max_read_workers: int = Field(default=4, ge=1)
     lease_ms: int = Field(default=60000, ge=1)
+    plan_lease_ms: int = Field(default=300000, ge=1)
     patch_cap: int = Field(default=8, ge=0)
     segment_retries: int = Field(default=2, ge=0)

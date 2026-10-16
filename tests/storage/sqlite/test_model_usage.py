@@ -1,11 +1,11 @@
 """Real Loop call attempts must survive turn commit and restart."""
 from agent.core.perception.perception_trace import PerceptionTrace
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
 from agent.types.conversation import Message
 from agent.types.memory.scope import MemoryScope
 from agent.types.memory.source import TurnRecord
 from agent.types.model import ModelResponse, ToolCallRequest
-from agent.tools.registry import ToolRegistry
+from agent.core.tools.registry import ToolRegistry
 from tests.core.test_perception_context import _LongTool
 from tests.loop_fakes import make_loop
 

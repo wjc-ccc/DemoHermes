@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent.channel.channel_feishu import FeishuChannel
+from agent.core.channel.channel_feishu import FeishuChannel
 from agent.types.channel import OutboundReply, SessionSource
 
 

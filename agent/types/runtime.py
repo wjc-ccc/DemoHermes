@@ -6,27 +6,42 @@ from agent.types.action.config import ActionConfig
 from agent.types.action.policy import AssemblyPolicy
 from agent.types.context import ContextBudget
 from agent.types.memory.scope import MemoryScope
-from typing import Any
+from agent.core.config import LoopConfig
+from agent.types.perception.admission import AdmissionConfig
+from agent.types.perception.result import PerceptionConfig
+from typing import Any, TYPE_CHECKING
 from pydantic import BaseModel, ConfigDict, Field
+
+if TYPE_CHECKING:
+    from agent.core.memory.config import (
+        MemoryContextConfig, MemoryExtractionConfig, MemoryReviewConfig, MemoryScheduleConfig,
+        MemoryExperienceConfig,
+    )
+    from agent.core.perception.config import JudgeConfig, TokenEstimateConfig
 
 
 @dataclass(frozen=True)
 class RuntimeConfig:
+    """装配入口。每个可调类别只放一个 XxxConfig，字段名与类名对应。"""
+
     workers: int = 2
     use_memory: bool = True
-    use_action: bool = False
+    use_action: bool = True
     data_root: Path | None = None
     action_config: ActionConfig | None = None
+    loop_config: LoopConfig | None = None
+    perception_config: PerceptionConfig | None = None
+    admission_config: AdmissionConfig | None = None
+    judge_config: JudgeConfig | None = None
+    token_estimate_config: TokenEstimateConfig | None = None
+    memory_context_config: MemoryContextConfig | None = None
+    memory_extraction_config: MemoryExtractionConfig | None = None
+    memory_review_config: MemoryReviewConfig | None = None
+    memory_schedule_config: MemoryScheduleConfig | None = None
+    memory_experience_config: MemoryExperienceConfig | None = None
     manual_tokens: int | None = None
     experience_tokens: int | None = None
     context_budget: ContextBudget | None = None
-
-
-@dataclass(frozen=True)
-class LoopConfig:
-    max_iterations: int = 8
-    model_retries: int = 2
-    agent_id: str = "main"
 
 
 @dataclass(frozen=True)

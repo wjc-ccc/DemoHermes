@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from agent.storage.sqlite.runtime_storage import RuntimeStorage
+from agent.core.storage.sqlite.runtime_storage import RuntimeStorage
 from agent.types.memory.trace import (
     MemoryAiTraceFields,
     MemoryItemTrace,
@@ -11,7 +11,7 @@ from agent.types.memory.trace import (
 )
 from agent.types.memory.layers import MemoryLayer
 from agent.types.memory.trace_categories import MemoryTraceDecision, MemoryTraceOperation
-from agent.storage.sqlite.trace_store import SqliteTraceStore
+from agent.core.storage.sqlite.trace_store import SqliteTraceStore
 
 
 def test_trace_round_trip_keeps_ai_and_runtime_fields_separate(tmp_path) -> None:

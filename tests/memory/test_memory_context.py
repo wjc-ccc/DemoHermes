@@ -2,17 +2,17 @@
 from __future__ import annotations
 
 from tests.loop_fakes import make_loop
-from agent.storage.sqlite.markdown_documents import MarkdownDocuments
+from agent.core.storage.sqlite.markdown_documents import MarkdownDocuments
 from agent.core.memory.memory_context_loader import MemoryContextLoader
 from agent.types.memory.layers import MemoryLayer
 from agent.types.memory.scope import MemoryScope
 from agent.core.memory.memory_scope import ensure_scope_dir
 from agent.types.conversation import Message, Session
-from agent.model.baseStructure import BaseModel
+from agent.core.model.baseStructure import BaseModel
 from agent.types.model import ModelResponse, ToolCallRequest
-from agent.tools.base import Tool
+from agent.core.tools.base import Tool
 from agent.types.tools import ToolCallResult
-from agent.tools.registry import ToolRegistry
+from agent.core.tools.registry import ToolRegistry
 
 _SCOPE = MemoryScope(tenant_id="cli", user_id="u1")
 
